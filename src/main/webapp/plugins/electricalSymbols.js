@@ -23,6 +23,10 @@ Draw.loadPlugin(function (ui) {
     preview: null,
     widthInput: null,
     heightInput: null,
+    currentSpec: null,
+    previewMode: "select",
+    selectedItem: null,
+    nextId: 1,
   };
 
   mxResources.parse(
@@ -54,6 +58,13 @@ Draw.loadPlugin(function (ui) {
   // 把输入转成整数，失败时回退到默认值
   function toInt(value, defaultValue) {
     var parsed = parseInt(value, 10);
+
+    return isNaN(parsed) ? defaultValue : parsed;
+  }
+
+  // 把输入转成浮点数，失败时回退到默认值
+  function toFloat(value, defaultValue) {
+    var parsed = parseFloat(value);
 
     return isNaN(parsed) ? defaultValue : parsed;
   }
@@ -128,6 +139,12 @@ Draw.loadPlugin(function (ui) {
     return mode == "primary" || mode == "standby" ? mode : "";
   }
 
+  function normalizeLabelAlign(align) {
+    align = trim(align).toLowerCase();
+
+    return align == "left" || align == "right" ? align : "center";
+  }
+
   // 把外部 JSON 规范化成统一的数据结构
   // 这里会做默认值填充、字段裁剪和 svg 校验
   function normalizeSpec(raw) {
@@ -136,7 +153,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     var device = isObject(raw.device) ? raw.device : {};
-    var ports = isObject(raw.ports) ? raw.ports : {};
+    var ports = raw.ports;
     var variants = isObject(raw.svgVariants) ? raw.svgVariants : {};
     var size = isObject(raw.size) ? raw.size : {};
     var params = isObject(device.params) ? cloneJson(device.params) : {};
@@ -155,10 +172,8 @@ Draw.loadPlugin(function (ui) {
         mode: normalizeMode(device.mode),
         params: params,
       },
-      ports: {
-        leftCount: Math.max(0, toInt(ports.leftCount, 0)),
-        rightCount: Math.max(0, toInt(ports.rightCount, 0)),
-      },
+      ports: normalizePortLayout(ports),
+      labels: normalizeLabels(raw.labels),
       svgVariants: {},
     };
 
@@ -219,16 +234,396 @@ Draw.loadPlugin(function (ui) {
     return spec;
   }
 
-  // 预览区直接用浏览器原生 <img> 渲染 svg
+  function nextItemId(prefix) {
+    var id = prefix + ":" + state.nextId;
+    state.nextId += 1;
+    return id;
+  }
+
+  function findPort(spec, id) {
+    var i;
+
+    for (i = 0; i < spec.ports.length; i++) {
+      if (spec.ports[i].id == id) {
+        return spec.ports[i];
+      }
+    }
+
+    return null;
+  }
+
+  function findLabel(spec, id) {
+    var i;
+
+    for (i = 0; i < spec.labels.length; i++) {
+      if (spec.labels[i].id == id) {
+        return spec.labels[i];
+      }
+    }
+
+    return null;
+  }
+
+  function syncEditorJson(spec) {
+    if (state.jsonArea != null) {
+      state.jsonArea.value = JSON.stringify(spec, null, 2);
+    }
+  }
+
+  function getPreviewMetrics(spec, surface) {
+    var surfaceWidth = Math.max(200, surface.clientWidth || 520);
+    var surfaceHeight = Math.max(200, surface.clientHeight || 260);
+    var padding = 52;
+    var scale = Math.min(
+      (surfaceWidth - padding * 2) / spec.size.width,
+      (surfaceHeight - padding * 2) / spec.size.height,
+    );
+
+    scale = clamp(scale, 0.35, 2.5);
+
+    var width = spec.size.width * scale;
+    var height = spec.size.height * scale;
+
+    return {
+      left: Math.round((surfaceWidth - width) / 2),
+      top: Math.round((surfaceHeight - height) / 2),
+      width: width,
+      height: height,
+      scale: scale,
+    };
+  }
+
+  function getRelativePoint(evt, surface, metrics, clampToBody) {
+    var rect = surface.getBoundingClientRect();
+    var x = (evt.clientX - rect.left - metrics.left) / metrics.width;
+    var y = (evt.clientY - rect.top - metrics.top) / metrics.height;
+
+    return {
+      x: clampToBody ? clamp(x, 0, 1) : clamp(x, -1.5, 2.5),
+      y: clampToBody ? clamp(y, 0, 1) : clamp(y, -1.5, 2.5),
+    };
+  }
+
+  function updateSelectedItem(type, id) {
+    state.selectedItem =
+      type != null && id != null ? { type: type, id: id } : null;
+  }
+
+  function deleteSelectedItem() {
+    if (state.currentSpec == null || state.selectedItem == null) {
+      return;
+    }
+
+    var next = cloneJson(state.currentSpec);
+
+    if (state.selectedItem.type == "port") {
+      next.ports = next.ports.filter(function (item) {
+        return item.id != state.selectedItem.id;
+      });
+    } else if (state.selectedItem.type == "label") {
+      next.labels = next.labels.filter(function (item) {
+        return item.id != state.selectedItem.id;
+      });
+    }
+
+    state.currentSpec = normalizeSpec(next);
+    updateSelectedItem(null, null);
+    syncEditorJson(state.currentSpec);
+    updatePreview(state.currentSpec);
+  }
+
+  // 预览区是一个轻量交互编辑面板。
+  // 用户可以直接在这里添加/拖动连接点和文本框，修改会实时写回 JSON。
   function updatePreview(spec) {
+    state.currentSpec = normalizeSpec(spec);
     state.preview.innerHTML = "";
+    var selectedId = state.selectedItem != null ? state.selectedItem.id : null;
+    var selectedType =
+      state.selectedItem != null ? state.selectedItem.type : null;
+
+    if (
+      (selectedType == "port" &&
+        findPort(state.currentSpec, selectedId) == null) ||
+      (selectedType == "label" &&
+        findLabel(state.currentSpec, selectedId) == null)
+    ) {
+      updateSelectedItem(null, null);
+    }
+
+    var toolbar = document.createElement("div");
+    toolbar.style.display = "flex";
+    toolbar.style.alignItems = "center";
+    toolbar.style.padding = "8px";
+    toolbar.style.gap = "8px";
+    toolbar.style.borderBottom = "1px solid #d0d7de";
+    state.preview.appendChild(toolbar);
+
+    function createModeButton(mode, label) {
+      var btn = createButton(label, function () {
+        state.previewMode = mode;
+        updatePreview(state.currentSpec);
+      });
+      btn.style.marginTop = "0";
+      btn.style.marginRight = "0";
+      btn.style.padding = "4px 10px";
+      if (state.previewMode == mode) {
+        btn.style.borderColor = "#1a73e8";
+        btn.style.color = "#1a73e8";
+      }
+      return btn;
+    }
+
+    toolbar.appendChild(createModeButton("select", "选择"));
+    toolbar.appendChild(createModeButton("port", "添加连接点"));
+    toolbar.appendChild(createModeButton("label", "添加文本框"));
+    var deleteBtn = createButton("删除选中", function () {
+      deleteSelectedItem();
+    });
+    deleteBtn.style.marginTop = "0";
+    deleteBtn.style.marginRight = "0";
+    deleteBtn.style.padding = "4px 10px";
+    toolbar.appendChild(deleteBtn);
+
+    var hint = document.createElement("div");
+    hint.style.marginLeft = "auto";
+    hint.style.fontSize = "12px";
+    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+    hint.innerText =
+      state.previewMode == "port"
+        ? "点击图元添加连接点，拖动可微调"
+        : state.previewMode == "label"
+          ? "点击空白处添加文本框，双击可编辑文本"
+          : "拖动连接点或文本框调整位置";
+    toolbar.appendChild(hint);
+
+    var surface = document.createElement("div");
+    surface.style.position = "relative";
+    surface.style.height = "278px";
+    surface.style.overflow = "hidden";
+    surface.style.cursor =
+      state.previewMode == "port" || state.previewMode == "label"
+        ? "crosshair"
+        : "default";
+    surface.style.background = Editor.isDarkMode()
+      ? "linear-gradient(180deg, #111111, #171717)"
+      : "linear-gradient(180deg, #fafafa, #f3f4f6)";
+    state.preview.appendChild(surface);
+
+    var metrics = getPreviewMetrics(state.currentSpec, surface);
     var img = document.createElement("img");
-    img.setAttribute("alt", spec.title);
-    img.setAttribute("src", toSvgDataUri(spec));
-    img.style.maxWidth = "100%";
-    img.style.maxHeight = "160px";
-    img.style.objectFit = "contain";
-    state.preview.appendChild(img);
+    img.setAttribute("alt", state.currentSpec.title);
+    img.setAttribute("src", toSvgDataUri(state.currentSpec));
+    img.style.position = "absolute";
+    img.style.left = metrics.left + "px";
+    img.style.top = metrics.top + "px";
+    img.style.width = metrics.width + "px";
+    img.style.height = metrics.height + "px";
+    img.style.objectFit = "fill";
+    img.style.pointerEvents = "none";
+    surface.appendChild(img);
+
+    function startDrag(type, id, target) {
+      return function (evt) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        updateSelectedItem(type, id);
+
+        function moveHandler(moveEvt) {
+          var point = getRelativePoint(
+            moveEvt,
+            surface,
+            metrics,
+            type == "port",
+          );
+          var current = state.currentSpec;
+
+          if (type == "port") {
+            var port = findPort(current, id);
+            if (port != null) {
+              port.x = point.x;
+              port.y = point.y;
+              target.style.left =
+                metrics.left + port.x * metrics.width - 7 + "px";
+              target.style.top =
+                metrics.top + port.y * metrics.height - 7 + "px";
+            }
+          } else {
+            var label = findLabel(current, id);
+            if (label != null) {
+              label.x = point.x;
+              label.y = point.y;
+              target.style.left =
+                metrics.left + label.x * metrics.width - label.width / 2 + "px";
+              target.style.top =
+                metrics.top +
+                label.y * metrics.height -
+                label.height / 2 +
+                "px";
+            }
+          }
+        }
+
+        function upHandler() {
+          document.removeEventListener("mousemove", moveHandler);
+          document.removeEventListener("mouseup", upHandler);
+          syncEditorJson(state.currentSpec);
+          updatePreview(state.currentSpec);
+        }
+
+        document.addEventListener("mousemove", moveHandler);
+        document.addEventListener("mouseup", upHandler);
+      };
+    }
+
+    function renderPort(point) {
+      var handle = document.createElement("div");
+      handle.style.position = "absolute";
+      handle.style.left = metrics.left + point.x * metrics.width - 7 + "px";
+      handle.style.top = metrics.top + point.y * metrics.height - 7 + "px";
+      handle.style.width = "14px";
+      handle.style.height = "14px";
+      handle.style.lineHeight = "14px";
+      handle.style.textAlign = "center";
+      handle.style.color = "#1a73e8";
+      handle.style.fontSize = "16px";
+      handle.style.fontWeight = "700";
+      handle.style.cursor = "move";
+      handle.style.userSelect = "none";
+      handle.style.zIndex = "2";
+      handle.innerText = "×";
+      handle.title = point.id;
+      if (
+        state.selectedItem != null &&
+        state.selectedItem.type == "port" &&
+        state.selectedItem.id == point.id
+      ) {
+        handle.style.textShadow = "0 0 6px rgba(26,115,232,0.45)";
+      }
+      mxEvent.addListener(
+        handle,
+        "mousedown",
+        startDrag("port", point.id, handle),
+      );
+      mxEvent.addListener(handle, "click", function (evt) {
+        evt.stopPropagation();
+        updateSelectedItem("port", point.id);
+        updatePreview(state.currentSpec);
+      });
+      surface.appendChild(handle);
+    }
+
+    function renderLabel(label) {
+      var box = document.createElement("div");
+      box.style.position = "absolute";
+      box.style.left =
+        metrics.left + label.x * metrics.width - label.width / 2 + "px";
+      box.style.top =
+        metrics.top + label.y * metrics.height - label.height / 2 + "px";
+      box.style.width = label.width + "px";
+      box.style.minHeight = label.height + "px";
+      box.style.padding = "2px 6px";
+      box.style.boxSizing = "border-box";
+      box.style.background = Editor.isDarkMode() ? "#1f1f1f" : "#ffffff";
+      box.style.border =
+        state.selectedItem != null &&
+        state.selectedItem.type == "label" &&
+        state.selectedItem.id == label.id
+          ? "2px solid #1a73e8"
+          : "1px dashed #9aa4b2";
+      box.style.borderRadius = "4px";
+      box.style.fontSize = "12px";
+      box.style.lineHeight = "20px";
+      box.style.textAlign = label.align;
+      box.style.cursor = "move";
+      box.style.userSelect = "none";
+      box.style.zIndex = "2";
+      box.innerText = label.text;
+      mxEvent.addListener(box, "mousedown", startDrag("label", label.id, box));
+      mxEvent.addListener(box, "click", function (evt) {
+        evt.stopPropagation();
+        updateSelectedItem("label", label.id);
+        updatePreview(state.currentSpec);
+      });
+      mxEvent.addListener(box, "dblclick", function (evt) {
+        evt.stopPropagation();
+        var nextText = window.prompt("输入文本框内容", label.text);
+        if (nextText == null) {
+          return;
+        }
+        label.text = trim(nextText) || label.text;
+        syncEditorJson(state.currentSpec);
+        updateSelectedItem("label", label.id);
+        updatePreview(state.currentSpec);
+      });
+      surface.appendChild(box);
+    }
+
+    for (var i = 0; i < state.currentSpec.ports.length; i++) {
+      renderPort(state.currentSpec.ports[i]);
+    }
+
+    for (var j = 0; j < state.currentSpec.labels.length; j++) {
+      renderLabel(state.currentSpec.labels[j]);
+    }
+
+    mxEvent.addListener(surface, "click", function (evt) {
+      if (evt.target !== surface) {
+        return;
+      }
+
+      var point = getRelativePoint(
+        evt,
+        surface,
+        metrics,
+        state.previewMode == "port",
+      );
+
+      if (state.previewMode == "port") {
+        state.currentSpec.ports.push({
+          id: nextItemId("port"),
+          x: point.x,
+          y: point.y,
+        });
+        syncEditorJson(state.currentSpec);
+        updateSelectedItem(
+          "port",
+          state.currentSpec.ports[state.currentSpec.ports.length - 1].id,
+        );
+        updatePreview(state.currentSpec);
+      } else if (state.previewMode == "label") {
+        var text = window.prompt("输入文本框内容", "文本");
+        var labelId = nextItemId("label");
+
+        if (text == null) {
+          return;
+        }
+
+        state.currentSpec.labels.push(
+          normalizeLabelItem(
+            {
+              id: labelId,
+              text: trim(text) || "文本",
+              x: point.x,
+              y: point.y,
+              width: 120,
+              height: 26,
+              align: "center",
+            },
+            labelId,
+            "文本",
+          ),
+        );
+        syncEditorJson(state.currentSpec);
+        updateSelectedItem(
+          "label",
+          state.currentSpec.labels[state.currentSpec.labels.length - 1].id,
+        );
+        updatePreview(state.currentSpec);
+      } else {
+        updateSelectedItem(null, null);
+        updatePreview(state.currentSpec);
+      }
+    });
   }
 
   // 根节点只作为透明容器和连接点宿主
@@ -279,59 +674,195 @@ Draw.loadPlugin(function (ui) {
     return count <= 0 ? 0.5 : (index + 1) / (count + 1);
   }
 
-  // portLayout 持久化在根节点属性里，保存左右端子的相对纵向位置。
-  function parsePortLayout(raw) {
-    var parsed = { left: [], right: [] };
+  // 规范化单个端口点位，最终格式为 {id, x, y}，x/y 都在 0..1。
+  function normalizePortPoint(raw, fallbackId, fallbackX, fallbackY) {
+    var id = fallbackId;
+    var x = fallbackX;
+    var y = fallbackY;
 
-    if (raw != null && raw.length > 0) {
-      try {
-        var obj = JSON.parse(raw);
-        parsed.left = Array.isArray(obj.left) ? obj.left : [];
-        parsed.right = Array.isArray(obj.right) ? obj.right : [];
-      } catch (e) {
-        // ignore malformed saved layouts
-      }
+    if (isObject(raw)) {
+      id = trim(raw.id || raw.key || raw.name) || fallbackId;
+      x = toFloat(raw.x, fallbackX);
+      y = toFloat(raw.y, fallbackY);
+    } else if (typeof raw == "number") {
+      y = raw;
     }
 
-    return parsed;
+    return {
+      id: id,
+      x: clamp(x, 0, 1),
+      y: clamp(y, 0, 1),
+    };
   }
 
-  // 根据端子数量和已有布局，生成当前图元应使用的完整连接点布局。
-  // base 可来自历史布局，在刷新图元时尽量保留用户已经调过的位置。
-  function buildPortLayout(spec, base) {
-    base = base || { left: [], right: [] };
-    var layout = { left: [], right: [] };
+  // 规范化单个文本框定义，位置使用相对坐标，可落在图元外部。
+  function normalizeLabelItem(raw, fallbackId, fallbackText) {
+    var text = fallbackText;
+    var id = fallbackId;
+    var x = 0.5;
+    var y = -0.18;
+    var width = 120;
+    var height = 26;
+    var align = "center";
+
+    if (isObject(raw)) {
+      text = trim(raw.text || raw.label) || fallbackText;
+      id = trim(raw.id || raw.key || raw.name) || fallbackId;
+      x = toFloat(raw.x, x);
+      y = toFloat(raw.y, y);
+      width = Math.max(40, toInt(raw.width, width));
+      height = Math.max(20, toInt(raw.height, height));
+      align = normalizeLabelAlign(raw.align);
+    } else {
+      text = trim(raw) || fallbackText;
+    }
+
+    return {
+      id: id,
+      text: text,
+      x: clamp(x, -1.5, 2.5),
+      y: clamp(y, -1.5, 2.5),
+      width: width,
+      height: height,
+      align: align,
+    };
+  }
+
+  // 统一把 ports 解析成端口点位数组。
+  // 新格式：
+  // ports: [{ id: "p1", x: 0, y: 0.3 }, ...]
+  // 兼容格式：
+  // ports: { items: [...] } / ports: { left: [0.3], right: [0.7] } / ports: { leftCount, rightCount }。
+  function normalizePortLayout(rawPorts) {
+    var points = [];
     var i;
 
-    for (i = 0; i < spec.ports.leftCount; i++) {
-      layout.left[i] = clamp(
-        base.left[i] != null
-          ? parseFloat(base.left[i])
-          : defaultPortPosition(i, spec.ports.leftCount),
-        0,
-        1,
-      );
+    if (Array.isArray(rawPorts)) {
+      for (i = 0; i < rawPorts.length; i++) {
+        points.push(
+          normalizePortPoint(
+            rawPorts[i],
+            "port:" + i,
+            0.5,
+            (i + 1) / (rawPorts.length + 1),
+          ),
+        );
+      }
+      return points;
     }
 
-    for (i = 0; i < spec.ports.rightCount; i++) {
-      layout.right[i] = clamp(
-        base.right[i] != null
-          ? parseFloat(base.right[i])
-          : defaultPortPosition(i, spec.ports.rightCount),
-        0,
-        1,
-      );
+    if (!isObject(rawPorts)) {
+      return points;
     }
 
-    return layout;
+    if (Array.isArray(rawPorts.items)) {
+      for (i = 0; i < rawPorts.items.length; i++) {
+        points.push(
+          normalizePortPoint(
+            rawPorts.items[i],
+            "port:" + i,
+            0.5,
+            (i + 1) / (rawPorts.items.length + 1),
+          ),
+        );
+      }
+      return points;
+    }
+
+    if (Array.isArray(rawPorts.left) || Array.isArray(rawPorts.right)) {
+      var left = Array.isArray(rawPorts.left) ? rawPorts.left : [];
+      var right = Array.isArray(rawPorts.right) ? rawPorts.right : [];
+
+      for (i = 0; i < left.length; i++) {
+        points.push(
+          normalizePortPoint(
+            { id: "left:" + i, x: 0, y: left[i] },
+            "left:" + i,
+            0,
+            defaultPortPosition(i, left.length),
+          ),
+        );
+      }
+
+      for (i = 0; i < right.length; i++) {
+        points.push(
+          normalizePortPoint(
+            { id: "right:" + i, x: 1, y: right[i] },
+            "right:" + i,
+            1,
+            defaultPortPosition(i, right.length),
+          ),
+        );
+      }
+
+      return points;
+    }
+
+    // 兼容旧格式：按数量自动生成左右默认位置
+    var leftCount = Math.max(0, toInt(rawPorts.leftCount, 0));
+    var rightCount = Math.max(0, toInt(rawPorts.rightCount, 0));
+
+    for (i = 0; i < leftCount; i++) {
+      points.push({
+        id: "left:" + i,
+        x: 0,
+        y: defaultPortPosition(i, leftCount),
+      });
+    }
+
+    for (i = 0; i < rightCount; i++) {
+      points.push({
+        id: "right:" + i,
+        x: 1,
+        y: defaultPortPosition(i, rightCount),
+      });
+    }
+
+    return points;
   }
 
-  // 把端子布局序列化回根节点属性，便于保存和刷新时复用。
+  function normalizeLabels(rawLabels) {
+    var labels = [];
+    var i;
+
+    if (!Array.isArray(rawLabels)) {
+      return labels;
+    }
+
+    for (i = 0; i < rawLabels.length; i++) {
+      labels.push(
+        normalizeLabelItem(rawLabels[i], "label:" + i, "文本" + (i + 1)),
+      );
+    }
+
+    return labels;
+  }
+
+  // 从根节点属性读取端口点位数组。
+  function parsePortLayout(raw) {
+    if (raw == null || raw.length == 0) {
+      return [];
+    }
+
+    try {
+      return normalizePortLayout(JSON.parse(raw));
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // 根据 spec 以及历史布局，生成当前图元应使用的端口点位。
+  // spec.ports 有值时优先使用；为空时回退到 base。
+  function buildPortLayout(spec, base) {
+    var current = normalizePortLayout(spec.ports);
+    var fallback = normalizePortLayout(base);
+
+    return current.length > 0 ? current : fallback;
+  }
+
+  // 把端口点位数组序列化回根节点属性，便于保存和刷新时复用。
   function serializePortLayout(layout) {
-    return JSON.stringify({
-      left: layout.left || [],
-      right: layout.right || [],
-    });
+    return JSON.stringify(normalizePortLayout(layout));
   }
 
   // 所有业务属性都挂在根节点 value 上，便于 Edit Data 后再执行“刷新电气图元”。
@@ -344,10 +875,13 @@ Draw.loadPlugin(function (ui) {
     node.setAttribute("deviceCode", spec.device.code);
     node.setAttribute("devicePower", spec.device.power);
     node.setAttribute("mode", spec.device.mode);
-    node.setAttribute("leftCount", String(spec.ports.leftCount));
-    node.setAttribute("rightCount", String(spec.ports.rightCount));
     node.setAttribute("paramsJson", JSON.stringify(spec.device.params || {}));
+    node.setAttribute("portsJson", serializePortLayout(layout));
     node.setAttribute("portLayout", serializePortLayout(layout));
+    node.setAttribute(
+      "labelsJson",
+      JSON.stringify(normalizeLabels(spec.labels)),
+    );
     node.setAttribute("symbolPayload", JSON.stringify(spec));
 
     return node;
@@ -406,14 +940,14 @@ Draw.loadPlugin(function (ui) {
   }
 
   // 文本框和主/备标记都实现为 root 的相对子节点。
-  function createLabelCell(key, text, x, y, width, height, dx, dy, align) {
-    var geometry = new mxGeometry(x, y, width, height);
+  function createLabelCell(label) {
+    var geometry = new mxGeometry(label.x, label.y, label.width, label.height);
     geometry.relative = true;
-    geometry.offset = new mxPoint(dx, dy);
+    geometry.offset = new mxPoint(-label.width / 2, -label.height / 2);
     var cell = new mxCell(
-      createMetaCell(LABEL_TAG, LABEL_KIND, key, text),
+      createMetaCell(LABEL_TAG, LABEL_KIND, label.id, label.text),
       geometry,
-      makeLabelStyle(align),
+      makeLabelStyle(label.align),
     );
     cell.vertex = true;
     cell.setConnectable(false);
@@ -421,7 +955,7 @@ Draw.loadPlugin(function (ui) {
     return cell;
   }
 
-  function applyLabelCell(cell, key, text, x, y, width, height, dx, dy, align) {
+  function applyLabelCell(cell, label) {
     var geometry = model.getGeometry(cell);
 
     if (geometry == null) {
@@ -430,20 +964,20 @@ Draw.loadPlugin(function (ui) {
       geometry = geometry.clone();
     }
 
-    geometry.x = x;
-    geometry.y = y;
-    geometry.width = width;
-    geometry.height = height;
+    geometry.x = label.x;
+    geometry.y = label.y;
+    geometry.width = label.width;
+    geometry.height = label.height;
     geometry.relative = true;
-    geometry.offset = new mxPoint(dx, dy);
+    geometry.offset = new mxPoint(-label.width / 2, -label.height / 2);
     model.setGeometry(cell, geometry);
 
     var value = cloneValue(cell.value);
     value.setAttribute("esKind", LABEL_KIND);
-    value.setAttribute("esKey", key);
-    value.setAttribute("label", text);
+    value.setAttribute("esKey", label.id);
+    value.setAttribute("label", label.text);
     model.setValue(cell, value);
-    model.setStyle(cell, makeLabelStyle(align));
+    model.setStyle(cell, makeLabelStyle(label.align));
     cell.setConnectable(false);
   }
 
@@ -578,6 +1112,7 @@ Draw.loadPlugin(function (ui) {
     var keepLabels = {};
     var keepBadges = {};
     var child;
+    var i;
 
     child = mapped.body.main;
 
@@ -589,112 +1124,17 @@ Draw.loadPlugin(function (ui) {
 
     keepBodies.main = true;
 
-    if (spec.device.name.length > 0) {
-      child = mapped.label.name;
+    for (i = 0; i < spec.labels.length; i++) {
+      var label = spec.labels[i];
+      child = mapped.label[label.id];
 
       if (child != null) {
-        applyLabelCell(
-          child,
-          "name",
-          spec.device.name,
-          0.5,
-          0,
-          120,
-          22,
-          -60,
-          -30,
-          "center",
-        );
+        applyLabelCell(child, label);
       } else {
-        addChild(
-          root,
-          createLabelCell(
-            "name",
-            spec.device.name,
-            0.5,
-            0,
-            120,
-            22,
-            -60,
-            -30,
-            "center",
-          ),
-        );
+        addChild(root, createLabelCell(label));
       }
 
-      keepLabels.name = true;
-    }
-
-    if (spec.device.code.length > 0) {
-      child = mapped.label.code;
-
-      if (child != null) {
-        applyLabelCell(
-          child,
-          "code",
-          spec.device.code,
-          0,
-          1,
-          110,
-          22,
-          -6,
-          8,
-          "left",
-        );
-      } else {
-        addChild(
-          root,
-          createLabelCell(
-            "code",
-            spec.device.code,
-            0,
-            1,
-            110,
-            22,
-            -6,
-            8,
-            "left",
-          ),
-        );
-      }
-
-      keepLabels.code = true;
-    }
-
-    if (spec.device.power.length > 0) {
-      child = mapped.label.power;
-
-      if (child != null) {
-        applyLabelCell(
-          child,
-          "power",
-          spec.device.power,
-          1,
-          1,
-          110,
-          22,
-          -104,
-          8,
-          "right",
-        );
-      } else {
-        addChild(
-          root,
-          createLabelCell(
-            "power",
-            spec.device.power,
-            1,
-            1,
-            110,
-            22,
-            -104,
-            8,
-            "right",
-          ),
-        );
-      }
-
-      keepLabels.power = true;
+      keepLabels[label.id] = true;
     }
 
     if (
@@ -735,7 +1175,7 @@ Draw.loadPlugin(function (ui) {
     return syncRoot(root, spec, null);
   }
 
-  // 从图元根节点反向提取 spec。
+  // 从图元根节点反向提取 spec，以便 Edit Data 后重新刷新图元时使用。
   function extractSpec(root) {
     var raw = getAttr(root, "symbolPayload");
 
@@ -749,9 +1189,8 @@ Draw.loadPlugin(function (ui) {
       spec.device = {};
     }
 
-    if (!isObject(spec.ports)) {
-      spec.ports = {};
-    }
+    spec.ports = normalizePortLayout(spec.ports);
+    spec.labels = normalizeLabels(spec.labels);
 
     spec.symbolId = trim(getAttr(root, "symbolId")) || spec.symbolId;
     spec.title = trim(getAttr(root, "title")) || spec.title;
@@ -762,14 +1201,26 @@ Draw.loadPlugin(function (ui) {
     spec.device.power =
       trim(getAttr(root, "devicePower")) || trim(spec.device.power);
     spec.device.mode = normalizeMode(getAttr(root, "mode") || spec.device.mode);
-    spec.ports.leftCount = Math.max(
-      0,
-      toInt(getAttr(root, "leftCount"), spec.ports.leftCount),
-    );
-    spec.ports.rightCount = Math.max(
-      0,
-      toInt(getAttr(root, "rightCount"), spec.ports.rightCount),
-    );
+
+    var portsRaw = getAttr(root, "portsJson");
+
+    if (portsRaw == null || portsRaw.length == 0) {
+      portsRaw = getAttr(root, "portLayout");
+    }
+
+    if (portsRaw != null && portsRaw.length > 0) {
+      spec.ports = parsePortLayout(portsRaw);
+    }
+
+    var labelsRaw = getAttr(root, "labelsJson");
+
+    if (labelsRaw != null && labelsRaw.length > 0) {
+      try {
+        spec.labels = normalizeLabels(JSON.parse(labelsRaw));
+      } catch (e) {
+        // ignore malformed labels override
+      }
+    }
 
     var paramsJson = getAttr(root, "paramsJson");
 
@@ -868,33 +1319,19 @@ Draw.loadPlugin(function (ui) {
     }
 
     var layout = buildPortLayout(
-      {
-        ports: {
-          leftCount: Math.max(0, toInt(getAttr(root, "leftCount"), 0)),
-          rightCount: Math.max(0, toInt(getAttr(root, "rightCount"), 0)),
-        },
-      },
+      { ports: parsePortLayout(getAttr(root, "portsJson")) },
       parsePortLayout(getAttr(root, "portLayout")),
     );
     var constraints = [];
     var i;
 
-    for (i = 0; i < layout.left.length; i++) {
+    for (i = 0; i < layout.length; i++) {
+      var point = layout[i];
       constraints.push(
         new mxConnectionConstraint(
-          new mxPoint(0, layout.left[i]),
+          new mxPoint(point.x, point.y),
           false,
-          "left:" + i,
-        ),
-      );
-    }
-
-    for (i = 0; i < layout.right.length; i++) {
-      constraints.push(
-        new mxConnectionConstraint(
-          new mxPoint(1, layout.right[i]),
-          false,
-          "right:" + i,
+          point.id || "port:" + i,
         ),
       );
     }
@@ -1081,6 +1518,8 @@ Draw.loadPlugin(function (ui) {
   function parseEditorSpec() {
     try {
       var spec = getSpecFromEditor();
+      state.currentSpec = spec;
+      syncEditorJson(spec);
       updatePreview(spec);
       showStatus("预览已刷新", false);
       return spec;
@@ -1093,6 +1532,7 @@ Draw.loadPlugin(function (ui) {
   // 文件导入
   function loadJsonText(text) {
     var spec = normalizeSpec(JSON.parse(text));
+    state.currentSpec = spec;
     state.jsonArea.value = JSON.stringify(spec, null, 2);
     state.widthInput.value = spec.size.width;
     state.heightInput.value = spec.size.height;
@@ -1171,7 +1611,7 @@ Draw.loadPlugin(function (ui) {
       {
         symbolId: "motor-starter",
         title: "\u7535\u673a\u542f\u52a8\u5668",
-        svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80"><rect x="10" y="10" width="100" height="60" rx="8" ry="8" fill="#f4f8ff" stroke="#1a73e8" stroke-width="4"/><circle cx="60" cy="40" r="16" fill="#ffffff" stroke="#1a73e8" stroke-width="3"/></svg>',
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80"><rect x="10" y="10" width="100" height="60" rx="8" ry="8" fill="#fff2e8" stroke="#c96a28" stroke-width="4"/><circle cx="60" cy="40" r="16" fill="#fffdfb" stroke="#c96a28" stroke-width="3"/></svg>',
         size: { width: 120, height: 80 },
         device: {
           name: "\u8bbe\u5907\u540d",
@@ -1180,7 +1620,7 @@ Draw.loadPlugin(function (ui) {
           mode: "primary",
           params: { "\u5176\u4ed6\u53c2\u6570": "\u793a\u4f8b" },
         },
-        ports: { leftCount: 2, rightCount: 2 },
+        labels: [],
         svgVariants: {},
       },
       null,
@@ -1190,11 +1630,11 @@ Draw.loadPlugin(function (ui) {
 
     state.preview = document.createElement("div");
     state.preview.style.marginTop = "10px";
-    state.preview.style.height = "170px";
+    state.preview.style.height = "328px";
     state.preview.style.border = "1px solid #d0d7de";
-    state.preview.style.display = "flex";
-    state.preview.style.alignItems = "center";
-    state.preview.style.justifyContent = "center";
+    state.preview.style.display = "block";
+    state.preview.style.boxSizing = "border-box";
+    state.preview.style.overflow = "hidden";
     state.preview.style.background = Editor.isDarkMode()
       ? "#111111"
       : "#fafafa";
