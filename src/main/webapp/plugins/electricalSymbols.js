@@ -21,6 +21,9 @@ Draw.loadPlugin(function (ui) {
     status: null,
     symbolIdInput: null,
     symbolIdTouched: false,
+    variantFieldInput: null,
+    variantEnabled: false,
+    lastAutoVariantField: "",
     jsonArea: null,
     preview: null,
     currentSpec: null,
@@ -30,8 +33,7 @@ Draw.loadPlugin(function (ui) {
     uploadedPrimarySvg: "",
     uploadedPrimarySvgName: "",
     uploadedPrimarySvgSize: null,
-    uploadedStandbySvg: "",
-    uploadedStandbySvgName: "",
+    variantItems: [],
   };
 
   mxResources.parse(
@@ -42,8 +44,9 @@ Draw.loadPlugin(function (ui) {
       "electricalPreview=刷新预览",
       "electricalAddLibrary=加入库",
       "electricalExportLibrary=导出库",
-      "electricalUploadPrimarySvg=上传主用SVG",
-      "electricalUploadStandbySvg=上传备用SVG",
+      "electricalUploadPrimarySvg=上传默认SVG",
+      "electricalEnableVariants=启用变体SVG",
+      "electricalAddVariantSvg=新增变体SVG",
     ].join("\n"),
   );
 
@@ -209,6 +212,192 @@ Draw.loadPlugin(function (ui) {
     );
   }
 
+  function isIdentifierKey(key) {
+    return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key);
+  }
+
+  function formatTypeDefinitionValue(value, indent) {
+    indent = indent || 0;
+    var pad = new Array(indent + 1).join(" ");
+    var childPad = new Array(indent + 3).join(" ");
+    var key;
+    var lines;
+
+    if (isObject(value)) {
+      lines = ["{"];
+
+      for (key in value) {
+        if (value.hasOwnProperty(key)) {
+          lines.push(
+            childPad +
+              (isIdentifierKey(key) ? key : JSON.stringify(key)) +
+              ": " +
+              formatTypeDefinitionValue(value[key], indent + 2) +
+              ",",
+          );
+        }
+      }
+
+      lines.push(pad + "}");
+      return lines.join("\n");
+    }
+
+    if (Array.isArray(value)) {
+      return "array";
+    }
+
+    if (typeof value === "string" && isIdentifierKey(value)) {
+      return value;
+    }
+
+    if (value === null) {
+      return "nullType";
+    }
+
+    return JSON.stringify(value);
+  }
+
+  function formatTypeDefinition(schema) {
+    return formatTypeDefinitionValue(schema, 0);
+  }
+
+  function setSchemaPath(schema, path, value) {
+    var parts = trim(path).split(".");
+    var current = schema;
+    var i;
+
+    if (!isObject(schema) || trim(path).length == 0) {
+      return;
+    }
+
+    for (i = 0; i < parts.length - 1; i++) {
+      if (!isObject(current[parts[i]])) {
+        current[parts[i]] = {};
+      }
+
+      current = current[parts[i]];
+    }
+
+    current[parts[parts.length - 1]] = value;
+  }
+
+  function deleteSchemaPath(schema, path) {
+    var parts = trim(path).split(".");
+    var stack = [];
+    var current = schema;
+    var i;
+
+    if (!isObject(schema) || trim(path).length == 0) {
+      return;
+    }
+
+    for (i = 0; i < parts.length - 1; i++) {
+      if (!isObject(current[parts[i]])) {
+        return;
+      }
+
+      stack.push({ parent: current, key: parts[i] });
+      current = current[parts[i]];
+    }
+
+    delete current[parts[parts.length - 1]];
+
+    for (i = stack.length - 1; i >= 0; i--) {
+      current = stack[i].parent[stack[i].key];
+
+      var hasChild = false;
+      var childKey;
+
+      for (childKey in current) {
+        if (current.hasOwnProperty(childKey)) {
+          hasChild = true;
+          break;
+        }
+      }
+
+      if (isObject(current) && !hasChild) {
+        delete stack[i].parent[stack[i].key];
+      } else {
+        break;
+      }
+    }
+  }
+
+  // 变体字段启用或修改时，自动把该字段同步进类型定义文本。
+  function syncVariantFieldInSchema(nextField, enabled) {
+    if (state.jsonArea == null) {
+      return;
+    }
+
+    try {
+      var schema = parseTypeDefinition(state.jsonArea.value);
+
+      if (!isObject(schema)) {
+        return;
+      }
+
+      if (
+        trim(state.lastAutoVariantField).length > 0 &&
+        state.lastAutoVariantField != trim(nextField)
+      ) {
+        deleteSchemaPath(schema, state.lastAutoVariantField);
+      }
+
+      if (enabled && trim(nextField).length > 0) {
+        setSchemaPath(schema, nextField, "string");
+        state.lastAutoVariantField = trim(nextField);
+      } else {
+        state.lastAutoVariantField = "";
+      }
+
+      state.jsonArea.value = formatTypeDefinition(schema);
+    } catch (e) {
+      showStatus("类型定义格式有误，无法自动同步变体字段", true);
+    }
+  }
+
+  // 统一把当前变体条目列表收集成 svgVariants 对象。
+  function collectVariantMap() {
+    var variants = {};
+    var i;
+
+    if (!state.variantEnabled) {
+      return variants;
+    }
+
+    for (i = 0; i < state.variantItems.length; i++) {
+      var item = state.variantItems[i];
+      var key = trim(item.key);
+
+      if (key.length > 0 && trim(item.svg).length > 0) {
+        variants[key] = item.svg;
+      }
+    }
+
+    return variants;
+  }
+
+  // 变体 key 必须唯一，避免同一个属性值映射到多张 SVG。
+  function hasVariantKey(key, ignoreId) {
+    var normalized = trim(key);
+    var i;
+
+    if (normalized.length == 0) {
+      return false;
+    }
+
+    for (i = 0; i < state.variantItems.length; i++) {
+      if (
+        state.variantItems[i].id != ignoreId &&
+        trim(state.variantItems[i].key) == normalized
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function parseTypeDefinition(text) {
     var source = trim(text);
 
@@ -336,6 +525,7 @@ Draw.loadPlugin(function (ui) {
     var params = isObject(device.params) ? cloneJson(device.params) : {};
     var schema = isObject(raw.schema) ? cloneJson(raw.schema) : {};
     var data = isObject(raw.data) ? cloneJson(raw.data) : {};
+    var variantField = trim(raw.variantField || "");
     var spec = {
       symbolId: trim(raw.symbolId) || "symbol-" + Date.now(),
       title: trim(raw.title) || trim(device.name) || "电气图元",
@@ -355,27 +545,42 @@ Draw.loadPlugin(function (ui) {
       labels: normalizeLabels(raw.labels),
       schema: schema,
       data: data,
+      variantField: variantField,
       svgVariants: {},
     };
 
-    if (variants.primary != null && trim(variants.primary).length > 0) {
-      spec.svgVariants.primary = validateSvg(variants.primary);
-    }
-
-    if (variants.standby != null && trim(variants.standby).length > 0) {
-      spec.svgVariants.standby = validateSvg(variants.standby);
+    for (var variantKey in variants) {
+      if (
+        variants.hasOwnProperty(variantKey) &&
+        trim(variantKey).length > 0 &&
+        variants[variantKey] != null &&
+        trim(variants[variantKey]).length > 0
+      ) {
+        spec.svgVariants[trim(variantKey)] = validateSvg(variants[variantKey]);
+      }
     }
 
     return spec;
   }
 
   // 根据 mode 和 svgVariants 选出当前真正要渲染的 svg
+  function getActiveVariantKey(spec) {
+    var field = trim(spec.variantField || "");
+    var value = trim(getValueByPath(spec.data, field));
+
+    if (value.length == 0 && field == "mode") {
+      value = trim(spec.device.mode);
+    }
+
+    return value;
+  }
+
+  // 根据实例中的变体字段和值，选出当前真正要渲染的 svg
   function getActiveSvg(spec) {
-    if (
-      spec.device.mode.length > 0 &&
-      spec.svgVariants[spec.device.mode] != null
-    ) {
-      return spec.svgVariants[spec.device.mode];
+    var variantKey = getActiveVariantKey(spec);
+
+    if (variantKey.length > 0 && spec.svgVariants[variantKey] != null) {
+      return spec.svgVariants[variantKey];
     }
 
     return spec.svg;
@@ -401,7 +606,7 @@ Draw.loadPlugin(function (ui) {
 
   function buildTemplateSpec() {
     if (trim(state.uploadedPrimarySvg).length == 0) {
-      throw new Error("请先上传主用SVG");
+      throw new Error("请先上传默认SVG");
     }
 
     var schema = parseTypeDefinition(state.jsonArea.value);
@@ -428,13 +633,12 @@ Draw.loadPlugin(function (ui) {
       labels: current.labels || [],
       schema: schema,
       data: current.data || {},
-      svgVariants: {
-        primary: state.uploadedPrimarySvg,
-        standby:
-          trim(state.uploadedStandbySvg).length > 0
-            ? state.uploadedStandbySvg
-            : ((current.svgVariants || {}).standby || ""),
-      },
+      variantField:
+        state.variantEnabled
+          ? trim(state.variantFieldInput != null ? state.variantFieldInput.value : "") ||
+            trim(current.variantField || "mode")
+          : "",
+      svgVariants: collectVariantMap(),
     });
   }
 
@@ -567,7 +771,7 @@ Draw.loadPlugin(function (ui) {
       empty.style.alignItems = "center";
       empty.style.justifyContent = "center";
       empty.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
-      empty.innerText = "请先上传主用SVG，再在这里添加连接点和文本框";
+      empty.innerText = "请先上传默认SVG，再在这里添加连接点和文本框";
       state.preview.appendChild(empty);
       return;
     }
@@ -1132,6 +1336,7 @@ Draw.loadPlugin(function (ui) {
     node.setAttribute("deviceCode", spec.device.code);
     node.setAttribute("devicePower", spec.device.power);
     node.setAttribute("mode", spec.device.mode);
+    node.setAttribute("variantField", trim(spec.variantField || "mode"));
     node.setAttribute("paramsJson", JSON.stringify(spec.device.params || {}));
     node.setAttribute("portsJson", serializePortLayout(layout));
     node.setAttribute("portLayout", serializePortLayout(layout));
@@ -1462,6 +1667,8 @@ Draw.loadPlugin(function (ui) {
     spec.device.power =
       trim(getAttr(root, "devicePower")) || trim(spec.device.power);
     spec.device.mode = normalizeMode(getAttr(root, "mode") || spec.device.mode);
+    spec.variantField =
+      trim(getAttr(root, "variantField")) || trim(spec.variantField || "mode");
 
     var portsRaw = getAttr(root, "portsJson");
 
@@ -2001,8 +2208,16 @@ Draw.loadPlugin(function (ui) {
     return button;
   }
 
-  // 统一绑定 SVG 上传按钮，主图和主备变体都走同一套校验和状态写入逻辑。
-  function bindSvgUpload(input, nameNode, svgKey, nameKey, successMessage, updateSize) {
+  // 统一绑定 SVG 上传按钮；可直接写入 state，也可把结果交给自定义回调处理。
+  function bindSvgUpload(
+    input,
+    nameNode,
+    svgKey,
+    nameKey,
+    successMessage,
+    updateSize,
+    onLoaded,
+  ) {
     mxEvent.addListener(input, "change", function () {
       if (input.files == null || input.files.length == 0) {
         return;
@@ -2011,14 +2226,28 @@ Draw.loadPlugin(function (ui) {
       var reader = new FileReader();
       reader.onload = function () {
         try {
-          state[svgKey] = validateSvg(reader.result);
-          state[nameKey] = input.files[0].name;
+          var svg = validateSvg(reader.result);
+          var fileName = input.files[0].name;
 
-          if (updateSize) {
-            state.uploadedPrimarySvgSize = extractSvgSize(state[svgKey]);
+          if (svgKey != null) {
+            state[svgKey] = svg;
           }
 
-          nameNode.innerText = state[nameKey];
+          if (nameKey != null) {
+            state[nameKey] = fileName;
+          }
+
+          if (typeof onLoaded === "function") {
+            onLoaded(svg, fileName);
+          }
+
+          if (updateSize) {
+            state.uploadedPrimarySvgSize = extractSvgSize(svg);
+          }
+
+          if (nameNode != null && nameKey != null) {
+            nameNode.innerText = state[nameKey];
+          }
 
           if (trim(state.uploadedPrimarySvg).length > 0) {
             parseEditorSpec();
@@ -2038,6 +2267,17 @@ Draw.loadPlugin(function (ui) {
   // 插件窗口是一个轻量 mxWindow
   // 把“JSON 输入、预览、插入、入库、导出、刷新”几个核心操作集中在一个面板里。
   function createWindow() {
+    state.symbolIdTouched = false;
+    state.variantEnabled = false;
+    state.lastAutoVariantField = "";
+    state.variantItems = [];
+    state.currentSpec = null;
+    state.selectedItem = null;
+    state.previewMode = "select";
+    state.uploadedPrimarySvg = "";
+    state.uploadedPrimarySvgName = "";
+    state.uploadedPrimarySvgSize = null;
+
     var container = document.createElement("div");
     container.style.width = "100%";
     container.style.height = "100%";
@@ -2100,29 +2340,159 @@ Draw.loadPlugin(function (ui) {
     primaryName.style.marginLeft = "8px";
     primaryName.style.marginRight = "12px";
     primaryName.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
-    primaryName.innerText = "未选择主用SVG";
+    primaryName.innerText = "未选择默认SVG";
     topRow.appendChild(primaryName);
 
-    var standbyInput = document.createElement("input");
-    standbyInput.setAttribute("type", "file");
-    standbyInput.setAttribute("accept", ".svg,image/svg+xml");
-    standbyInput.style.display = "none";
-    topRow.appendChild(standbyInput);
+    var variantToggleRow = document.createElement("div");
+    variantToggleRow.style.display = "flex";
+    variantToggleRow.style.alignItems = "center";
+    variantToggleRow.style.gap = "8px";
+    variantToggleRow.style.marginTop = "10px";
+    container.appendChild(variantToggleRow);
 
-    var standbyButton = createButton(
-      mxResources.get("electricalUploadStandbySvg"),
+    var variantToggle = document.createElement("input");
+    variantToggle.setAttribute("type", "checkbox");
+    variantToggleRow.appendChild(variantToggle);
+
+    var variantToggleLabel = document.createElement("div");
+    variantToggleLabel.innerText = mxResources.get("electricalEnableVariants");
+    variantToggleRow.appendChild(variantToggleLabel);
+
+    var variantSection = document.createElement("div");
+    variantSection.style.display = "none";
+    container.appendChild(variantSection);
+
+    var variantRow = document.createElement("div");
+    variantRow.style.display = "flex";
+    variantRow.style.alignItems = "center";
+    variantRow.style.gap = "8px";
+    variantRow.style.marginTop = "10px";
+    variantSection.appendChild(variantRow);
+
+    var variantLabel = document.createElement("div");
+    variantLabel.style.width = "90px";
+    variantLabel.style.flex = "0 0 90px";
+    variantLabel.innerText = "变体字段";
+    variantRow.appendChild(variantLabel);
+
+    state.variantFieldInput = document.createElement("input");
+    state.variantFieldInput.setAttribute("type", "text");
+    state.variantFieldInput.style.flex = "1 1 auto";
+    state.variantFieldInput.style.boxSizing = "border-box";
+    state.variantFieldInput.value = "mode";
+    variantRow.appendChild(state.variantFieldInput);
+
+    var addVariantButton = createButton(
+      mxResources.get("electricalAddVariantSvg"),
       function () {
-        standbyInput.click();
+        state.variantItems.push({
+          id: nextItemId("variant"),
+          key: "",
+          svg: "",
+          name: "",
+        });
+        renderVariantList();
       },
     );
-    standbyButton.style.marginTop = "0";
-    topRow.appendChild(standbyButton);
+    addVariantButton.style.marginTop = "0";
+    addVariantButton.style.marginRight = "0";
+    variantRow.appendChild(addVariantButton);
 
-    var standbyName = document.createElement("div");
-    standbyName.style.marginLeft = "8px";
-    standbyName.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
-    standbyName.innerText = "未选择备用SVG";
-    topRow.appendChild(standbyName);
+    var variantList = document.createElement("div");
+    variantList.style.marginTop = "10px";
+    variantSection.appendChild(variantList);
+
+    function refreshVariantSection() {
+      variantSection.style.display = state.variantEnabled ? "block" : "none";
+      variantToggle.checked = state.variantEnabled;
+    }
+
+    function renderVariantList() {
+      variantList.innerHTML = "";
+
+      if (state.variantItems.length == 0) {
+        return;
+      }
+
+      state.variantItems.forEach(function (item) {
+        var row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.alignItems = "center";
+        row.style.gap = "8px";
+        row.style.marginTop = "8px";
+        variantList.appendChild(row);
+
+        var keyInput = document.createElement("input");
+        keyInput.setAttribute("type", "text");
+        keyInput.setAttribute("placeholder", "变体值，如 standby / large / medium");
+        keyInput.style.width = "180px";
+        keyInput.style.boxSizing = "border-box";
+        keyInput.value = item.key;
+        row.appendChild(keyInput);
+
+        var uploadInput = document.createElement("input");
+        uploadInput.setAttribute("type", "file");
+        uploadInput.setAttribute("accept", ".svg,image/svg+xml");
+        uploadInput.style.display = "none";
+        row.appendChild(uploadInput);
+
+        var uploadButton = createButton("上传变体SVG", function () {
+          uploadInput.click();
+        });
+        uploadButton.style.marginTop = "0";
+        uploadButton.style.marginRight = "0";
+        row.appendChild(uploadButton);
+
+        var fileName = document.createElement("div");
+        fileName.style.flex = "1 1 auto";
+        fileName.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+        fileName.innerText = item.name || "未选择变体SVG";
+        row.appendChild(fileName);
+
+        var deleteButton = createButton("删除", function () {
+          state.variantItems = state.variantItems.filter(function (entry) {
+            return entry.id != item.id;
+          });
+          renderVariantList();
+          if (trim(state.uploadedPrimarySvg).length > 0) {
+            parseEditorSpec();
+          }
+        });
+        deleteButton.style.marginTop = "0";
+        deleteButton.style.marginRight = "0";
+        row.appendChild(deleteButton);
+
+        mxEvent.addListener(keyInput, "change", function () {
+          var nextKey = trim(keyInput.value);
+
+          if (hasVariantKey(nextKey, item.id)) {
+            showStatus("同一个变体值只能绑定一张SVG", true);
+            keyInput.value = item.key;
+            return;
+          }
+
+          item.key = nextKey;
+
+          if (trim(state.uploadedPrimarySvg).length > 0) {
+            parseEditorSpec();
+          }
+        });
+
+        bindSvgUpload(
+          uploadInput,
+          null,
+          null,
+          null,
+          "变体SVG 已加载",
+          false,
+          function (svg, fileNameText) {
+            item.svg = svg;
+            item.name = fileNameText;
+            fileName.innerText = item.name || "未选择变体SVG";
+          },
+        );
+      });
+    }
 
     state.jsonArea = document.createElement("textarea");
     state.jsonArea.spellcheck = false;
@@ -2135,8 +2505,7 @@ Draw.loadPlugin(function (ui) {
       "  title: string,",
       "  name: string,",
       "  code: string,",
-      "  power: string,",
-      "  mode: string",
+      "  power: string",
       "}",
     ].join("\n");
     container.appendChild(state.jsonArea);
@@ -2191,16 +2560,8 @@ Draw.loadPlugin(function (ui) {
       primaryName,
       "uploadedPrimarySvg",
       "uploadedPrimarySvgName",
-      "主用SVG 已加载",
+      "默认SVG 已加载",
       true,
-    );
-    bindSvgUpload(
-      standbyInput,
-      standbyName,
-      "uploadedStandbySvg",
-      "uploadedStandbySvgName",
-      "备用SVG 已加载",
-      false,
     );
 
     mxEvent.addListener(primaryInput, "change", function () {
@@ -2210,6 +2571,23 @@ Draw.loadPlugin(function (ui) {
         );
       }
     });
+    mxEvent.addListener(state.variantFieldInput, "change", function () {
+      syncVariantFieldInSchema(state.variantFieldInput.value, state.variantEnabled);
+      if (trim(state.uploadedPrimarySvg).length > 0) {
+        parseEditorSpec();
+      }
+    });
+    mxEvent.addListener(variantToggle, "change", function () {
+      state.variantEnabled = variantToggle.checked;
+      refreshVariantSection();
+      syncVariantFieldInSchema(state.variantFieldInput.value, state.variantEnabled);
+
+      if (trim(state.uploadedPrimarySvg).length > 0) {
+        parseEditorSpec();
+      }
+    });
+    refreshVariantSection();
+    renderVariantList();
 
     var x = Math.max(20, (document.body.offsetWidth - 560) / 2);
     var y = 80;
@@ -2232,8 +2610,13 @@ Draw.loadPlugin(function (ui) {
       state.window = null;
       state.status = null;
       state.symbolIdInput = null;
+      state.variantFieldInput = null;
       state.jsonArea = null;
       state.preview = null;
+      state.variantEnabled = false;
+      state.lastAutoVariantField = "";
+      state.variantItems = [];
+      state.currentSpec = null;
     });
     updatePreview(null);
     loadStoredLibrary(null, true);
