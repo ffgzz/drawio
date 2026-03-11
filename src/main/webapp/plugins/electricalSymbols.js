@@ -19,24 +19,31 @@ Draw.loadPlugin(function (ui) {
     updatingModel: false,
     window: null,
     status: null,
+    symbolIdInput: null,
+    symbolIdTouched: false,
     jsonArea: null,
     preview: null,
-    widthInput: null,
-    heightInput: null,
     currentSpec: null,
     previewMode: "select",
     selectedItem: null,
     nextId: 1,
+    uploadedPrimarySvg: "",
+    uploadedPrimarySvgName: "",
+    uploadedPrimarySvgSize: null,
+    uploadedStandbySvg: "",
+    uploadedStandbySvgName: "",
   };
 
   mxResources.parse(
     [
       "electricalSymbols=电气图元...",
+      "electricalCreate=创建电气图元...",
       "electricalRefresh=刷新电气图元",
       "electricalPreview=刷新预览",
-      "electricalInsert=插入图元",
       "electricalAddLibrary=加入库",
       "electricalExportLibrary=导出库",
+      "electricalUploadPrimarySvg=上传主用SVG",
+      "electricalUploadStandbySvg=上传备用SVG",
     ].join("\n"),
   );
 
@@ -145,6 +152,176 @@ Draw.loadPlugin(function (ui) {
     return align == "left" || align == "right" ? align : "center";
   }
 
+  function extractSvgSize(svg) {
+    var doc = mxUtils.parseXml(validateSvg(svg));
+    var root = doc.documentElement;
+    var viewBox = trim(root.getAttribute("viewBox"));
+    var width = toFloat(root.getAttribute("width"), NaN);
+    var height = toFloat(root.getAttribute("height"), NaN);
+
+    if (viewBox.length > 0) {
+      var parts = viewBox.split(/\s+/);
+
+      if (parts.length == 4) {
+        width = toFloat(parts[2], width);
+        height = toFloat(parts[3], height);
+      }
+    }
+
+    return {
+      width: Math.max(20, Math.round(isNaN(width) ? 120 : width)),
+      height: Math.max(20, Math.round(isNaN(height) ? 80 : height)),
+    };
+  }
+
+  // 把任意文本转成适合 symbolId 的短横线标识。
+  function toSlug(value) {
+    var slug = trim(value)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+    return slug;
+  }
+
+  // 从文件名中去掉扩展名，避免 symbolId 带上 .svg 这类后缀噪音。
+  function stripFileExtension(name) {
+    var text = trim(name);
+    var index = text.lastIndexOf(".");
+
+    return index > 0 ? text.substring(0, index) : text;
+  }
+
+  // 生成模板级唯一标识，同一种图元后续实例都复用这个 symbolId。
+  function generateSymbolId(seed) {
+    var base = toSlug(stripFileExtension(seed)) || "electrical-symbol";
+
+    return base + "-" + Date.now();
+  }
+
+  // 生成画布实例级唯一标识，避免同一模板多次插入时冲突。
+  function generateInstanceId() {
+    return (
+      "instance-" +
+      Date.now().toString(36) +
+      "-" +
+      Math.random().toString(36).slice(2, 8)
+    );
+  }
+
+  function parseTypeDefinition(text) {
+    var source = trim(text);
+
+    if (source.length == 0) {
+      return {};
+    }
+
+    try {
+      return JSON.parse(source);
+    } catch (e) {
+      return new Function(
+        "var string='string', number='number', boolean='boolean', object='object', array='array', any='any', nullType='null'; return (" +
+          source +
+          ");",
+      )();
+    }
+  }
+
+  function buildEmptyValueFromSchema(schema) {
+    var key;
+
+    if (Array.isArray(schema)) {
+      return [];
+    }
+
+    if (isObject(schema)) {
+      var result = {};
+
+      for (key in schema) {
+        if (schema.hasOwnProperty(key)) {
+          result[key] = buildEmptyValueFromSchema(schema[key]);
+        }
+      }
+
+      return result;
+    }
+
+    switch (schema) {
+      case "string":
+        return "";
+      case "number":
+        return null;
+      case "boolean":
+        return null;
+      case "array":
+        return [];
+      case "object":
+        return {};
+      default:
+        return null;
+    }
+  }
+
+  function deepMerge(base, value) {
+    var key;
+
+    if (Array.isArray(value)) {
+      return cloneJson(value);
+    }
+
+    if (!isObject(value)) {
+      return value != null ? value : base;
+    }
+
+    var result = isObject(base) ? cloneJson(base) : {};
+
+    for (key in value) {
+      if (value.hasOwnProperty(key)) {
+        result[key] = deepMerge(result[key], value[key]);
+      }
+    }
+
+    return result;
+  }
+
+  function getValueByPath(obj, path) {
+    var current = obj;
+    var parts = trim(path).split(".");
+    var i;
+
+    if (trim(path).length == 0) {
+      return null;
+    }
+
+    for (i = 0; i < parts.length; i++) {
+      if (current == null) {
+        return null;
+      }
+
+      current = current[parts[i]];
+    }
+
+    return current;
+  }
+
+  function buildResolvedLabels(labels, instance) {
+    var result = [];
+    var i;
+
+    for (i = 0; i < labels.length; i++) {
+      var item = cloneJson(labels[i]);
+      var value = getValueByPath(instance, item.binding);
+
+      item.text =
+        trim(item.binding).length > 0
+          ? (value != null ? String(value) : "")
+          : (item.text || "");
+      result.push(item);
+    }
+
+    return result;
+  }
+
   // 把外部 JSON 规范化成统一的数据结构
   // 这里会做默认值填充、字段裁剪和 svg 校验
   function normalizeSpec(raw) {
@@ -157,6 +334,8 @@ Draw.loadPlugin(function (ui) {
     var variants = isObject(raw.svgVariants) ? raw.svgVariants : {};
     var size = isObject(raw.size) ? raw.size : {};
     var params = isObject(device.params) ? cloneJson(device.params) : {};
+    var schema = isObject(raw.schema) ? cloneJson(raw.schema) : {};
+    var data = isObject(raw.data) ? cloneJson(raw.data) : {};
     var spec = {
       symbolId: trim(raw.symbolId) || "symbol-" + Date.now(),
       title: trim(raw.title) || trim(device.name) || "电气图元",
@@ -174,6 +353,8 @@ Draw.loadPlugin(function (ui) {
       },
       ports: normalizePortLayout(ports),
       labels: normalizeLabels(raw.labels),
+      schema: schema,
+      data: data,
       svgVariants: {},
     };
 
@@ -218,20 +399,48 @@ Draw.loadPlugin(function (ui) {
     }
   }
 
-  // 从弹窗编辑区读取并合成当前 spec，同时把宽高输入覆盖回 spec.size
-  function getSpecFromEditor() {
-    var raw = JSON.parse(state.jsonArea.value);
-    var spec = normalizeSpec(raw);
-    spec.size.width = Math.max(
-      20,
-      toInt(state.widthInput.value, spec.size.width),
-    );
-    spec.size.height = Math.max(
-      20,
-      toInt(state.heightInput.value, spec.size.height),
-    );
+  function buildTemplateSpec() {
+    if (trim(state.uploadedPrimarySvg).length == 0) {
+      throw new Error("请先上传主用SVG");
+    }
 
-    return spec;
+    var schema = parseTypeDefinition(state.jsonArea.value);
+
+    if (!isObject(schema)) {
+      throw new Error("类型定义必须是对象");
+    }
+
+    var current = state.currentSpec || {};
+    var symbolId = trim(state.symbolIdInput != null ? state.symbolIdInput.value : "");
+
+    if (symbolId.length == 0) {
+      throw new Error("请先填写图元类型ID");
+    }
+
+    return normalizeSpec({
+      symbolId: symbolId,
+      title: trim(current.title) || "电气图元",
+      svg: state.uploadedPrimarySvg,
+      size:
+        state.uploadedPrimarySvgSize || extractSvgSize(state.uploadedPrimarySvg),
+      device: current.device || {},
+      ports: current.ports || [],
+      labels: current.labels || [],
+      schema: schema,
+      data: current.data || {},
+      svgVariants: {
+        primary: state.uploadedPrimarySvg,
+        standby:
+          trim(state.uploadedStandbySvg).length > 0
+            ? state.uploadedStandbySvg
+            : ((current.svgVariants || {}).standby || ""),
+      },
+    });
+  }
+
+  // 从编辑区读取当前“图元模板”：类型定义来自上方文本框，图形与交互结果来自内存状态。
+  function getSpecFromEditor() {
+    return buildTemplateSpec();
   }
 
   function nextItemId(prefix) {
@@ -264,10 +473,25 @@ Draw.loadPlugin(function (ui) {
     return null;
   }
 
-  function syncEditorJson(spec) {
-    if (state.jsonArea != null) {
-      state.jsonArea.value = JSON.stringify(spec, null, 2);
+  // 文本框绑定属性必须唯一，同一个字段不允许重复挂多个文本框。
+  function hasLabelBinding(spec, binding, ignoreId) {
+    var normalized = trim(binding);
+    var i;
+
+    if (normalized.length == 0) {
+      return false;
     }
+
+    for (i = 0; i < spec.labels.length; i++) {
+      if (
+        spec.labels[i].id != ignoreId &&
+        trim(spec.labels[i].binding) == normalized
+      ) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   function getPreviewMetrics(spec, surface) {
@@ -328,15 +552,27 @@ Draw.loadPlugin(function (ui) {
 
     state.currentSpec = normalizeSpec(next);
     updateSelectedItem(null, null);
-    syncEditorJson(state.currentSpec);
     updatePreview(state.currentSpec);
   }
 
   // 预览区是一个轻量交互编辑面板。
   // 用户可以直接在这里添加/拖动连接点和文本框，修改会实时写回 JSON。
   function updatePreview(spec) {
-    state.currentSpec = normalizeSpec(spec);
     state.preview.innerHTML = "";
+
+    if (spec == null || trim(spec.svg).length == 0) {
+      var empty = document.createElement("div");
+      empty.style.height = "100%";
+      empty.style.display = "flex";
+      empty.style.alignItems = "center";
+      empty.style.justifyContent = "center";
+      empty.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+      empty.innerText = "请先上传主用SVG，再在这里添加连接点和文本框";
+      state.preview.appendChild(empty);
+      return;
+    }
+
+    state.currentSpec = normalizeSpec(spec);
     var selectedId = state.selectedItem != null ? state.selectedItem.id : null;
     var selectedType =
       state.selectedItem != null ? state.selectedItem.type : null;
@@ -392,7 +628,7 @@ Draw.loadPlugin(function (ui) {
       state.previewMode == "port"
         ? "点击图元添加连接点，拖动可微调"
         : state.previewMode == "label"
-          ? "点击空白处添加文本框，双击可编辑文本"
+          ? "点击空白处添加文本框，双击可编辑绑定属性"
           : "拖动连接点或文本框调整位置";
     toolbar.appendChild(hint);
 
@@ -466,7 +702,6 @@ Draw.loadPlugin(function (ui) {
         function upHandler() {
           document.removeEventListener("mousemove", moveHandler);
           document.removeEventListener("mouseup", upHandler);
-          syncEditorJson(state.currentSpec);
           updatePreview(state.currentSpec);
         }
 
@@ -537,7 +772,10 @@ Draw.loadPlugin(function (ui) {
       box.style.cursor = "move";
       box.style.userSelect = "none";
       box.style.zIndex = "2";
-      box.innerText = label.text;
+      box.innerText =
+        trim(label.binding).length > 0
+          ? "{{" + label.binding + "}}"
+          : (label.text || "未绑定");
       mxEvent.addListener(box, "mousedown", startDrag("label", label.id, box));
       mxEvent.addListener(box, "click", function (evt) {
         evt.stopPropagation();
@@ -546,12 +784,21 @@ Draw.loadPlugin(function (ui) {
       });
       mxEvent.addListener(box, "dblclick", function (evt) {
         evt.stopPropagation();
-        var nextText = window.prompt("输入文本框内容", label.text);
-        if (nextText == null) {
+        var nextBinding = window.prompt(
+          "输入绑定属性路径，例如 name 或 device.name",
+          label.binding,
+        );
+        if (nextBinding == null) {
           return;
         }
-        label.text = trim(nextText) || label.text;
-        syncEditorJson(state.currentSpec);
+        nextBinding = trim(nextBinding);
+
+        if (hasLabelBinding(state.currentSpec, nextBinding, label.id)) {
+          showStatus("同一个属性只能绑定一个文本框", true);
+          return;
+        }
+
+        label.binding = nextBinding;
         updateSelectedItem("label", label.id);
         updatePreview(state.currentSpec);
       });
@@ -584,17 +831,23 @@ Draw.loadPlugin(function (ui) {
           x: point.x,
           y: point.y,
         });
-        syncEditorJson(state.currentSpec);
         updateSelectedItem(
           "port",
           state.currentSpec.ports[state.currentSpec.ports.length - 1].id,
         );
         updatePreview(state.currentSpec);
       } else if (state.previewMode == "label") {
-        var text = window.prompt("输入文本框内容", "文本");
+        var binding = window.prompt("输入绑定属性路径，例如 name 或 device.name", "name");
         var labelId = nextItemId("label");
 
-        if (text == null) {
+        if (binding == null) {
+          return;
+        }
+
+        binding = trim(binding);
+
+        if (hasLabelBinding(state.currentSpec, binding, null)) {
+          showStatus("同一个属性只能绑定一个文本框", true);
           return;
         }
 
@@ -602,7 +855,8 @@ Draw.loadPlugin(function (ui) {
           normalizeLabelItem(
             {
               id: labelId,
-              text: trim(text) || "文本",
+              text: "文本",
+              binding: binding,
               x: point.x,
               y: point.y,
               width: 120,
@@ -613,7 +867,6 @@ Draw.loadPlugin(function (ui) {
             "文本",
           ),
         );
-        syncEditorJson(state.currentSpec);
         updateSelectedItem(
           "label",
           state.currentSpec.labels[state.currentSpec.labels.length - 1].id,
@@ -699,6 +952,7 @@ Draw.loadPlugin(function (ui) {
   function normalizeLabelItem(raw, fallbackId, fallbackText) {
     var text = fallbackText;
     var id = fallbackId;
+    var binding = "";
     var x = 0.5;
     var y = -0.18;
     var width = 120;
@@ -708,6 +962,7 @@ Draw.loadPlugin(function (ui) {
     if (isObject(raw)) {
       text = trim(raw.text || raw.label) || fallbackText;
       id = trim(raw.id || raw.key || raw.name) || fallbackId;
+      binding = trim(raw.binding || raw.field || raw.prop);
       x = toFloat(raw.x, x);
       y = toFloat(raw.y, y);
       width = Math.max(40, toInt(raw.width, width));
@@ -720,6 +975,7 @@ Draw.loadPlugin(function (ui) {
     return {
       id: id,
       text: text,
+      binding: binding,
       x: clamp(x, -1.5, 2.5),
       y: clamp(y, -1.5, 2.5),
       width: width,
@@ -869,6 +1125,7 @@ Draw.loadPlugin(function (ui) {
   function applyValueMetadata(node, spec, layout) {
     node.setAttribute("pluginType", ROOT_TYPE);
     node.setAttribute("symbolId", spec.symbolId);
+    node.setAttribute("instanceId", trim(spec.instanceId));
     node.setAttribute("title", spec.title);
     node.setAttribute("label", "");
     node.setAttribute("deviceName", spec.device.name);
@@ -882,6 +1139,8 @@ Draw.loadPlugin(function (ui) {
       "labelsJson",
       JSON.stringify(normalizeLabels(spec.labels)),
     );
+    node.setAttribute("schemaJson", JSON.stringify(spec.schema || {}));
+    node.setAttribute("dataJson", JSON.stringify(spec.data || {}));
     node.setAttribute("symbolPayload", JSON.stringify(spec));
 
     return node;
@@ -1105,6 +1364,7 @@ Draw.loadPlugin(function (ui) {
   // 根据 spec 把 root 调整为“背景图 + 文本 + 徽标 + 元数据”一致状态。
   function syncRoot(root, spec, baseLayout) {
     var layout = buildPortLayout(spec, baseLayout);
+    var resolvedLabels = buildResolvedLabels(spec.labels, spec.data);
     ensureRootGeometry(root, spec);
     ensureRootValue(root, spec, layout);
     var mapped = mapChildren(root);
@@ -1124,8 +1384,8 @@ Draw.loadPlugin(function (ui) {
 
     keepBodies.main = true;
 
-    for (i = 0; i < spec.labels.length; i++) {
-      var label = spec.labels[i];
+    for (i = 0; i < resolvedLabels.length; i++) {
+      var label = resolvedLabels[i];
       child = mapped.label[label.id];
 
       if (child != null) {
@@ -1193,6 +1453,7 @@ Draw.loadPlugin(function (ui) {
     spec.labels = normalizeLabels(spec.labels);
 
     spec.symbolId = trim(getAttr(root, "symbolId")) || spec.symbolId;
+    spec.instanceId = trim(getAttr(root, "instanceId")) || trim(spec.instanceId);
     spec.title = trim(getAttr(root, "title")) || spec.title;
     spec.device.name =
       trim(getAttr(root, "deviceName")) || trim(spec.device.name);
@@ -1219,6 +1480,26 @@ Draw.loadPlugin(function (ui) {
         spec.labels = normalizeLabels(JSON.parse(labelsRaw));
       } catch (e) {
         // ignore malformed labels override
+      }
+    }
+
+    var schemaJson = getAttr(root, "schemaJson");
+
+    if (schemaJson != null && schemaJson.length > 0) {
+      try {
+        spec.schema = JSON.parse(schemaJson);
+      } catch (e) {
+        // ignore malformed schema override
+      }
+    }
+
+    var dataJson = getAttr(root, "dataJson");
+
+    if (dataJson != null && dataJson.length > 0) {
+      try {
+        spec.data = JSON.parse(dataJson);
+      } catch (e) {
+        // ignore malformed data override
       }
     }
 
@@ -1374,7 +1655,54 @@ Draw.loadPlugin(function (ui) {
       w: bounds != null ? Math.round(bounds.width) : spec.size.width,
       h: bounds != null ? Math.round(bounds.height) : spec.size.height,
       title: spec.title,
+      spec: cloneJson(spec),
     };
+  }
+
+  // 优先从库条目的 spec 字段读取模板；旧条目再回退到 xml 反解。
+  function getLibraryEntrySpec(image) {
+    if (image != null && isObject(image.spec)) {
+      return normalizeSpec(cloneJson(image.spec));
+    }
+
+    if (image == null || image.xml == null) {
+      throw new Error("模板条目缺少 xml");
+    }
+
+    var xml = image.xml;
+
+    if ("<" != xml.charAt(0)) {
+      xml = Graph.decompress(xml);
+    }
+
+    var cells = ui.stringToCells(xml);
+    var i;
+
+    for (i = 0; i < cells.length; i++) {
+      if (isElectricalRoot(cells[i])) {
+        return extractSpec(cells[i]);
+      }
+    }
+
+    throw new Error("库条目中未找到电气图元");
+  }
+
+  // 使用 symbolId 作为模板主键，重复保存时覆盖旧模板而不是继续追加。
+  function findLibraryEntryIndex(images, symbolId) {
+    var id = trim(symbolId);
+    var i;
+
+    for (i = 0; i < images.length; i++) {
+      try {
+        if (trim(getLibraryEntrySpec(images[i]).symbolId) == id) {
+          return i;
+        }
+      } catch (e) {
+        // ignore malformed entry
+      }
+    }
+
+    return -1;
   }
 
   // 从本地存储读取“电气图元库”，并在需要时同步打开到左侧 Sidebar。
@@ -1449,9 +1777,17 @@ Draw.loadPlugin(function (ui) {
   function addToLibrary(spec) {
     loadStoredLibrary(function (images) {
       var next = images.slice();
-      next.push(createLibraryEntry(spec));
+      var entry = createLibraryEntry(spec);
+      var index = findLibraryEntryIndex(next, spec.symbolId);
+
+      if (index >= 0) {
+        next[index] = entry;
+      } else {
+        next.push(entry);
+      }
+
       saveLibraryImages(next, function () {
-        showStatus("已加入图库", false);
+        showStatus(index >= 0 ? "已更新图库模板" : "已加入图库", false);
       });
     });
   }
@@ -1476,6 +1812,134 @@ Draw.loadPlugin(function (ui) {
         "drawiolib",
       );
       showStatus("已开始导出图库", false);
+    });
+  }
+
+  function buildInstanceSpec(instanceData, template) {
+    template = template != null ? normalizeSpec(cloneJson(template)) : buildTemplateSpec();
+    var mergedData = deepMerge(
+      buildEmptyValueFromSchema(template.schema),
+      instanceData,
+    );
+    var spec = cloneJson(template);
+    var nameValue =
+      getValueByPath(mergedData, "name") || getValueByPath(mergedData, "device.name");
+    var codeValue =
+      getValueByPath(mergedData, "code") || getValueByPath(mergedData, "device.code");
+    var powerValue =
+      getValueByPath(mergedData, "power") || getValueByPath(mergedData, "device.power");
+    var modeValue =
+      getValueByPath(mergedData, "mode") || getValueByPath(mergedData, "device.mode");
+    var titleValue = getValueByPath(mergedData, "title");
+
+    spec.data = mergedData;
+    spec.labels = buildResolvedLabels(template.labels, mergedData);
+    spec.symbolId = template.symbolId;
+    spec.instanceId = generateInstanceId();
+    spec.title = trim(titleValue) || trim(nameValue) || template.title;
+    spec.device.name = trim(nameValue);
+    spec.device.code = trim(codeValue);
+    spec.device.power = trim(powerValue);
+    spec.device.mode = normalizeMode(modeValue);
+
+    return normalizeSpec(spec);
+  }
+
+  // 从本地模板库选择一个图元类型，再输入实例 JSON 创建到画布。
+  function openCreateFromLibraryDialog() {
+    loadStoredLibrary(function (images) {
+      var templates = [];
+      var i;
+
+      for (i = 0; i < images.length; i++) {
+        try {
+          templates.push(getLibraryEntrySpec(images[i]));
+        } catch (e) {
+          // ignore malformed entry
+        }
+      }
+
+      if (templates.length == 0) {
+        showStatus("电气图库为空，请先保存图元类型", true);
+        return;
+      }
+
+      var currentTemplate = templates[0];
+      var div = document.createElement("div");
+      div.style.padding = "12px";
+      div.style.width = "100%";
+      div.style.height = "100%";
+      div.style.boxSizing = "border-box";
+      div.style.display = "flex";
+      div.style.flexDirection = "column";
+      div.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
+
+      var title = document.createElement("div");
+      title.style.fontWeight = "bold";
+      title.style.marginBottom = "8px";
+      title.innerText = "选择图元类型并输入实例 JSON";
+      div.appendChild(title);
+
+      var select = document.createElement("select");
+      select.style.width = "100%";
+      select.style.boxSizing = "border-box";
+      select.style.marginBottom = "10px";
+      div.appendChild(select);
+
+      var textarea = document.createElement("textarea");
+      textarea.spellcheck = false;
+      textarea.style.width = "100%";
+      textarea.style.flex = "1 1 auto";
+      textarea.style.minHeight = "220px";
+      textarea.style.boxSizing = "border-box";
+      div.appendChild(textarea);
+
+      var buttons = document.createElement("div");
+      buttons.style.marginTop = "10px";
+      buttons.style.flex = "0 0 auto";
+      div.appendChild(buttons);
+
+      function syncTemplate(index) {
+        currentTemplate = templates[index];
+        textarea.value = JSON.stringify(
+          buildEmptyValueFromSchema(currentTemplate.schema),
+          null,
+          2,
+        );
+      }
+
+      for (i = 0; i < templates.length; i++) {
+        var option = document.createElement("option");
+        option.value = String(i);
+        option.innerText = templates[i].title + " (" + templates[i].symbolId + ")";
+        select.appendChild(option);
+      }
+
+      mxEvent.addListener(select, "change", function () {
+        syncTemplate(parseInt(select.value, 10) || 0);
+      });
+
+      syncTemplate(0);
+
+      var wnd = new mxWindow("创建电气图元", div, 140, 120, 460, 520, true, true);
+      wnd.destroyOnClose = true;
+      wnd.setClosable(true);
+      wnd.setMaximizable(false);
+      wnd.setResizable(true);
+      wnd.setScrollable(true);
+      wnd.setVisible(true);
+
+      var submitButton = createButton("创建到画布", function () {
+        try {
+          var payload = JSON.parse(textarea.value);
+          insertIntoGraph(buildInstanceSpec(payload, currentTemplate));
+          wnd.destroy();
+        } catch (e) {
+          showStatus(e.message || String(e), true);
+        }
+      });
+      submitButton.style.marginTop = "0";
+      buttons.appendChild(submitButton);
     });
   }
 
@@ -1519,7 +1983,6 @@ Draw.loadPlugin(function (ui) {
     try {
       var spec = getSpecFromEditor();
       state.currentSpec = spec;
-      syncEditorJson(spec);
       updatePreview(spec);
       showStatus("预览已刷新", false);
       return spec;
@@ -1529,17 +1992,6 @@ Draw.loadPlugin(function (ui) {
     }
   }
 
-  // 文件导入
-  function loadJsonText(text) {
-    var spec = normalizeSpec(JSON.parse(text));
-    state.currentSpec = spec;
-    state.jsonArea.value = JSON.stringify(spec, null, 2);
-    state.widthInput.value = spec.size.width;
-    state.heightInput.value = spec.size.height;
-    updatePreview(spec);
-    showStatus("JSON 已加载", false);
-  }
-
   // 统一生成插件窗口里的按钮样式和点击行为。
   function createButton(label, fn) {
     var button = mxUtils.button(label, fn);
@@ -1547,6 +1999,40 @@ Draw.loadPlugin(function (ui) {
     button.style.marginRight = "8px";
     button.style.marginTop = "8px";
     return button;
+  }
+
+  // 统一绑定 SVG 上传按钮，主图和主备变体都走同一套校验和状态写入逻辑。
+  function bindSvgUpload(input, nameNode, svgKey, nameKey, successMessage, updateSize) {
+    mxEvent.addListener(input, "change", function () {
+      if (input.files == null || input.files.length == 0) {
+        return;
+      }
+
+      var reader = new FileReader();
+      reader.onload = function () {
+        try {
+          state[svgKey] = validateSvg(reader.result);
+          state[nameKey] = input.files[0].name;
+
+          if (updateSize) {
+            state.uploadedPrimarySvgSize = extractSvgSize(state[svgKey]);
+          }
+
+          nameNode.innerText = state[nameKey];
+
+          if (trim(state.uploadedPrimarySvg).length > 0) {
+            parseEditorSpec();
+          } else {
+            updatePreview(null);
+          }
+
+          showStatus(successMessage, false);
+        } catch (e) {
+          showStatus(e.message || String(e), true);
+        }
+      };
+      reader.readAsText(input.files[0], "utf-8");
+    });
   }
 
   // 插件窗口是一个轻量 mxWindow
@@ -1563,43 +2049,80 @@ Draw.loadPlugin(function (ui) {
     var title = document.createElement("div");
     title.style.fontWeight = "bold";
     title.style.marginBottom = "8px";
-    title.innerText = "电气图元 JSON";
+    title.innerText = "电气图元类型定义";
     container.appendChild(title);
+
+    var symbolRow = document.createElement("div");
+    symbolRow.style.display = "flex";
+    symbolRow.style.alignItems = "center";
+    symbolRow.style.marginBottom = "10px";
+    container.appendChild(symbolRow);
+
+    var symbolLabel = document.createElement("div");
+    symbolLabel.style.width = "90px";
+    symbolLabel.style.flex = "0 0 90px";
+    symbolLabel.innerText = "图元类型ID";
+    symbolRow.appendChild(symbolLabel);
+
+    state.symbolIdInput = document.createElement("input");
+    state.symbolIdInput.setAttribute("type", "text");
+    state.symbolIdInput.style.flex = "1 1 auto";
+    state.symbolIdInput.style.boxSizing = "border-box";
+    state.symbolIdInput.value = generateSymbolId("electrical-symbol");
+    symbolRow.appendChild(state.symbolIdInput);
+    mxEvent.addListener(state.symbolIdInput, "input", function () {
+      state.symbolIdTouched = true;
+    });
 
     var topRow = document.createElement("div");
     topRow.style.display = "flex";
     topRow.style.alignItems = "center";
+    topRow.style.flexWrap = "wrap";
+    topRow.style.rowGap = "8px";
     container.appendChild(topRow);
 
-    var fileInput = document.createElement("input");
-    fileInput.setAttribute("type", "file");
-    fileInput.setAttribute("accept", ".json,application/json");
-    fileInput.style.marginRight = "8px";
-    topRow.appendChild(fileInput);
+    var primaryInput = document.createElement("input");
+    primaryInput.setAttribute("type", "file");
+    primaryInput.setAttribute("accept", ".svg,image/svg+xml");
+    primaryInput.style.display = "none";
+    topRow.appendChild(primaryInput);
 
-    state.widthInput = document.createElement("input");
-    state.widthInput.setAttribute("type", "number");
-    state.widthInput.setAttribute("min", "20");
-    state.widthInput.style.width = "80px";
-    state.widthInput.style.marginRight = "8px";
-    state.widthInput.value = "120";
-    topRow.appendChild(state.widthInput);
+    var primaryButton = createButton(
+      mxResources.get("electricalUploadPrimarySvg"),
+      function () {
+        primaryInput.click();
+      },
+    );
+    primaryButton.style.marginTop = "0";
+    topRow.appendChild(primaryButton);
 
-    var widthLabel = document.createElement("span");
-    widthLabel.innerText = "宽";
-    topRow.insertBefore(widthLabel, state.widthInput);
+    var primaryName = document.createElement("div");
+    primaryName.style.marginLeft = "8px";
+    primaryName.style.marginRight = "12px";
+    primaryName.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+    primaryName.innerText = "未选择主用SVG";
+    topRow.appendChild(primaryName);
 
-    state.heightInput = document.createElement("input");
-    state.heightInput.setAttribute("type", "number");
-    state.heightInput.setAttribute("min", "20");
-    state.heightInput.style.width = "80px";
-    state.heightInput.style.marginRight = "8px";
-    state.heightInput.value = "80";
-    topRow.appendChild(state.heightInput);
+    var standbyInput = document.createElement("input");
+    standbyInput.setAttribute("type", "file");
+    standbyInput.setAttribute("accept", ".svg,image/svg+xml");
+    standbyInput.style.display = "none";
+    topRow.appendChild(standbyInput);
 
-    var heightLabel = document.createElement("span");
-    heightLabel.innerText = "高";
-    topRow.insertBefore(heightLabel, state.heightInput);
+    var standbyButton = createButton(
+      mxResources.get("electricalUploadStandbySvg"),
+      function () {
+        standbyInput.click();
+      },
+    );
+    standbyButton.style.marginTop = "0";
+    topRow.appendChild(standbyButton);
+
+    var standbyName = document.createElement("div");
+    standbyName.style.marginLeft = "8px";
+    standbyName.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+    standbyName.innerText = "未选择备用SVG";
+    topRow.appendChild(standbyName);
 
     state.jsonArea = document.createElement("textarea");
     state.jsonArea.spellcheck = false;
@@ -1607,25 +2130,15 @@ Draw.loadPlugin(function (ui) {
     state.jsonArea.style.height = "220px";
     state.jsonArea.style.marginTop = "10px";
     state.jsonArea.style.boxSizing = "border-box";
-    state.jsonArea.value = JSON.stringify(
-      {
-        symbolId: "motor-starter",
-        title: "\u7535\u673a\u542f\u52a8\u5668",
-        svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80"><rect x="10" y="10" width="100" height="60" rx="8" ry="8" fill="#fff2e8" stroke="#c96a28" stroke-width="4"/><circle cx="60" cy="40" r="16" fill="#fffdfb" stroke="#c96a28" stroke-width="3"/></svg>',
-        size: { width: 120, height: 80 },
-        device: {
-          name: "\u8bbe\u5907\u540d",
-          code: "M-01",
-          power: "15kW",
-          mode: "primary",
-          params: { "\u5176\u4ed6\u53c2\u6570": "\u793a\u4f8b" },
-        },
-        labels: [],
-        svgVariants: {},
-      },
-      null,
-      2,
-    );
+    state.jsonArea.value = [
+      "{",
+      "  title: string,",
+      "  name: string,",
+      "  code: string,",
+      "  power: string,",
+      "  mode: string",
+      "}",
+    ].join("\n");
     container.appendChild(state.jsonArea);
 
     state.preview = document.createElement("div");
@@ -1647,12 +2160,6 @@ Draw.loadPlugin(function (ui) {
     buttons.appendChild(
       createButton(mxResources.get("electricalPreview"), function () {
         parseEditorSpec();
-      }),
-    );
-
-    buttons.appendChild(
-      createButton(mxResources.get("electricalInsert"), function () {
-        insertIntoGraph(parseEditorSpec());
       }),
     );
 
@@ -1679,20 +2186,29 @@ Draw.loadPlugin(function (ui) {
     state.status.style.minHeight = "18px";
     container.appendChild(state.status);
 
-    mxEvent.addListener(fileInput, "change", function () {
-      if (fileInput.files == null || fileInput.files.length == 0) {
-        return;
-      }
+    bindSvgUpload(
+      primaryInput,
+      primaryName,
+      "uploadedPrimarySvg",
+      "uploadedPrimarySvgName",
+      "主用SVG 已加载",
+      true,
+    );
+    bindSvgUpload(
+      standbyInput,
+      standbyName,
+      "uploadedStandbySvg",
+      "uploadedStandbySvgName",
+      "备用SVG 已加载",
+      false,
+    );
 
-      var reader = new FileReader();
-      reader.onload = function () {
-        try {
-          loadJsonText(reader.result);
-        } catch (e) {
-          showStatus(e.message || String(e), true);
-        }
-      };
-      reader.readAsText(fileInput.files[0], "utf-8");
+    mxEvent.addListener(primaryInput, "change", function () {
+      if (state.symbolIdInput != null && !state.symbolIdTouched) {
+        state.symbolIdInput.value = generateSymbolId(
+          state.uploadedPrimarySvgName || "electrical-symbol",
+        );
+      }
     });
 
     var x = Math.max(20, (document.body.offsetWidth - 560) / 2);
@@ -1707,12 +2223,19 @@ Draw.loadPlugin(function (ui) {
       true,
       true,
     );
-    wnd.destroyOnClose = false;
+    wnd.destroyOnClose = true;
     wnd.setClosable(true);
     wnd.setMaximizable(false);
     wnd.setResizable(true);
     wnd.setScrollable(true);
-    parseEditorSpec();
+    wnd.addListener(mxEvent.DESTROY, function () {
+      state.window = null;
+      state.status = null;
+      state.symbolIdInput = null;
+      state.jsonArea = null;
+      state.preview = null;
+    });
+    updatePreview(null);
     loadStoredLibrary(null, true);
 
     return { window: wnd, container: container };
@@ -1732,6 +2255,10 @@ Draw.loadPlugin(function (ui) {
     toggleWindow();
   });
 
+  ui.actions.addAction("electricalCreate", function () {
+    openCreateFromLibraryDialog();
+  });
+
   ui.actions.addAction("electricalRefresh", function () {
     refreshSelection();
   });
@@ -1743,7 +2270,7 @@ Draw.loadPlugin(function (ui) {
     oldExtrasMenu.apply(this, arguments);
     ui.menus.addMenuItems(
       menu,
-      ["-", "electricalSymbols", "electricalRefresh"],
+      ["-", "electricalSymbols", "electricalCreate", "electricalRefresh"],
       parent,
     );
   };
