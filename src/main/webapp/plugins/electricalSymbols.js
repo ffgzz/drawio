@@ -23,11 +23,12 @@ Draw.loadPlugin(function (ui) {
     symbolIdTouched: false,
     variantFieldInput: null,
     variantEnabled: false,
-    lastAutoVariantField: "",
+    lastValidVariantField: "",
     jsonArea: null,
     preview: null,
     currentSpec: null,
     previewMode: "select",
+    previewVariantId: "",
     selectedItem: null,
     nextId: 1,
     uploadedPrimarySvg: "",
@@ -38,9 +39,10 @@ Draw.loadPlugin(function (ui) {
 
   mxResources.parse(
     [
-      "electricalSymbols=电气图元...",
-      "electricalCreate=创建电气图元...",
+      "electricalSymbols=定义电气图元",
+      "electricalCreate=创建电气图元",
       "electricalRefresh=刷新电气图元",
+      "electricalExportSvg=导出SVG",
       "electricalPreview=刷新预览",
       "electricalAddLibrary=加入库",
       "electricalExportLibrary=导出库",
@@ -195,21 +197,37 @@ Draw.loadPlugin(function (ui) {
     return index > 0 ? text.substring(0, index) : text;
   }
 
+  // 优先使用浏览器原生 UUID，旧环境再回退到随机生成器。
+  function generateUuid() {
+    if (
+      typeof crypto !== "undefined" &&
+      crypto != null &&
+      typeof crypto.randomUUID === "function"
+    ) {
+      return crypto.randomUUID();
+    }
+
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
+      /[xy]/g,
+      function (ch) {
+        var rand = Math.random() * 16 | 0;
+        var value = ch == "x" ? rand : (rand & 0x3) | 0x8;
+        return value.toString(16);
+      },
+    );
+  }
+
   // 生成模板级唯一标识，同一种图元后续实例都复用这个 symbolId。
   function generateSymbolId(seed) {
     var base = toSlug(stripFileExtension(seed)) || "electrical-symbol";
+    var shortUuid = generateUuid().split("-")[0];
 
-    return base + "-" + Date.now();
+    return base + "-" + shortUuid;
   }
 
   // 生成画布实例级唯一标识，避免同一模板多次插入时冲突。
   function generateInstanceId() {
-    return (
-      "instance-" +
-      Date.now().toString(36) +
-      "-" +
-      Math.random().toString(36).slice(2, 8)
-    );
+    return generateUuid();
   }
 
   function isIdentifierKey(key) {
@@ -261,98 +279,67 @@ Draw.loadPlugin(function (ui) {
     return formatTypeDefinitionValue(schema, 0);
   }
 
-  function setSchemaPath(schema, path, value) {
+  // 校验 schema 中是否存在给定路径，变体字段只能引用用户已经定义好的字段。
+  function hasSchemaPath(schema, path) {
     var parts = trim(path).split(".");
     var current = schema;
     var i;
 
     if (!isObject(schema) || trim(path).length == 0) {
-      return;
+      return false;
     }
 
-    for (i = 0; i < parts.length - 1; i++) {
-      if (!isObject(current[parts[i]])) {
-        current[parts[i]] = {};
+    for (i = 0; i < parts.length; i++) {
+      if (!isObject(current) || !current.hasOwnProperty(parts[i])) {
+        return false;
       }
 
       current = current[parts[i]];
     }
 
-    current[parts[parts.length - 1]] = value;
+    return true;
   }
 
-  function deleteSchemaPath(schema, path) {
-    var parts = trim(path).split(".");
-    var stack = [];
-    var current = schema;
-    var i;
-
-    if (!isObject(schema) || trim(path).length == 0) {
-      return;
+  // 启用变体时，要求变体字段必须已经存在于类型定义里。
+  function validateVariantField(showError) {
+    if (!state.variantEnabled) {
+      return "";
     }
 
-    for (i = 0; i < parts.length - 1; i++) {
-      if (!isObject(current[parts[i]])) {
-        return;
+    var field = trim(
+      state.variantFieldInput != null ? state.variantFieldInput.value : "",
+    );
+
+    if (field.length == 0) {
+      if (showError) {
+        showStatus("请先填写变体字段", true);
       }
 
-      stack.push({ parent: current, key: parts[i] });
-      current = current[parts[i]];
-    }
-
-    delete current[parts[parts.length - 1]];
-
-    for (i = stack.length - 1; i >= 0; i--) {
-      current = stack[i].parent[stack[i].key];
-
-      var hasChild = false;
-      var childKey;
-
-      for (childKey in current) {
-        if (current.hasOwnProperty(childKey)) {
-          hasChild = true;
-          break;
-        }
-      }
-
-      if (isObject(current) && !hasChild) {
-        delete stack[i].parent[stack[i].key];
-      } else {
-        break;
-      }
-    }
-  }
-
-  // 变体字段启用或修改时，自动把该字段同步进类型定义文本。
-  function syncVariantFieldInSchema(nextField, enabled) {
-    if (state.jsonArea == null) {
-      return;
+      return null;
     }
 
     try {
       var schema = parseTypeDefinition(state.jsonArea.value);
 
       if (!isObject(schema)) {
-        return;
+        throw new Error("类型定义必须是对象");
       }
 
-      if (
-        trim(state.lastAutoVariantField).length > 0 &&
-        state.lastAutoVariantField != trim(nextField)
-      ) {
-        deleteSchemaPath(schema, state.lastAutoVariantField);
+      if (!hasSchemaPath(schema, field)) {
+        if (showError) {
+          showStatus("变体字段必须先在 JSON 类型定义中声明", true);
+        }
+
+        return null;
       }
 
-      if (enabled && trim(nextField).length > 0) {
-        setSchemaPath(schema, nextField, "string");
-        state.lastAutoVariantField = trim(nextField);
-      } else {
-        state.lastAutoVariantField = "";
-      }
-
-      state.jsonArea.value = formatTypeDefinition(schema);
+      return field;
     } catch (e) {
-      showStatus("类型定义格式有误，无法自动同步变体字段", true);
+      if (showError) {
+        showStatus(e.message || "类型定义格式有误", true);
+      }
+
+      return null;
     }
   }
 
@@ -375,6 +362,32 @@ Draw.loadPlugin(function (ui) {
     }
 
     return variants;
+  }
+
+  // 当前编辑中的变体条目列表会分别保存自己的连接点和文本框布局。
+  function collectVariantLayouts() {
+    var layouts = {};
+    var i;
+
+    if (!state.variantEnabled) {
+      return layouts;
+    }
+
+    for (i = 0; i < state.variantItems.length; i++) {
+      var item = state.variantItems[i];
+      var key = trim(item.key);
+
+      if (key.length == 0) {
+        continue;
+      }
+
+      layouts[key] = {
+        ports: normalizePortLayout(item.ports),
+        labels: normalizeLabels(item.labels),
+      };
+    }
+
+    return layouts;
   }
 
   // 变体 key 必须唯一，避免同一个属性值映射到多张 SVG。
@@ -503,9 +516,32 @@ Draw.loadPlugin(function (ui) {
 
       item.text =
         trim(item.binding).length > 0
-          ? (value != null ? String(value) : "")
-          : (item.text || "");
+          ? value != null
+            ? String(value)
+            : ""
+          : item.text || "";
       result.push(item);
+    }
+
+    return result;
+  }
+
+  function normalizeVariantLayouts(raw) {
+    var result = {};
+    var key;
+
+    if (!isObject(raw)) {
+      return result;
+    }
+
+    for (key in raw) {
+      if (raw.hasOwnProperty(key) && trim(key).length > 0) {
+        var entry = isObject(raw[key]) ? raw[key] : {};
+        result[trim(key)] = {
+          ports: normalizePortLayout(entry.ports),
+          labels: normalizeLabels(entry.labels),
+        };
+      }
     }
 
     return result;
@@ -527,7 +563,7 @@ Draw.loadPlugin(function (ui) {
     var data = isObject(raw.data) ? cloneJson(raw.data) : {};
     var variantField = trim(raw.variantField || "");
     var spec = {
-      symbolId: trim(raw.symbolId) || "symbol-" + Date.now(),
+      symbolId: trim(raw.symbolId) || generateSymbolId("symbol"),
       title: trim(raw.title) || trim(device.name) || "电气图元",
       svg: validateSvg(raw.svg),
       size: {
@@ -547,6 +583,7 @@ Draw.loadPlugin(function (ui) {
       data: data,
       variantField: variantField,
       svgVariants: {},
+      variantLayouts: normalizeVariantLayouts(raw.variantLayouts),
     };
 
     for (var variantKey in variants) {
@@ -616,10 +653,22 @@ Draw.loadPlugin(function (ui) {
     }
 
     var current = state.currentSpec || {};
-    var symbolId = trim(state.symbolIdInput != null ? state.symbolIdInput.value : "");
+    var symbolId = trim(
+      state.symbolIdInput != null ? state.symbolIdInput.value : "",
+    );
 
     if (symbolId.length == 0) {
       throw new Error("请先填写图元类型ID");
+    }
+
+    var variantField = "";
+
+    if (state.variantEnabled) {
+      variantField = validateVariantField(true);
+
+      if (variantField == null) {
+        throw new Error("变体字段必须先在 JSON 类型定义中声明");
+      }
     }
 
     return normalizeSpec({
@@ -627,18 +676,16 @@ Draw.loadPlugin(function (ui) {
       title: trim(current.title) || "电气图元",
       svg: state.uploadedPrimarySvg,
       size:
-        state.uploadedPrimarySvgSize || extractSvgSize(state.uploadedPrimarySvg),
+        state.uploadedPrimarySvgSize ||
+        extractSvgSize(state.uploadedPrimarySvg),
       device: current.device || {},
       ports: current.ports || [],
       labels: current.labels || [],
       schema: schema,
       data: current.data || {},
-      variantField:
-        state.variantEnabled
-          ? trim(state.variantFieldInput != null ? state.variantFieldInput.value : "") ||
-            trim(current.variantField || "mode")
-          : "",
+      variantField: variantField,
       svgVariants: collectVariantMap(),
+      variantLayouts: collectVariantLayouts(),
     });
   }
 
@@ -698,6 +745,65 @@ Draw.loadPlugin(function (ui) {
     return false;
   }
 
+  function findVariantItem(id) {
+    var i;
+
+    for (i = 0; i < state.variantItems.length; i++) {
+      if (state.variantItems[i].id == id) {
+        return state.variantItems[i];
+      }
+    }
+
+    return null;
+  }
+
+  function getPreviewLayoutStore(spec) {
+    if (state.previewVariantId != null && state.previewVariantId.length > 0) {
+      var variantItem = findVariantItem(state.previewVariantId);
+
+      if (variantItem != null) {
+        variantItem.ports = normalizePortLayout(variantItem.ports);
+        variantItem.labels = normalizeLabels(variantItem.labels);
+        return variantItem;
+      }
+    }
+
+    spec.ports = normalizePortLayout(spec.ports);
+    spec.labels = normalizeLabels(spec.labels);
+    return spec;
+  }
+
+  function getPreviewSvg(spec) {
+    var variantItem =
+      state.previewVariantId != null && state.previewVariantId.length > 0
+        ? findVariantItem(state.previewVariantId)
+        : null;
+
+    if (
+      variantItem != null &&
+      trim(variantItem.svg).length > 0
+    ) {
+      return Graph.clipSvgDataUri(Editor.createSvgDataUri(variantItem.svg));
+    }
+
+    return toSvgDataUri(spec);
+  }
+
+  function getPreviewTitle(spec) {
+    var variantItem =
+      state.previewVariantId != null && state.previewVariantId.length > 0
+        ? findVariantItem(state.previewVariantId)
+        : null;
+
+    if (variantItem != null) {
+      return trim(variantItem.key).length > 0
+        ? spec.title + " [" + trim(variantItem.key) + "]"
+        : spec.title + " [未命名变体]";
+    }
+
+    return spec.title;
+  }
+
   function getPreviewMetrics(spec, surface) {
     var surfaceWidth = Math.max(200, surface.clientWidth || 520);
     var surfaceHeight = Math.max(200, surface.clientHeight || 260);
@@ -743,13 +849,14 @@ Draw.loadPlugin(function (ui) {
     }
 
     var next = cloneJson(state.currentSpec);
+    var layout = getPreviewLayoutStore(next);
 
     if (state.selectedItem.type == "port") {
-      next.ports = next.ports.filter(function (item) {
+      layout.ports = layout.ports.filter(function (item) {
         return item.id != state.selectedItem.id;
       });
     } else if (state.selectedItem.type == "label") {
-      next.labels = next.labels.filter(function (item) {
+      layout.labels = layout.labels.filter(function (item) {
         return item.id != state.selectedItem.id;
       });
     }
@@ -777,15 +884,16 @@ Draw.loadPlugin(function (ui) {
     }
 
     state.currentSpec = normalizeSpec(spec);
+    var layoutStore = getPreviewLayoutStore(state.currentSpec);
     var selectedId = state.selectedItem != null ? state.selectedItem.id : null;
     var selectedType =
       state.selectedItem != null ? state.selectedItem.type : null;
 
     if (
       (selectedType == "port" &&
-        findPort(state.currentSpec, selectedId) == null) ||
+        findPort({ ports: layoutStore.ports }, selectedId) == null) ||
       (selectedType == "label" &&
-        findLabel(state.currentSpec, selectedId) == null)
+        findLabel({ labels: layoutStore.labels }, selectedId) == null)
     ) {
       updateSelectedItem(null, null);
     }
@@ -816,6 +924,36 @@ Draw.loadPlugin(function (ui) {
     toolbar.appendChild(createModeButton("select", "选择"));
     toolbar.appendChild(createModeButton("port", "添加连接点"));
     toolbar.appendChild(createModeButton("label", "添加文本框"));
+
+    if (state.variantEnabled && state.variantItems.length > 0) {
+      var previewSelect = document.createElement("select");
+      previewSelect.style.marginLeft = "8px";
+      previewSelect.style.maxWidth = "180px";
+      var defaultOption = document.createElement("option");
+      defaultOption.value = "";
+      defaultOption.innerText = "编辑默认SVG";
+      previewSelect.appendChild(defaultOption);
+
+      for (var p = 0; p < state.variantItems.length; p++) {
+        var previewItem = state.variantItems[p];
+        var option = document.createElement("option");
+        option.value = previewItem.id;
+        option.innerText =
+          trim(previewItem.key).length > 0
+            ? "编辑变体：" + trim(previewItem.key)
+            : "编辑未命名变体";
+        previewSelect.appendChild(option);
+      }
+
+      previewSelect.value = state.previewVariantId || "";
+      mxEvent.addListener(previewSelect, "change", function () {
+        state.previewVariantId = previewSelect.value || "";
+        updateSelectedItem(null, null);
+        updatePreview(state.currentSpec);
+      });
+      toolbar.appendChild(previewSelect);
+    }
+
     var deleteBtn = createButton("删除选中", function () {
       deleteSelectedItem();
     });
@@ -823,18 +961,6 @@ Draw.loadPlugin(function (ui) {
     deleteBtn.style.marginRight = "0";
     deleteBtn.style.padding = "4px 10px";
     toolbar.appendChild(deleteBtn);
-
-    var hint = document.createElement("div");
-    hint.style.marginLeft = "auto";
-    hint.style.fontSize = "12px";
-    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
-    hint.innerText =
-      state.previewMode == "port"
-        ? "点击图元添加连接点，拖动可微调"
-        : state.previewMode == "label"
-          ? "点击空白处添加文本框，双击可编辑绑定属性"
-          : "拖动连接点或文本框调整位置";
-    toolbar.appendChild(hint);
 
     var surface = document.createElement("div");
     surface.style.position = "relative";
@@ -851,8 +977,8 @@ Draw.loadPlugin(function (ui) {
 
     var metrics = getPreviewMetrics(state.currentSpec, surface);
     var img = document.createElement("img");
-    img.setAttribute("alt", state.currentSpec.title);
-    img.setAttribute("src", toSvgDataUri(state.currentSpec));
+    img.setAttribute("alt", getPreviewTitle(state.currentSpec));
+    img.setAttribute("src", getPreviewSvg(state.currentSpec));
     img.style.position = "absolute";
     img.style.left = metrics.left + "px";
     img.style.top = metrics.top + "px";
@@ -876,9 +1002,10 @@ Draw.loadPlugin(function (ui) {
             type == "port",
           );
           var current = state.currentSpec;
+          var nextLayout = getPreviewLayoutStore(current);
 
           if (type == "port") {
-            var port = findPort(current, id);
+            var port = findPort({ ports: nextLayout.ports }, id);
             if (port != null) {
               port.x = point.x;
               port.y = point.y;
@@ -888,7 +1015,7 @@ Draw.loadPlugin(function (ui) {
                 metrics.top + port.y * metrics.height - 7 + "px";
             }
           } else {
-            var label = findLabel(current, id);
+            var label = findLabel({ labels: nextLayout.labels }, id);
             if (label != null) {
               label.x = point.x;
               label.y = point.y;
@@ -979,7 +1106,7 @@ Draw.loadPlugin(function (ui) {
       box.innerText =
         trim(label.binding).length > 0
           ? "{{" + label.binding + "}}"
-          : (label.text || "未绑定");
+          : label.text || "未绑定";
       mxEvent.addListener(box, "mousedown", startDrag("label", label.id, box));
       mxEvent.addListener(box, "click", function (evt) {
         evt.stopPropagation();
@@ -997,7 +1124,13 @@ Draw.loadPlugin(function (ui) {
         }
         nextBinding = trim(nextBinding);
 
-        if (hasLabelBinding(state.currentSpec, nextBinding, label.id)) {
+        if (
+          hasLabelBinding(
+            { labels: getPreviewLayoutStore(state.currentSpec).labels },
+            nextBinding,
+            label.id,
+          )
+        ) {
           showStatus("同一个属性只能绑定一个文本框", true);
           return;
         }
@@ -1009,12 +1142,12 @@ Draw.loadPlugin(function (ui) {
       surface.appendChild(box);
     }
 
-    for (var i = 0; i < state.currentSpec.ports.length; i++) {
-      renderPort(state.currentSpec.ports[i]);
+    for (var i = 0; i < layoutStore.ports.length; i++) {
+      renderPort(layoutStore.ports[i]);
     }
 
-    for (var j = 0; j < state.currentSpec.labels.length; j++) {
-      renderLabel(state.currentSpec.labels[j]);
+    for (var j = 0; j < layoutStore.labels.length; j++) {
+      renderLabel(layoutStore.labels[j]);
     }
 
     mxEvent.addListener(surface, "click", function (evt) {
@@ -1030,18 +1163,21 @@ Draw.loadPlugin(function (ui) {
       );
 
       if (state.previewMode == "port") {
-        state.currentSpec.ports.push({
+        layoutStore.ports.push({
           id: nextItemId("port"),
           x: point.x,
           y: point.y,
         });
         updateSelectedItem(
           "port",
-          state.currentSpec.ports[state.currentSpec.ports.length - 1].id,
+          layoutStore.ports[layoutStore.ports.length - 1].id,
         );
         updatePreview(state.currentSpec);
       } else if (state.previewMode == "label") {
-        var binding = window.prompt("输入绑定属性路径，例如 name 或 device.name", "name");
+        var binding = window.prompt(
+          "输入绑定属性路径，例如 name 或 device.name",
+          "name",
+        );
         var labelId = nextItemId("label");
 
         if (binding == null) {
@@ -1050,12 +1186,12 @@ Draw.loadPlugin(function (ui) {
 
         binding = trim(binding);
 
-        if (hasLabelBinding(state.currentSpec, binding, null)) {
+        if (hasLabelBinding({ labels: layoutStore.labels }, binding, null)) {
           showStatus("同一个属性只能绑定一个文本框", true);
           return;
         }
 
-        state.currentSpec.labels.push(
+        layoutStore.labels.push(
           normalizeLabelItem(
             {
               id: labelId,
@@ -1073,7 +1209,7 @@ Draw.loadPlugin(function (ui) {
         );
         updateSelectedItem(
           "label",
-          state.currentSpec.labels[state.currentSpec.labels.length - 1].id,
+          layoutStore.labels[layoutStore.labels.length - 1].id,
         );
         updatePreview(state.currentSpec);
       } else {
@@ -1318,6 +1454,23 @@ Draw.loadPlugin(function (ui) {
     var fallback = normalizePortLayout(base);
 
     return current.length > 0 ? current : fallback;
+  }
+
+  function getVariantLayout(spec, variantKey) {
+    var layouts = normalizeVariantLayouts(spec.variantLayouts);
+    var key = trim(variantKey);
+
+    if (key.length > 0 && layouts[key] != null) {
+      return {
+        ports: normalizePortLayout(layouts[key].ports),
+        labels: normalizeLabels(layouts[key].labels),
+      };
+    }
+
+    return {
+      ports: normalizePortLayout(spec.ports),
+      labels: normalizeLabels(spec.labels),
+    };
   }
 
   // 把端口点位数组序列化回根节点属性，便于保存和刷新时复用。
@@ -1658,7 +1811,8 @@ Draw.loadPlugin(function (ui) {
     spec.labels = normalizeLabels(spec.labels);
 
     spec.symbolId = trim(getAttr(root, "symbolId")) || spec.symbolId;
-    spec.instanceId = trim(getAttr(root, "instanceId")) || trim(spec.instanceId);
+    spec.instanceId =
+      trim(getAttr(root, "instanceId")) || trim(spec.instanceId);
     spec.title = trim(getAttr(root, "title")) || spec.title;
     spec.device.name =
       trim(getAttr(root, "deviceName")) || trim(spec.device.name);
@@ -2023,24 +2177,32 @@ Draw.loadPlugin(function (ui) {
   }
 
   function buildInstanceSpec(instanceData, template) {
-    template = template != null ? normalizeSpec(cloneJson(template)) : buildTemplateSpec();
+    template =
+      template != null
+        ? normalizeSpec(cloneJson(template))
+        : buildTemplateSpec();
     var mergedData = deepMerge(
       buildEmptyValueFromSchema(template.schema),
       instanceData,
     );
     var spec = cloneJson(template);
     var nameValue =
-      getValueByPath(mergedData, "name") || getValueByPath(mergedData, "device.name");
+      getValueByPath(mergedData, "name") ||
+      getValueByPath(mergedData, "device.name");
     var codeValue =
-      getValueByPath(mergedData, "code") || getValueByPath(mergedData, "device.code");
+      getValueByPath(mergedData, "code") ||
+      getValueByPath(mergedData, "device.code");
     var powerValue =
-      getValueByPath(mergedData, "power") || getValueByPath(mergedData, "device.power");
+      getValueByPath(mergedData, "power") ||
+      getValueByPath(mergedData, "device.power");
     var modeValue =
-      getValueByPath(mergedData, "mode") || getValueByPath(mergedData, "device.mode");
+      getValueByPath(mergedData, "mode") ||
+      getValueByPath(mergedData, "device.mode");
     var titleValue = getValueByPath(mergedData, "title");
+    var variantKey;
+    var layout;
 
     spec.data = mergedData;
-    spec.labels = buildResolvedLabels(template.labels, mergedData);
     spec.symbolId = template.symbolId;
     spec.instanceId = generateInstanceId();
     spec.title = trim(titleValue) || trim(nameValue) || template.title;
@@ -2048,6 +2210,10 @@ Draw.loadPlugin(function (ui) {
     spec.device.code = trim(codeValue);
     spec.device.power = trim(powerValue);
     spec.device.mode = normalizeMode(modeValue);
+    variantKey = getActiveVariantKey(spec);
+    layout = getVariantLayout(template, variantKey);
+    spec.ports = layout.ports;
+    spec.labels = buildResolvedLabels(layout.labels, mergedData);
 
     return normalizeSpec(spec);
   }
@@ -2118,7 +2284,8 @@ Draw.loadPlugin(function (ui) {
       for (i = 0; i < templates.length; i++) {
         var option = document.createElement("option");
         option.value = String(i);
-        option.innerText = templates[i].title + " (" + templates[i].symbolId + ")";
+        option.innerText =
+          templates[i].title + " (" + templates[i].symbolId + ")";
         select.appendChild(option);
       }
 
@@ -2128,7 +2295,16 @@ Draw.loadPlugin(function (ui) {
 
       syncTemplate(0);
 
-      var wnd = new mxWindow("创建电气图元", div, 140, 120, 460, 520, true, true);
+      var wnd = new mxWindow(
+        "创建电气图元",
+        div,
+        140,
+        120,
+        460,
+        520,
+        true,
+        true,
+      );
       wnd.destroyOnClose = true;
       wnd.setClosable(true);
       wnd.setMaximizable(false);
@@ -2208,6 +2384,220 @@ Draw.loadPlugin(function (ui) {
     return button;
   }
 
+  // 返回当前画布图形内容的未缩放包围盒，用于给 SVG 导出提供默认宽高。
+  function getDiagramExportBounds() {
+    var bounds = graph.getGraphBounds();
+    var viewScale = graph.view.scale || 1;
+
+    if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
+      throw new Error("画布上没有可导出的图形");
+    }
+
+    return {
+      width: Math.max(1, Math.ceil(bounds.width / viewScale)),
+      height: Math.max(1, Math.ceil(bounds.height / viewScale)),
+    };
+  }
+
+  // 复用 draw.io 原生 graph.getSvg 导出当前图形，只返回纯 SVG 节点文本。
+  function createSvgExportCode(width, height) {
+    var exportBounds = getDiagramExportBounds();
+    var targetWidth = Math.max(1, toInt(width, exportBounds.width));
+    var targetHeight = Math.max(1, toInt(height, exportBounds.height));
+    var scale = Math.min(
+      targetWidth / exportBounds.width,
+      targetHeight / exportBounds.height,
+    );
+    var svgRoot = graph.getSvg(
+      null,
+      scale,
+      0,
+      false,
+      null,
+      true,
+      null,
+      null,
+      null,
+      null,
+      true,
+      null,
+    );
+
+    if (graph.shadowVisible) {
+      graph.addSvgShadow(svgRoot);
+    }
+
+    if (graph.mathEnabled) {
+      Editor.prototype.addMathCss(svgRoot);
+    }
+
+    svgRoot.setAttribute("width", String(targetWidth));
+    svgRoot.setAttribute("height", String(targetHeight));
+    svgRoot.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+    return mxUtils.getXml(svgRoot);
+  }
+
+  // 将当前文本框中的 SVG 代码下载为 .svg 文件，宽高以用户当前输入生成的代码为准。
+  function downloadSvgCode(svgCode) {
+    var blob = new Blob([svgCode], { type: "image/svg+xml;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = "diagram-export.svg";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    window.setTimeout(function () {
+      URL.revokeObjectURL(url);
+    }, 0);
+  }
+
+  // 弹出 SVG 导出窗口，允许用户调整导出尺寸并直接查看纯 SVG 代码。
+  function openSvgExportDialog() {
+    var exportBounds = getDiagramExportBounds();
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.boxSizing = "border-box";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
+
+    var formRow = document.createElement("div");
+    formRow.style.display = "flex";
+    formRow.style.alignItems = "center";
+    formRow.style.gap = "8px";
+    formRow.style.flexWrap = "wrap";
+    div.appendChild(formRow);
+
+    var widthLabel = document.createElement("div");
+    widthLabel.innerText = "宽";
+    formRow.appendChild(widthLabel);
+
+    var widthInput = document.createElement("input");
+    widthInput.setAttribute("type", "number");
+    widthInput.setAttribute("min", "1");
+    widthInput.style.width = "120px";
+    widthInput.value = String(exportBounds.width);
+    formRow.appendChild(widthInput);
+
+    var heightLabel = document.createElement("div");
+    heightLabel.innerText = "高";
+    formRow.appendChild(heightLabel);
+
+    var heightInput = document.createElement("input");
+    heightInput.setAttribute("type", "number");
+    heightInput.setAttribute("min", "1");
+    heightInput.style.width = "120px";
+    heightInput.value = String(exportBounds.height);
+    formRow.appendChild(heightInput);
+
+    var refreshButton = createButton("刷新SVG代码", function () {
+      try {
+        textarea.value = createSvgExportCode(
+          widthInput.value,
+          heightInput.value,
+        );
+      } catch (e) {
+        showStatus(e.message || String(e), true);
+      }
+    });
+    refreshButton.style.marginTop = "0";
+    refreshButton.style.marginRight = "0";
+    formRow.appendChild(refreshButton);
+
+    var textarea = document.createElement("textarea");
+    textarea.spellcheck = false;
+    textarea.style.width = "100%";
+    textarea.style.flex = "1 1 auto";
+    textarea.style.minHeight = "320px";
+    textarea.style.marginTop = "10px";
+    textarea.style.boxSizing = "border-box";
+    div.appendChild(textarea);
+
+    var buttons = document.createElement("div");
+    buttons.style.marginTop = "10px";
+    buttons.style.flex = "0 0 auto";
+    div.appendChild(buttons);
+
+    var copyButton = createButton("复制SVG代码", function () {
+      ui.writeTextToClipboard(
+        textarea.value,
+        function (e) {
+          ui.handleError(e);
+        },
+        function () {
+          ui.alert("已复制到剪贴板");
+        },
+      );
+    });
+    copyButton.style.marginTop = "0";
+    buttons.appendChild(copyButton);
+
+    var downloadButton = createButton("下载SVG", function () {
+      try {
+        var svgCode = createSvgExportCode(widthInput.value, heightInput.value);
+        textarea.value = svgCode;
+        downloadSvgCode(svgCode);
+      } catch (e) {
+        showStatus(e.message || String(e), true);
+      }
+    });
+    downloadButton.style.marginTop = "0";
+    buttons.appendChild(downloadButton);
+
+    textarea.value = createSvgExportCode(
+      exportBounds.width,
+      exportBounds.height,
+    );
+
+    var wnd = new mxWindow("导出SVG", div, 160, 120, 720, 560, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(true);
+    wnd.setScrollable(true);
+    wnd.setVisible(true);
+  }
+
+  // 接管顶部菜单栏，只保留电气插件自己的几个入口按钮。
+  function installTopActionBar() {
+    if (ui.menubarContainer == null) {
+      return;
+    }
+
+    ui.menubarContainer.innerHTML = "";
+    ui.menubarContainer.style.display = "flex";
+    ui.menubarContainer.style.alignItems = "center";
+    ui.menubarContainer.style.padding = "0 12px";
+
+    var bar = document.createElement("div");
+    bar.style.display = "flex";
+    bar.style.alignItems = "center";
+    bar.style.gap = "12px";
+    bar.style.width = "100%";
+    bar.style.height = "100%";
+
+    function addTopButton(resourceKey, actionKey) {
+      var button = createButton(mxResources.get(resourceKey), function () {
+        ui.actions.get(actionKey).funct();
+      });
+      button.style.marginTop = "0";
+      button.style.marginRight = "0";
+      button.style.padding = "6px 16px";
+      bar.appendChild(button);
+    }
+
+    addTopButton("electricalSymbols", "electricalSymbols");
+    addTopButton("electricalCreate", "electricalCreate");
+    addTopButton("electricalExportSvg", "electricalExportSvg");
+
+    ui.menubarContainer.appendChild(bar);
+  }
+
   // 统一绑定 SVG 上传按钮；可直接写入 state，也可把结果交给自定义回调处理。
   function bindSvgUpload(
     input,
@@ -2269,10 +2659,11 @@ Draw.loadPlugin(function (ui) {
   function createWindow() {
     state.symbolIdTouched = false;
     state.variantEnabled = false;
-    state.lastAutoVariantField = "";
+    state.lastValidVariantField = "";
     state.variantItems = [];
     state.currentSpec = null;
     state.selectedItem = null;
+    state.previewVariantId = "";
     state.previewMode = "select";
     state.uploadedPrimarySvg = "";
     state.uploadedPrimarySvgName = "";
@@ -2379,19 +2770,35 @@ Draw.loadPlugin(function (ui) {
     state.variantFieldInput.setAttribute("type", "text");
     state.variantFieldInput.style.flex = "1 1 auto";
     state.variantFieldInput.style.boxSizing = "border-box";
-    state.variantFieldInput.value = "mode";
+    state.variantFieldInput.value = "";
+    state.variantFieldInput.setAttribute(
+      "placeholder",
+      "请输入类型定义里已存在的字段路径",
+    );
     variantRow.appendChild(state.variantFieldInput);
 
     var addVariantButton = createButton(
       mxResources.get("electricalAddVariantSvg"),
       function () {
+        if (state.variantEnabled && validateVariantField(true) == null) {
+          return;
+        }
+
         state.variantItems.push({
           id: nextItemId("variant"),
           key: "",
           svg: "",
           name: "",
+          ports: cloneJson(
+            state.currentSpec != null ? state.currentSpec.ports || [] : [],
+          ),
+          labels: cloneJson(
+            state.currentSpec != null ? state.currentSpec.labels || [] : [],
+          ),
         });
         renderVariantList();
+        updateSelectedItem(null, null);
+        updatePreview(state.currentSpec);
       },
     );
     addVariantButton.style.marginTop = "0";
@@ -2424,7 +2831,10 @@ Draw.loadPlugin(function (ui) {
 
         var keyInput = document.createElement("input");
         keyInput.setAttribute("type", "text");
-        keyInput.setAttribute("placeholder", "变体值，如 standby / large / medium");
+        keyInput.setAttribute(
+          "placeholder",
+          "变体值，如 standby / large / medium",
+        );
         keyInput.style.width = "180px";
         keyInput.style.boxSizing = "border-box";
         keyInput.value = item.key;
@@ -2453,6 +2863,10 @@ Draw.loadPlugin(function (ui) {
           state.variantItems = state.variantItems.filter(function (entry) {
             return entry.id != item.id;
           });
+          if (state.previewVariantId == item.id) {
+            state.previewVariantId = "";
+            updateSelectedItem(null, null);
+          }
           renderVariantList();
           if (trim(state.uploadedPrimarySvg).length > 0) {
             parseEditorSpec();
@@ -2472,6 +2886,9 @@ Draw.loadPlugin(function (ui) {
           }
 
           item.key = nextKey;
+          if (state.variantEnabled) {
+            validateVariantField(true);
+          }
 
           if (trim(state.uploadedPrimarySvg).length > 0) {
             parseEditorSpec();
@@ -2526,34 +2943,49 @@ Draw.loadPlugin(function (ui) {
     buttons.style.marginTop = "10px";
     container.appendChild(buttons);
 
-    buttons.appendChild(
-      createButton(mxResources.get("electricalPreview"), function () {
+    var previewButton = createButton(mxResources.get("electricalPreview"), function () {
         parseEditorSpec();
-      }),
-    );
+      });
+    buttons.appendChild(previewButton);
 
-    buttons.appendChild(
-      createButton(mxResources.get("electricalAddLibrary"), function () {
+    var addLibraryButton = createButton(mxResources.get("electricalAddLibrary"), function () {
         addToLibrary(parseEditorSpec());
-      }),
-    );
-
-    buttons.appendChild(
-      createButton(mxResources.get("electricalExportLibrary"), function () {
-        exportLibrary();
-      }),
-    );
-
-    buttons.appendChild(
-      createButton(mxResources.get("electricalRefresh"), function () {
-        refreshSelection();
-      }),
-    );
+      });
+    buttons.appendChild(addLibraryButton);
 
     state.status = document.createElement("div");
     state.status.style.marginTop = "10px";
     state.status.style.minHeight = "18px";
     container.appendChild(state.status);
+
+    function setButtonEnabled(button, enabled) {
+      button.disabled = !enabled;
+      button.style.opacity = enabled ? "1" : "0.45";
+      button.style.pointerEvents = enabled ? "auto" : "none";
+    }
+
+    function updateVariantFieldState(showError) {
+      var valid = true;
+
+      if (state.variantEnabled) {
+        valid = validateVariantField(showError) != null;
+      }
+
+      if (state.variantFieldInput != null) {
+        state.variantFieldInput.style.borderColor =
+          !valid ? "#b3261e" : "";
+        state.variantFieldInput.style.boxShadow =
+          !valid ? "0 0 0 1px rgba(179,38,30,0.2)" : "";
+        state.variantFieldInput.title =
+          !valid ? "变体字段必须先在 JSON 类型定义中声明" : "";
+      }
+
+      setButtonEnabled(addVariantButton, !state.variantEnabled || valid);
+      setButtonEnabled(previewButton, !state.variantEnabled || valid);
+      setButtonEnabled(addLibraryButton, !state.variantEnabled || valid);
+
+      return valid;
+    }
 
     bindSvgUpload(
       primaryInput,
@@ -2562,6 +2994,10 @@ Draw.loadPlugin(function (ui) {
       "uploadedPrimarySvgName",
       "默认SVG 已加载",
       true,
+      function () {
+        state.previewVariantId = "";
+        updateSelectedItem(null, null);
+      },
     );
 
     mxEvent.addListener(primaryInput, "change", function () {
@@ -2572,22 +3008,54 @@ Draw.loadPlugin(function (ui) {
       }
     });
     mxEvent.addListener(state.variantFieldInput, "change", function () {
-      syncVariantFieldInSchema(state.variantFieldInput.value, state.variantEnabled);
-      if (trim(state.uploadedPrimarySvg).length > 0) {
-        parseEditorSpec();
+      var currentValue = trim(state.variantFieldInput.value);
+
+      if (state.variantEnabled) {
+        if (!updateVariantFieldState(true)) {
+          return;
+        }
+
+        state.lastValidVariantField = currentValue;
       }
-    });
-    mxEvent.addListener(variantToggle, "change", function () {
-      state.variantEnabled = variantToggle.checked;
-      refreshVariantSection();
-      syncVariantFieldInSchema(state.variantFieldInput.value, state.variantEnabled);
 
       if (trim(state.uploadedPrimarySvg).length > 0) {
         parseEditorSpec();
       }
     });
+    mxEvent.addListener(state.variantFieldInput, "input", function () {
+      updateVariantFieldState(false);
+    });
+    mxEvent.addListener(state.variantFieldInput, "blur", function () {
+      updateVariantFieldState(true);
+    });
+    mxEvent.addListener(variantToggle, "change", function () {
+      state.variantEnabled = variantToggle.checked;
+
+      if (state.variantEnabled) {
+        var validField = validateVariantField(false);
+
+        if (validField != null) {
+          state.lastValidVariantField = validField;
+        }
+      } else {
+        state.previewVariantId = "";
+        updateSelectedItem(null, null);
+      }
+
+      refreshVariantSection();
+      updateVariantFieldState(false);
+
+      if (trim(state.uploadedPrimarySvg).length > 0) {
+        try {
+          parseEditorSpec();
+        } catch (e) {
+          // 启用变体后允许用户继续补字段，不强制立即关闭开关
+        }
+      }
+    });
     refreshVariantSection();
     renderVariantList();
+    updateVariantFieldState(false);
 
     var x = Math.max(20, (document.body.offsetWidth - 560) / 2);
     var y = 80;
@@ -2614,7 +3082,8 @@ Draw.loadPlugin(function (ui) {
       state.jsonArea = null;
       state.preview = null;
       state.variantEnabled = false;
-      state.lastAutoVariantField = "";
+      state.lastValidVariantField = "";
+      state.previewVariantId = "";
       state.variantItems = [];
       state.currentSpec = null;
     });
@@ -2646,6 +3115,14 @@ Draw.loadPlugin(function (ui) {
     refreshSelection();
   });
 
+  ui.actions.addAction("electricalExportSvg", function () {
+    try {
+      openSvgExportDialog();
+    } catch (e) {
+      showStatus(e.message || String(e), true);
+    }
+  });
+
   var menu = ui.menus.get("extras");
   var oldExtrasMenu = menu.funct;
 
@@ -2653,10 +3130,20 @@ Draw.loadPlugin(function (ui) {
     oldExtrasMenu.apply(this, arguments);
     ui.menus.addMenuItems(
       menu,
-      ["-", "electricalSymbols", "electricalCreate", "electricalRefresh"],
+      [
+        "-",
+        "electricalSymbols",
+        "electricalCreate",
+        "electricalRefresh",
+        "electricalExportSvg",
+      ],
       parent,
     );
   };
+
+  installTopActionBar();
+  ui.addListener("languageChanged", installTopActionBar);
+  ui.addListener("currentThemeChanged", installTopActionBar);
 
   model.addListener(mxEvent.CHANGE, handleModelChange);
 });
