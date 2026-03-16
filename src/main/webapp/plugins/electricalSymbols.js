@@ -13,18 +13,23 @@ Draw.loadPlugin(function (ui) {
   var BODY_KIND = "body";
   var LABEL_KIND = "label";
   var BADGE_KIND = "badge";
+  // 预览区新增连接点时，距离边缘多近算“想吸附到边上”。
+  var PORT_EDGE_SNAP_THRESHOLD_PX = 14;
+  var TEMPLATE_DRAFT_STORAGE_KEY = "electrical-symbol-template-draft";
   // 保存插件窗口和运行期缓存
   var state = {
     libraryImages: [],
     updatingModel: false,
     window: null,
+    templatesWindow: null,
     status: null,
     symbolIdInput: null,
     symbolIdTouched: false,
+    templateNameInput: null,
     variantFieldInput: null,
     variantEnabled: false,
     lastValidVariantField: "",
-    jsonArea: null,
+    schemaFields: [],
     preview: null,
     currentSpec: null,
     previewMode: "select",
@@ -35,11 +40,13 @@ Draw.loadPlugin(function (ui) {
     uploadedPrimarySvgName: "",
     uploadedPrimarySvgSize: null,
     variantItems: [],
+    draftSaveTimer: null,
   };
 
   mxResources.parse(
     [
       "electricalSymbols=定义电气图元",
+      "electricalBrowse=已定义图元",
       "electricalCreate=创建电气图元",
       "electricalRefresh=刷新电气图元",
       "electricalExportSvg=导出SVG",
@@ -60,6 +67,61 @@ Draw.loadPlugin(function (ui) {
   // 判断值是否为普通对象，用来保护 JSON 结构解析
   function isObject(value) {
     return value != null && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function isSchemaLeafDescriptor(value) {
+    return (
+      isObject(value) &&
+      typeof value.type === "string" &&
+      trim(value.type).length > 0
+    );
+  }
+
+  function normalizeSchemaType(type) {
+    type = trim(type).toLowerCase();
+
+    return type == "number" || type == "boolean" || type == "enum"
+      ? type
+      : "string";
+  }
+
+  function normalizeEnumOptions(options) {
+    var list = Array.isArray(options)
+      ? options
+      : String(options || "").split(",");
+    var result = [];
+    var seen = {};
+    var i;
+
+    for (i = 0; i < list.length; i++) {
+      var value = trim(list[i]);
+
+      if (value.length > 0 && seen[value] == null) {
+        seen[value] = true;
+        result.push(value);
+      }
+    }
+
+    return result;
+  }
+
+  function normalizeSchemaField(raw) {
+    var field = isObject(raw) ? cloneJson(raw) : {};
+    field.id = trim(field.id) || nextItemId("field");
+    field.path = trim(field.path);
+    field.type = normalizeSchemaType(field.type);
+    field.required = !!field.required;
+    field.enumValues = normalizeEnumOptions(field.enumValues);
+    return field;
+  }
+
+  function getDefaultSchemaFields() {
+    return [
+      normalizeSchemaField({ path: "title", type: "string" }),
+      normalizeSchemaField({ path: "name", type: "string" }),
+      normalizeSchemaField({ path: "code", type: "string" }),
+      normalizeSchemaField({ path: "power", type: "string" }),
+    ];
   }
 
   // 把数值限制在给定区间内
@@ -151,6 +213,29 @@ Draw.loadPlugin(function (ui) {
     return mode == "primary" || mode == "standby" ? mode : "";
   }
 
+  function normalizePortMarker(marker) {
+    marker = trim(marker).toLowerCase();
+
+    return marker == "circle" || marker == "hidden" ? marker : "cross";
+  }
+
+  function normalizePortDirection(direction) {
+    direction = trim(direction).toLowerCase();
+
+    return direction == "left" ||
+      direction == "right" ||
+      direction == "up" ||
+      direction == "down"
+      ? direction
+      : "any";
+  }
+
+  function normalizePortIoMode(mode) {
+    mode = trim(mode).toLowerCase();
+
+    return mode == "in" || mode == "out" ? mode : "both";
+  }
+
   function normalizeLabelAlign(align) {
     align = trim(align).toLowerCase();
 
@@ -210,7 +295,7 @@ Draw.loadPlugin(function (ui) {
     return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
       /[xy]/g,
       function (ch) {
-        var rand = Math.random() * 16 | 0;
+        var rand = (Math.random() * 16) | 0;
         var value = ch == "x" ? rand : (rand & 0x3) | 0x8;
         return value.toString(16);
       },
@@ -319,7 +404,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     try {
-      var schema = parseTypeDefinition(state.jsonArea.value);
+      var schema = getEditorSchema();
 
       if (!isObject(schema)) {
         throw new Error("类型定义必须是对象");
@@ -411,22 +496,108 @@ Draw.loadPlugin(function (ui) {
     return false;
   }
 
-  function parseTypeDefinition(text) {
-    var source = trim(text);
+  function isValidFieldPath(path) {
+    var parts = trim(path).split(".");
+    var i;
 
-    if (source.length == 0) {
-      return {};
+    if (trim(path).length == 0) {
+      return false;
     }
 
-    try {
-      return JSON.parse(source);
-    } catch (e) {
-      return new Function(
-        "var string='string', number='number', boolean='boolean', object='object', array='array', any='any', nullType='null'; return (" +
-          source +
-          ");",
-      )();
+    for (i = 0; i < parts.length; i++) {
+      if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(parts[i])) {
+        return false;
+      }
     }
+
+    return true;
+  }
+
+  function setValueByPath(target, path, value) {
+    var parts = trim(path).split(".");
+    var current = target;
+    var i;
+
+    for (i = 0; i < parts.length - 1; i++) {
+      if (!isObject(current[parts[i]])) {
+        current[parts[i]] = {};
+      }
+
+      current = current[parts[i]];
+    }
+
+    current[parts[parts.length - 1]] = value;
+  }
+
+  function buildSchemaFromFields(fields) {
+    var schema = {};
+    var i;
+    var seen = {};
+
+    for (i = 0; i < fields.length; i++) {
+      var field = normalizeSchemaField(fields[i]);
+      var path = trim(field.path);
+
+      if (path.length == 0) {
+        continue;
+      }
+
+      if (!isValidFieldPath(path)) {
+        throw new Error("字段路径格式不正确");
+      }
+
+      if (seen[path]) {
+        throw new Error("字段路径不能重复");
+      }
+
+      if (field.type == "enum" && field.enumValues.length == 0) {
+        throw new Error("枚举类型必须至少提供一个可选值");
+      }
+
+      seen[path] = true;
+      setValueByPath(schema, path, {
+        type: field.type,
+        required: !!field.required,
+        enumValues: field.enumValues,
+      });
+    }
+
+    return schema;
+  }
+
+  function flattenSchemaFields(schema, prefix, result) {
+    var key;
+    var nextPrefix = trim(prefix);
+
+    if (!isObject(schema)) {
+      return result;
+    }
+
+    for (key in schema) {
+      if (schema.hasOwnProperty(key)) {
+        var path = nextPrefix.length > 0 ? nextPrefix + "." + key : key;
+        var value = schema[key];
+
+        if (isSchemaLeafDescriptor(value)) {
+          result.push(
+            normalizeSchemaField({
+              path: path,
+              type: value.type,
+              required: value.required,
+              enumValues: value.enumValues,
+            }),
+          );
+        } else if (isObject(value)) {
+          flattenSchemaFields(value, path, result);
+        }
+      }
+    }
+
+    return result;
+  }
+
+  function getEditorSchema() {
+    return buildSchemaFromFields(state.schemaFields || []);
   }
 
   function buildEmptyValueFromSchema(schema) {
@@ -437,6 +608,19 @@ Draw.loadPlugin(function (ui) {
     }
 
     if (isObject(schema)) {
+      if (isSchemaLeafDescriptor(schema)) {
+        switch (normalizeSchemaType(schema.type)) {
+          case "number":
+            return null;
+          case "boolean":
+            return null;
+          case "enum":
+            return "";
+          default:
+            return "";
+        }
+      }
+
       var result = {};
 
       for (key in schema) {
@@ -448,20 +632,7 @@ Draw.loadPlugin(function (ui) {
       return result;
     }
 
-    switch (schema) {
-      case "string":
-        return "";
-      case "number":
-        return null;
-      case "boolean":
-        return null;
-      case "array":
-        return [];
-      case "object":
-        return {};
-      default:
-        return null;
-    }
+    return null;
   }
 
   function deepMerge(base, value) {
@@ -564,6 +735,11 @@ Draw.loadPlugin(function (ui) {
     var variantField = trim(raw.variantField || "");
     var spec = {
       symbolId: trim(raw.symbolId) || generateSymbolId("symbol"),
+      templateName:
+        trim(raw.templateName) ||
+        trim(raw.title) ||
+        trim(device.name) ||
+        "电气图元",
       title: trim(raw.title) || trim(device.name) || "电气图元",
       svg: validateSvg(raw.svg),
       size: {
@@ -623,9 +799,11 @@ Draw.loadPlugin(function (ui) {
     return spec.svg;
   }
 
-  // 生成预览区使用的 svg data uri
+  // 生成预览区使用的 svg data uri。
+  // 这里故意和 mxCell.style 里的 image 使用同一套原始 SVG 编码方式，
+  // 避免预览与画布对 viewBox/留白的处理不一致，导致连接点位置看起来偏移。
   function toSvgDataUri(spec) {
-    return Graph.clipSvgDataUri(Editor.createSvgDataUri(getActiveSvg(spec)));
+    return "data:image/svg+xml," + encodeURIComponent(getActiveSvg(spec));
   }
 
   // 生成写入 mxCell.style 的 image data uri
@@ -641,12 +819,141 @@ Draw.loadPlugin(function (ui) {
     }
   }
 
+  function getDraftStorage() {
+    try {
+      return window.localStorage;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function clearDraftSaveTimer() {
+    if (state.draftSaveTimer != null) {
+      window.clearTimeout(state.draftSaveTimer);
+      state.draftSaveTimer = null;
+    }
+  }
+
+  function buildEditorDraftSnapshot() {
+    return {
+      symbolId:
+        state.symbolIdInput != null ? trim(state.symbolIdInput.value) : "",
+      symbolIdTouched: !!state.symbolIdTouched,
+      templateName:
+        state.templateNameInput != null
+          ? trim(state.templateNameInput.value)
+          : "",
+      uploadedPrimarySvg: state.uploadedPrimarySvg || "",
+      uploadedPrimarySvgName: state.uploadedPrimarySvgName || "",
+      uploadedPrimarySvgSize: state.uploadedPrimarySvgSize || null,
+      variantEnabled: !!state.variantEnabled,
+      variantField:
+        state.variantFieldInput != null
+          ? trim(state.variantFieldInput.value)
+          : "",
+      previewVariantId: trim(state.previewVariantId),
+      schemaFields: cloneJson(state.schemaFields || []),
+      variantItems: cloneJson(state.variantItems || []),
+      currentSpec:
+        state.currentSpec != null ? cloneJson(state.currentSpec) : null,
+    };
+  }
+
+  function saveEditorDraftNow() {
+    var storage = getDraftStorage();
+
+    clearDraftSaveTimer();
+
+    if (storage == null) {
+      return;
+    }
+
+    try {
+      storage.setItem(
+        TEMPLATE_DRAFT_STORAGE_KEY,
+        JSON.stringify(buildEditorDraftSnapshot()),
+      );
+    } catch (e) {
+      // ignore storage quota / privacy errors
+    }
+  }
+
+  function scheduleEditorDraftSave() {
+    clearDraftSaveTimer();
+    state.draftSaveTimer = window.setTimeout(saveEditorDraftNow, 180);
+  }
+
+  function loadEditorDraft() {
+    var storage = getDraftStorage();
+    var raw;
+
+    if (storage == null) {
+      return null;
+    }
+
+    try {
+      raw = storage.getItem(TEMPLATE_DRAFT_STORAGE_KEY);
+    } catch (e) {
+      return null;
+    }
+
+    if (trim(raw).length == 0) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function clearEditorDraft() {
+    var storage = getDraftStorage();
+
+    clearDraftSaveTimer();
+
+    if (storage == null) {
+      return;
+    }
+
+    try {
+      storage.removeItem(TEMPLATE_DRAFT_STORAGE_KEY);
+    } catch (e) {
+      // ignore storage errors
+    }
+  }
+
+  function setCanvasStatus(message) {
+    var text = trim(message);
+
+    if (text.length == 0) {
+      if (typeof ui.clearStatus === "function") {
+        ui.clearStatus();
+      }
+
+      return;
+    }
+
+    if (typeof ui.updateStatus === "function") {
+      ui.updateStatus(function () {
+        ui.editor.setStatus(mxUtils.htmlEntities(text));
+
+        if (typeof ui.setStatusText === "function") {
+          ui.setStatusText(ui.editor.getStatus());
+        }
+      });
+    } else if (ui.editor != null && typeof ui.editor.setStatus === "function") {
+      ui.editor.setStatus(mxUtils.htmlEntities(text));
+    }
+  }
+
   function buildTemplateSpec() {
     if (trim(state.uploadedPrimarySvg).length == 0) {
       throw new Error("请先上传默认SVG");
     }
 
-    var schema = parseTypeDefinition(state.jsonArea.value);
+    var schema = getEditorSchema();
 
     if (!isObject(schema)) {
       throw new Error("类型定义必须是对象");
@@ -656,9 +963,16 @@ Draw.loadPlugin(function (ui) {
     var symbolId = trim(
       state.symbolIdInput != null ? state.symbolIdInput.value : "",
     );
+    var templateName = trim(
+      state.templateNameInput != null ? state.templateNameInput.value : "",
+    );
 
     if (symbolId.length == 0) {
       throw new Error("请先填写图元类型ID");
+    }
+
+    if (templateName.length == 0) {
+      throw new Error("请先填写图元类型名称");
     }
 
     var variantField = "";
@@ -673,7 +987,8 @@ Draw.loadPlugin(function (ui) {
 
     return normalizeSpec({
       symbolId: symbolId,
-      title: trim(current.title) || "电气图元",
+      templateName: templateName,
+      title: trim(current.title) || templateName,
       svg: state.uploadedPrimarySvg,
       size:
         state.uploadedPrimarySvgSize ||
@@ -779,11 +1094,8 @@ Draw.loadPlugin(function (ui) {
         ? findVariantItem(state.previewVariantId)
         : null;
 
-    if (
-      variantItem != null &&
-      trim(variantItem.svg).length > 0
-    ) {
-      return Graph.clipSvgDataUri(Editor.createSvgDataUri(variantItem.svg));
+    if (variantItem != null && trim(variantItem.svg).length > 0) {
+      return "data:image/svg+xml," + encodeURIComponent(variantItem.svg);
     }
 
     return toSvgDataUri(spec);
@@ -838,6 +1150,55 @@ Draw.loadPlugin(function (ui) {
     };
   }
 
+  // 新增连接点时，如果点击位置已经很靠近图元边缘，就自动吸附到其最近的边上。
+  // 阈值按像素换算成相对坐标，避免不同尺寸 SVG 下吸附手感不一致。
+  function snapPortPointToEdge(point, metrics) {
+    var thresholdX = PORT_EDGE_SNAP_THRESHOLD_PX / Math.max(1, metrics.width);
+    var thresholdY = PORT_EDGE_SNAP_THRESHOLD_PX / Math.max(1, metrics.height);
+    var distances = [];
+
+    if (point.x <= thresholdX) {
+      distances.push({ edge: "left", distance: point.x });
+    }
+
+    if (1 - point.x <= thresholdX) {
+      distances.push({ edge: "right", distance: 1 - point.x });
+    }
+
+    if (point.y <= thresholdY) {
+      distances.push({ edge: "top", distance: point.y });
+    }
+
+    if (1 - point.y <= thresholdY) {
+      distances.push({ edge: "bottom", distance: 1 - point.y });
+    }
+
+    if (distances.length == 0) {
+      return point;
+    }
+
+    distances.sort(function (a, b) {
+      return a.distance - b.distance;
+    });
+
+    var snapped = {
+      x: point.x,
+      y: point.y,
+    };
+
+    if (distances[0].edge == "left") {
+      snapped.x = 0;
+    } else if (distances[0].edge == "right") {
+      snapped.x = 1;
+    } else if (distances[0].edge == "top") {
+      snapped.y = 0;
+    } else if (distances[0].edge == "bottom") {
+      snapped.y = 1;
+    }
+
+    return snapped;
+  }
+
   function updateSelectedItem(type, id) {
     state.selectedItem =
       type != null && id != null ? { type: type, id: id } : null;
@@ -866,8 +1227,8 @@ Draw.loadPlugin(function (ui) {
     updatePreview(state.currentSpec);
   }
 
-  // 预览区是一个轻量交互编辑面板。
-  // 用户可以直接在这里添加/拖动连接点和文本框，修改会实时写回 JSON。
+  // 预览区是一个轻量交互编辑面板
+  // 用户可以直接在这里添加/拖动连接点和文本框，修改会实时写回 JSON
   function updatePreview(spec) {
     state.preview.innerHTML = "";
 
@@ -880,10 +1241,12 @@ Draw.loadPlugin(function (ui) {
       empty.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
       empty.innerText = "请先上传默认SVG，再在这里添加连接点和文本框";
       state.preview.appendChild(empty);
+      scheduleEditorDraftSave();
       return;
     }
 
     state.currentSpec = normalizeSpec(spec);
+    scheduleEditorDraftSave();
     var layoutStore = getPreviewLayoutStore(state.currentSpec);
     var selectedId = state.selectedItem != null ? state.selectedItem.id : null;
     var selectedType =
@@ -962,6 +1325,93 @@ Draw.loadPlugin(function (ui) {
     deleteBtn.style.padding = "4px 10px";
     toolbar.appendChild(deleteBtn);
 
+    if (state.selectedItem != null && state.selectedItem.type == "port") {
+      var selectedPort = findPort(
+        { ports: layoutStore.ports },
+        state.selectedItem.id,
+      );
+
+      if (selectedPort != null) {
+        var portEditor = document.createElement("div");
+        portEditor.style.display = "flex";
+        portEditor.style.alignItems = "center";
+        portEditor.style.gap = "8px";
+        portEditor.style.padding = "8px";
+        portEditor.style.borderBottom = "1px solid #d0d7de";
+        state.preview.appendChild(portEditor);
+
+        var portNameInput = document.createElement("input");
+        portNameInput.setAttribute("type", "text");
+        portNameInput.setAttribute("placeholder", "端子名称，如 L1 / N / PE");
+        portNameInput.value = selectedPort.name || "";
+        portNameInput.style.width = "180px";
+        portEditor.appendChild(portNameInput);
+
+        var markerSelect = document.createElement("select");
+        [
+          { value: "cross", label: "叉号" },
+          { value: "circle", label: "圆点" },
+          { value: "hidden", label: "隐藏" },
+        ].forEach(function (item) {
+          var option = document.createElement("option");
+          option.value = item.value;
+          option.innerText = item.label;
+          markerSelect.appendChild(option);
+        });
+        markerSelect.value = selectedPort.marker || "cross";
+        portEditor.appendChild(markerSelect);
+
+        var directionSelect = document.createElement("select");
+        [
+          { value: "any", label: "任意方向" },
+          { value: "left", label: "左侧接入" },
+          { value: "right", label: "右侧接入" },
+          { value: "up", label: "上侧接入" },
+          { value: "down", label: "下侧接入" },
+        ].forEach(function (item) {
+          var option = document.createElement("option");
+          option.value = item.value;
+          option.innerText = item.label;
+          directionSelect.appendChild(option);
+        });
+        directionSelect.value = selectedPort.direction || "any";
+        portEditor.appendChild(directionSelect);
+
+        var ioSelect = document.createElement("select");
+        [
+          { value: "both", label: "可接入可接出" },
+          { value: "in", label: "仅接入" },
+          { value: "out", label: "仅接出" },
+        ].forEach(function (item) {
+          var option = document.createElement("option");
+          option.value = item.value;
+          option.innerText = item.label;
+          ioSelect.appendChild(option);
+        });
+        ioSelect.value = selectedPort.ioMode || "both";
+        portEditor.appendChild(ioSelect);
+
+        mxEvent.addListener(portNameInput, "input", function () {
+          selectedPort.name = trim(portNameInput.value);
+          updatePreview(state.currentSpec);
+        });
+        mxEvent.addListener(markerSelect, "change", function () {
+          selectedPort.marker = normalizePortMarker(markerSelect.value);
+          updatePreview(state.currentSpec);
+        });
+        mxEvent.addListener(directionSelect, "change", function () {
+          selectedPort.direction = normalizePortDirection(
+            directionSelect.value,
+          );
+          updatePreview(state.currentSpec);
+        });
+        mxEvent.addListener(ioSelect, "change", function () {
+          selectedPort.ioMode = normalizePortIoMode(ioSelect.value);
+          updatePreview(state.currentSpec);
+        });
+      }
+    }
+
     var surface = document.createElement("div");
     surface.style.position = "relative";
     surface.style.height = "278px";
@@ -1033,6 +1483,21 @@ Draw.loadPlugin(function (ui) {
         function upHandler() {
           document.removeEventListener("mousemove", moveHandler);
           document.removeEventListener("mouseup", upHandler);
+
+          if (type == "port" && state.currentSpec != null) {
+            var finalLayout = getPreviewLayoutStore(state.currentSpec);
+            var finalPort = findPort({ ports: finalLayout.ports }, id);
+
+            if (finalPort != null) {
+              var snappedPoint = snapPortPointToEdge(
+                { x: finalPort.x, y: finalPort.y },
+                metrics,
+              );
+              finalPort.x = snappedPoint.x;
+              finalPort.y = snappedPoint.y;
+            }
+          }
+
           updatePreview(state.currentSpec);
         }
 
@@ -1051,12 +1516,14 @@ Draw.loadPlugin(function (ui) {
       handle.style.lineHeight = "14px";
       handle.style.textAlign = "center";
       handle.style.color = "#1a73e8";
-      handle.style.fontSize = "16px";
+      handle.style.fontSize = point.marker == "circle" ? "12px" : "16px";
       handle.style.fontWeight = "700";
       handle.style.cursor = "move";
       handle.style.userSelect = "none";
       handle.style.zIndex = "2";
-      handle.innerText = "×";
+      handle.innerText =
+        point.marker == "circle" ? "●" : point.marker == "hidden" ? "" : "×";
+      handle.style.opacity = point.marker == "hidden" ? "0.35" : "1";
       handle.title = point.id;
       if (
         state.selectedItem != null &&
@@ -1163,6 +1630,7 @@ Draw.loadPlugin(function (ui) {
       );
 
       if (state.previewMode == "port") {
+        point = snapPortPointToEdge(point, metrics);
         layoutStore.ports.push({
           id: nextItemId("port"),
           x: point.x,
@@ -1267,16 +1735,24 @@ Draw.loadPlugin(function (ui) {
     return count <= 0 ? 0.5 : (index + 1) / (count + 1);
   }
 
-  // 规范化单个端口点位，最终格式为 {id, x, y}，x/y 都在 0..1。
+  // 规范化单个端口点位，最终格式为 {id, x, y, name, marker, direction, ioMode}。
   function normalizePortPoint(raw, fallbackId, fallbackX, fallbackY) {
     var id = fallbackId;
     var x = fallbackX;
     var y = fallbackY;
+    var name = "";
+    var marker = "cross";
+    var direction = "any";
+    var ioMode = "both";
 
     if (isObject(raw)) {
       id = trim(raw.id || raw.key || raw.name) || fallbackId;
       x = toFloat(raw.x, fallbackX);
       y = toFloat(raw.y, fallbackY);
+      name = trim(raw.name || raw.label || "");
+      marker = normalizePortMarker(raw.marker || raw.style);
+      direction = normalizePortDirection(raw.direction || raw.side);
+      ioMode = normalizePortIoMode(raw.ioMode || raw.io || raw.mode);
     } else if (typeof raw == "number") {
       y = raw;
     }
@@ -1285,6 +1761,10 @@ Draw.loadPlugin(function (ui) {
       id: id,
       x: clamp(x, 0, 1),
       y: clamp(y, 0, 1),
+      name: name,
+      marker: marker,
+      direction: direction,
+      ioMode: ioMode,
     };
   }
 
@@ -1981,6 +2461,47 @@ Draw.loadPlugin(function (ui) {
     return constraints;
   }
 
+  function getPortMetaByConstraint(root, constraint) {
+    var ports = parsePortLayout(getAttr(root, "portsJson"));
+    var name = constraint != null ? trim(constraint.name) : "";
+    var i;
+
+    for (i = 0; i < ports.length; i++) {
+      if (trim(ports[i].id) == name) {
+        return ports[i];
+      }
+    }
+
+    return null;
+  }
+
+  function mapPortDirectionToConstraint(direction) {
+    switch (normalizePortDirection(direction)) {
+      case "left":
+        return "west";
+      case "right":
+        return "east";
+      case "up":
+        return "north";
+      case "down":
+        return "south";
+      default:
+        return "";
+    }
+  }
+
+  function validatePortIoMode(sourcePort, targetPort) {
+    if (sourcePort != null && normalizePortIoMode(sourcePort.ioMode) == "in") {
+      return "该端子仅允许接入，不能作为连线起点";
+    }
+
+    if (targetPort != null && normalizePortIoMode(targetPort.ioMode) == "out") {
+      return "该端子仅允许接出，不能作为连线终点";
+    }
+
+    return null;
+  }
+
   var oldGetAllConnectionConstraints = graph.getAllConnectionConstraints;
 
   // 用 mxConnectionConstraint 动态生成 draw.io 原生连接点。
@@ -1994,6 +2515,77 @@ Draw.loadPlugin(function (ui) {
 
     return oldGetAllConnectionConstraints.apply(this, arguments);
   };
+
+  var oldSetConnectionConstraint = graph.setConnectionConstraint;
+
+  // 保持连接点仍然是 draw.io 原生约束点，同时把端子方向约束写入边样式，
+  // 让正交连线在连接后按照端子方向出线。
+  graph.setConnectionConstraint = function (
+    edge,
+    terminal,
+    source,
+    constraint,
+  ) {
+    oldSetConnectionConstraint.apply(this, arguments);
+
+    var root = findElectricalRoot(terminal);
+
+    if (root == null || edge == null) {
+      return;
+    }
+
+    var port = getPortMetaByConstraint(root, constraint);
+    var direction =
+      port != null ? mapPortDirectionToConstraint(port.direction) : "";
+    var key = source ? "sourcePortConstraint" : "targetPortConstraint";
+    var style = model.getStyle(edge) || "";
+
+    style = mxUtils.setStyle(
+      style,
+      key,
+      direction.length > 0 ? direction : null,
+    );
+    model.setStyle(edge, style);
+  };
+
+  var oldValidateConnection = graph.connectionHandler.validateConnection;
+
+  graph.connectionHandler.validateConnection = function (source, target) {
+    var error = oldValidateConnection.apply(this, arguments);
+
+    if (error != null) {
+      setCanvasStatus(error);
+      return error;
+    }
+
+    var sourceRoot = findElectricalRoot(source);
+    var targetRoot = findElectricalRoot(target);
+
+    if (sourceRoot == null && targetRoot == null) {
+      return null;
+    }
+
+    var sourcePort = getPortMetaByConstraint(sourceRoot, this.sourceConstraint);
+    var targetPort = getPortMetaByConstraint(
+      targetRoot,
+      this.constraintHandler != null
+        ? this.constraintHandler.currentConstraint
+        : null,
+    );
+    error = validatePortIoMode(sourcePort, targetPort);
+
+    setCanvasStatus(error);
+
+    return error;
+  };
+
+  graph.connectionHandler.addListener(mxEvent.RESET, function () {
+    setCanvasStatus("");
+  });
+
+  graph.connectionHandler.addListener(mxEvent.CONNECT, function () {
+    setCanvasStatus("");
+  });
 
   function createLibraryEntry(spec) {
     var root = buildSymbolCell(spec);
@@ -2015,7 +2607,7 @@ Draw.loadPlugin(function (ui) {
       xml: xml,
       w: bounds != null ? Math.round(bounds.width) : spec.size.width,
       h: bounds != null ? Math.round(bounds.height) : spec.size.height,
-      title: spec.title,
+      title: spec.templateName || spec.title,
       spec: cloneJson(spec),
     };
   }
@@ -2064,6 +2656,33 @@ Draw.loadPlugin(function (ui) {
     }
 
     return -1;
+  }
+
+  function isTemplateNameTaken(name, ignoreSymbolId) {
+    var target = trim(name);
+    var ignoreId = trim(ignoreSymbolId);
+    var i;
+
+    if (target.length == 0) {
+      return false;
+    }
+
+    for (i = 0; i < state.libraryImages.length; i++) {
+      try {
+        var spec = getLibraryEntrySpec(state.libraryImages[i]);
+
+        if (
+          trim(spec.templateName || spec.title) == target &&
+          trim(spec.symbolId) != ignoreId
+        ) {
+          return true;
+        }
+      } catch (e) {
+        // ignore malformed entry
+      }
+    }
+
+    return false;
   }
 
   // 从本地存储读取“电气图元库”，并在需要时同步打开到左侧 Sidebar。
@@ -2135,11 +2754,29 @@ Draw.loadPlugin(function (ui) {
   }
 
   // 把当前 spec 转成一个新的图库条目并追加到电气图库
-  function addToLibrary(spec) {
+  function addToLibrary(spec, onSaved) {
     loadStoredLibrary(function (images) {
       var next = images.slice();
       var entry = createLibraryEntry(spec);
       var index = findLibraryEntryIndex(next, spec.symbolId);
+      var i;
+
+      for (i = 0; i < next.length; i++) {
+        try {
+          var currentSpec = getLibraryEntrySpec(next[i]);
+
+          if (
+            trim(currentSpec.templateName || currentSpec.title) ==
+              trim(spec.templateName || spec.title) &&
+            trim(currentSpec.symbolId) != trim(spec.symbolId)
+          ) {
+            showStatus("图元类型名称不能重复", true);
+            return;
+          }
+        } catch (e) {
+          // ignore malformed entry
+        }
+      }
 
       if (index >= 0) {
         next[index] = entry;
@@ -2149,6 +2786,9 @@ Draw.loadPlugin(function (ui) {
 
       saveLibraryImages(next, function () {
         showStatus(index >= 0 ? "已更新图库模板" : "已加入图库", false);
+        if (typeof onSaved === "function") {
+          onSaved();
+        }
       });
     });
   }
@@ -2173,6 +2813,40 @@ Draw.loadPlugin(function (ui) {
         "drawiolib",
       );
       showStatus("已开始导出图库", false);
+    });
+  }
+
+  function removeTemplateFromLibrary(symbolId, onRemoved) {
+    loadStoredLibrary(function (images) {
+      var next = [];
+      var removed = false;
+      var i;
+
+      for (i = 0; i < images.length; i++) {
+        try {
+          if (trim(getLibraryEntrySpec(images[i]).symbolId) == trim(symbolId)) {
+            removed = true;
+            continue;
+          }
+        } catch (e) {
+          // keep malformed entries untouched
+        }
+
+        next.push(images[i]);
+      }
+
+      if (!removed) {
+        showStatus("未找到要删除的图元模板", true);
+        return;
+      }
+
+      saveLibraryImages(next, function () {
+        showStatus("已删除图元模板", false);
+
+        if (typeof onRemoved === "function") {
+          onRemoved(next);
+        }
+      });
     });
   }
 
@@ -2219,7 +2893,7 @@ Draw.loadPlugin(function (ui) {
   }
 
   // 从本地模板库选择一个图元类型，再输入实例 JSON 创建到画布。
-  function openCreateFromLibraryDialog() {
+  function openCreateFromLibraryDialog(preferredSymbolId) {
     loadStoredLibrary(function (images) {
       var templates = [];
       var i;
@@ -2237,7 +2911,18 @@ Draw.loadPlugin(function (ui) {
         return;
       }
 
-      var currentTemplate = templates[0];
+      var initialIndex = 0;
+
+      if (trim(preferredSymbolId).length > 0) {
+        for (i = 0; i < templates.length; i++) {
+          if (trim(templates[i].symbolId) == trim(preferredSymbolId)) {
+            initialIndex = i;
+            break;
+          }
+        }
+      }
+
+      var currentTemplate = templates[initialIndex];
       var div = document.createElement("div");
       div.style.padding = "12px";
       div.style.width = "100%";
@@ -2259,13 +2944,16 @@ Draw.loadPlugin(function (ui) {
       select.style.marginBottom = "10px";
       div.appendChild(select);
 
-      var textarea = document.createElement("textarea");
-      textarea.spellcheck = false;
-      textarea.style.width = "100%";
-      textarea.style.flex = "1 1 auto";
-      textarea.style.minHeight = "220px";
-      textarea.style.boxSizing = "border-box";
-      div.appendChild(textarea);
+      var formPanel = document.createElement("div");
+      formPanel.style.flex = "1 1 auto";
+      formPanel.style.minHeight = "220px";
+      formPanel.style.overflow = "auto";
+      formPanel.style.display = "flex";
+      formPanel.style.flexDirection = "column";
+      formPanel.style.gap = "8px";
+      div.appendChild(formPanel);
+
+      var formControls = [];
 
       var buttons = document.createElement("div");
       buttons.style.marginTop = "10px";
@@ -2274,18 +2962,88 @@ Draw.loadPlugin(function (ui) {
 
       function syncTemplate(index) {
         currentTemplate = templates[index];
-        textarea.value = JSON.stringify(
-          buildEmptyValueFromSchema(currentTemplate.schema),
-          null,
-          2,
+        formPanel.innerHTML = "";
+        formControls = [];
+
+        flattenSchemaFields(currentTemplate.schema, "", []).forEach(
+          function (field) {
+            var block = document.createElement("div");
+            block.style.display = "flex";
+            block.style.flexDirection = "column";
+            block.style.gap = "4px";
+            formPanel.appendChild(block);
+
+            var row = document.createElement("div");
+            row.style.display = "grid";
+            row.style.gridTemplateColumns = "140px 1fr";
+            row.style.gap = "8px";
+            row.style.alignItems = "center";
+            block.appendChild(row);
+
+            var label = document.createElement("div");
+            label.innerText = field.path + (field.required ? " *" : "");
+            row.appendChild(label);
+
+            var control;
+            var type = normalizeSchemaType(field.type);
+
+            if (type == "enum") {
+              control = document.createElement("select");
+              var emptyOption = document.createElement("option");
+              emptyOption.value = "";
+              emptyOption.innerText = "请选择";
+              control.appendChild(emptyOption);
+              field.enumValues.forEach(function (optionValue) {
+                var option = document.createElement("option");
+                option.value = optionValue;
+                option.innerText = optionValue;
+                control.appendChild(option);
+              });
+            } else if (type == "boolean") {
+              control = document.createElement("select");
+              [
+                { value: "", label: "请选择" },
+                { value: "true", label: "true" },
+                { value: "false", label: "false" },
+              ].forEach(function (item) {
+                var option = document.createElement("option");
+                option.value = item.value;
+                option.innerText = item.label;
+                control.appendChild(option);
+              });
+            } else {
+              control = document.createElement("input");
+              control.setAttribute(
+                "type",
+                type == "number" ? "number" : "text",
+              );
+            }
+
+            control.style.width = "100%";
+            control.style.boxSizing = "border-box";
+            row.appendChild(control);
+
+            var error = document.createElement("div");
+            error.style.marginLeft = "148px";
+            error.style.minHeight = "16px";
+            error.style.fontSize = "12px";
+            error.style.color = "#b3261e";
+            block.appendChild(error);
+
+            formControls.push({
+              field: field,
+              control: control,
+              type: type,
+              error: error,
+            });
+          },
         );
       }
 
       for (i = 0; i < templates.length; i++) {
         var option = document.createElement("option");
         option.value = String(i);
-        option.innerText =
-          templates[i].title + " (" + templates[i].symbolId + ")";
+        option.innerText = templates[i].templateName || templates[i].title;
         select.appendChild(option);
       }
 
@@ -2293,7 +3051,8 @@ Draw.loadPlugin(function (ui) {
         syncTemplate(parseInt(select.value, 10) || 0);
       });
 
-      syncTemplate(0);
+      select.value = String(initialIndex);
+      syncTemplate(initialIndex);
 
       var wnd = new mxWindow(
         "创建电气图元",
@@ -2314,7 +3073,77 @@ Draw.loadPlugin(function (ui) {
 
       var submitButton = createButton("创建到画布", function () {
         try {
-          var payload = JSON.parse(textarea.value);
+          var payload = {};
+          var firstInvalid = null;
+
+          formControls.forEach(function (entry) {
+            entry.error.innerText = "";
+            entry.control.style.borderColor = "";
+            entry.control.style.boxShadow = "";
+          });
+
+          formControls.forEach(function (entry) {
+            var rawValue = trim(entry.control.value);
+            var value = null;
+
+            if (entry.type == "number") {
+              value = rawValue.length > 0 ? toFloat(rawValue, null) : null;
+            } else if (entry.type == "boolean") {
+              value =
+                rawValue == "true" ? true : rawValue == "false" ? false : null;
+            } else {
+              value = rawValue;
+            }
+
+            if (
+              entry.field.required &&
+              (value == null ||
+                (typeof value === "string" && value.length == 0))
+            ) {
+              entry.error.innerText = "必填项";
+              entry.control.style.borderColor = "#b3261e";
+              entry.control.style.boxShadow = "0 0 0 1px rgba(179,38,30,0.2)";
+              firstInvalid = firstInvalid || entry;
+              return;
+            }
+
+            if (entry.type == "enum" && rawValue.length > 0) {
+              if (entry.field.enumValues.indexOf(rawValue) < 0) {
+                entry.error.innerText = "必须选择枚举定义中的值";
+                entry.control.style.borderColor = "#b3261e";
+                entry.control.style.boxShadow = "0 0 0 1px rgba(179,38,30,0.2)";
+                firstInvalid = firstInvalid || entry;
+                return;
+              }
+            }
+
+            if (
+              entry.type == "number" &&
+              rawValue.length > 0 &&
+              value == null
+            ) {
+              entry.error.innerText = "请输入有效数字";
+              entry.control.style.borderColor = "#b3261e";
+              entry.control.style.boxShadow = "0 0 0 1px rgba(179,38,30,0.2)";
+              firstInvalid = firstInvalid || entry;
+              return;
+            }
+
+            setValueByPath(payload, entry.field.path, value);
+          });
+
+          if (firstInvalid != null) {
+            firstInvalid.control.focus();
+            if (typeof firstInvalid.control.scrollIntoView === "function") {
+              firstInvalid.control.scrollIntoView({
+                block: "nearest",
+                behavior: "smooth",
+              });
+            }
+            showStatus("请先修正表单中的错误字段", true);
+            return;
+          }
+
           insertIntoGraph(buildInstanceSpec(payload, currentTemplate));
           wnd.destroy();
         } catch (e) {
@@ -2323,6 +3152,266 @@ Draw.loadPlugin(function (ui) {
       });
       submitButton.style.marginTop = "0";
       buttons.appendChild(submitButton);
+    });
+  }
+
+  // 单独展示“已定义图元”的浏览窗口，避免用户只能去左侧图库里找模板。
+  function openTemplateBrowserDialog() {
+    if (state.templatesWindow != null) {
+      state.templatesWindow.setVisible(!state.templatesWindow.isVisible());
+      return;
+    }
+
+    loadStoredLibrary(function (images) {
+      var templates = [];
+      var i;
+
+      for (i = 0; i < images.length; i++) {
+        try {
+          templates.push(getLibraryEntrySpec(images[i]));
+        } catch (e) {
+          // ignore malformed entry
+        }
+      }
+
+      if (templates.length == 0) {
+        showStatus("电气图库为空，请先保存图元类型", true);
+        return;
+      }
+
+      var div = document.createElement("div");
+      div.style.padding = "12px";
+      div.style.width = "100%";
+      div.style.height = "100%";
+      div.style.boxSizing = "border-box";
+      div.style.display = "flex";
+      div.style.flexDirection = "column";
+      div.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
+
+      var title = document.createElement("div");
+      title.style.fontWeight = "bold";
+      title.style.marginBottom = "10px";
+      title.innerText = "已定义图元";
+      div.appendChild(title);
+
+      var list = document.createElement("div");
+      list.style.flex = "1 1 auto";
+      list.style.overflow = "auto";
+      list.style.display = "grid";
+      list.style.gridTemplateColumns = "repeat(auto-fill, minmax(220px, 1fr))";
+      list.style.gap = "12px";
+      list.style.alignContent = "start";
+      div.appendChild(list);
+
+      function renderTemplateCardPreview(container, template) {
+        container.innerHTML = "";
+        container.style.position = "relative";
+        container.style.overflow = "hidden";
+        var ports = normalizePortLayout(template.ports);
+        var labels = normalizeLabels(template.labels);
+        var bounds = {
+          minX: 0,
+          minY: 0,
+          maxX: template.size.width,
+          maxY: template.size.height,
+        };
+
+        ports.forEach(function (point) {
+          var x = point.x * template.size.width;
+          var y = point.y * template.size.height;
+          bounds.minX = Math.min(bounds.minX, x - 10);
+          bounds.minY = Math.min(bounds.minY, y - 10);
+          bounds.maxX = Math.max(bounds.maxX, x + 10);
+          bounds.maxY = Math.max(bounds.maxY, y + 10);
+        });
+
+        labels.forEach(function (label) {
+          var x = label.x * template.size.width;
+          var y = label.y * template.size.height;
+          bounds.minX = Math.min(bounds.minX, x - label.width / 2);
+          bounds.minY = Math.min(bounds.minY, y - label.height / 2);
+          bounds.maxX = Math.max(bounds.maxX, x + label.width / 2);
+          bounds.maxY = Math.max(bounds.maxY, y + label.height / 2);
+        });
+
+        var contentWidth = Math.max(1, bounds.maxX - bounds.minX);
+        var contentHeight = Math.max(1, bounds.maxY - bounds.minY);
+        var rect = container.getBoundingClientRect();
+        var surfaceWidth = Math.max(200, Math.round(rect.width) || 0);
+        var surfaceHeight = Math.max(160, Math.round(rect.height) || 0);
+        var padding = 18;
+        var scale = Math.min(
+          (surfaceWidth - padding * 2) / contentWidth,
+          (surfaceHeight - padding * 2) / contentHeight,
+        );
+
+        scale = Math.max(0.05, scale);
+        var left = Math.round(
+          (surfaceWidth - contentWidth * scale) / 2 - bounds.minX * scale,
+        );
+        var top = Math.round(
+          (surfaceHeight - contentHeight * scale) / 2 - bounds.minY * scale,
+        );
+
+        var img = document.createElement("img");
+        img.setAttribute(
+          "src",
+          "data:image/svg+xml," + encodeURIComponent(template.svg),
+        );
+        img.setAttribute("alt", template.title);
+        img.style.position = "absolute";
+        img.style.left = left + "px";
+        img.style.top = top + "px";
+        img.style.width = Math.round(template.size.width * scale) + "px";
+        img.style.height = Math.round(template.size.height * scale) + "px";
+        img.style.objectFit = "fill";
+        container.appendChild(img);
+
+        ports.forEach(function (point) {
+          var handle = document.createElement("div");
+          handle.style.position = "absolute";
+          handle.style.left =
+            Math.round(left + point.x * template.size.width * scale - 7) + "px";
+          handle.style.top =
+            Math.round(top + point.y * template.size.height * scale - 7) + "px";
+          handle.style.width = "14px";
+          handle.style.height = "14px";
+          handle.style.lineHeight = "14px";
+          handle.style.textAlign = "center";
+          handle.style.color = "#1a73e8";
+          handle.style.fontSize = point.marker == "circle" ? "12px" : "16px";
+          handle.style.fontWeight = "700";
+          handle.style.userSelect = "none";
+          handle.style.opacity = point.marker == "hidden" ? "0.35" : "1";
+          handle.innerText =
+            point.marker == "circle"
+              ? "●"
+              : point.marker == "hidden"
+                ? ""
+                : "×";
+          container.appendChild(handle);
+        });
+
+        labels.forEach(function (label) {
+          var box = document.createElement("div");
+          box.style.position = "absolute";
+          box.style.left =
+            Math.round(
+              left +
+                label.x * template.size.width * scale -
+                (label.width * scale) / 2,
+            ) + "px";
+          box.style.top =
+            Math.round(
+              top +
+                label.y * template.size.height * scale -
+                (label.height * scale) / 2,
+            ) + "px";
+          box.style.width =
+            Math.max(36, Math.round(label.width * scale)) + "px";
+          box.style.minHeight =
+            Math.max(20, Math.round(label.height * scale)) + "px";
+          box.style.padding = "1px 4px";
+          box.style.boxSizing = "border-box";
+          box.style.background = Editor.isDarkMode() ? "#1f1f1f" : "#ffffff";
+          box.style.border = "1px dashed #9aa4b2";
+          box.style.borderRadius = "4px";
+          box.style.fontSize = Math.max(10, Math.round(12 * scale)) + "px";
+          box.style.lineHeight = Math.max(14, Math.round(18 * scale)) + "px";
+          box.style.textAlign = label.align;
+          box.style.userSelect = "none";
+          box.innerText =
+            trim(label.binding).length > 0
+              ? "{{" + label.binding + "}}"
+              : label.text || "";
+          container.appendChild(box);
+        });
+      }
+
+      templates.forEach(function (template) {
+        var card = document.createElement("div");
+        card.style.border = "1px solid #d0d7de";
+        card.style.borderRadius = "8px";
+        card.style.padding = "10px";
+        card.style.background = Editor.isDarkMode() ? "#161616" : "#ffffff";
+        card.style.display = "flex";
+        card.style.flexDirection = "column";
+        card.style.gap = "8px";
+        card.style.alignSelf = "start";
+        list.appendChild(card);
+
+        var preview = document.createElement("div");
+        preview.style.height = "220px";
+        preview.style.border = "1px solid #e5e7eb";
+        preview.style.borderRadius = "6px";
+        preview.style.background = Editor.isDarkMode() ? "#111111" : "#f8fafc";
+        card.appendChild(preview);
+        renderTemplateCardPreview(preview, template);
+        window.setTimeout(function () {
+          renderTemplateCardPreview(preview, template);
+        }, 0);
+
+        var actions = document.createElement("div");
+        actions.style.display = "flex";
+        actions.style.justifyContent = "flex-start";
+        actions.style.flexWrap = "wrap";
+        card.appendChild(actions);
+
+        var editBtn = createButton("编辑模板", function () {
+          if (state.templatesWindow != null) {
+            state.templatesWindow.destroy();
+          }
+
+          openEditorWithTemplate(template);
+        });
+        editBtn.style.marginTop = "0";
+        actions.appendChild(editBtn);
+
+        var createBtn = createButton("创建实例", function () {
+          if (state.templatesWindow != null) {
+            state.templatesWindow.destroy();
+          }
+          openCreateFromLibraryDialog(template.symbolId);
+        });
+        createBtn.style.marginTop = "0";
+        actions.appendChild(createBtn);
+
+        var deleteBtn = createButton("删除模板", function () {
+          if (
+            !mxUtils.confirm(
+              "确定删除图元模板“" +
+                (template.templateName || template.title || template.symbolId) +
+                "”吗？",
+            )
+          ) {
+            return;
+          }
+
+          removeTemplateFromLibrary(template.symbolId, function (nextImages) {
+            if (state.templatesWindow != null) {
+              state.templatesWindow.destroy();
+            }
+
+            if (nextImages != null && nextImages.length > 0) {
+              openTemplateBrowserDialog();
+            }
+          });
+        });
+        deleteBtn.style.marginTop = "0";
+        actions.appendChild(deleteBtn);
+      });
+
+      var wnd = new mxWindow("已定义图元", div, 160, 120, 760, 560, true, true);
+      wnd.destroyOnClose = true;
+      wnd.setClosable(true);
+      wnd.setMaximizable(false);
+      wnd.setResizable(true);
+      wnd.setScrollable(true);
+      wnd.setVisible(true);
+      wnd.addListener(mxEvent.DESTROY, function () {
+        state.templatesWindow = null;
+      });
+      state.templatesWindow = wnd;
     });
   }
 
@@ -2542,6 +3631,7 @@ Draw.loadPlugin(function (ui) {
         var svgCode = createSvgExportCode(widthInput.value, heightInput.value);
         textarea.value = svgCode;
         downloadSvgCode(svgCode);
+        wnd.destroy();
       } catch (e) {
         showStatus(e.message || String(e), true);
       }
@@ -2592,6 +3682,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     addTopButton("electricalSymbols", "electricalSymbols");
+    addTopButton("electricalBrowse", "electricalBrowse");
     addTopButton("electricalCreate", "electricalCreate");
     addTopButton("electricalExportSvg", "electricalExportSvg");
 
@@ -2645,6 +3736,7 @@ Draw.loadPlugin(function (ui) {
             updatePreview(null);
           }
 
+          scheduleEditorDraftSave();
           showStatus(successMessage, false);
         } catch (e) {
           showStatus(e.message || String(e), true);
@@ -2657,6 +3749,8 @@ Draw.loadPlugin(function (ui) {
   // 插件窗口是一个轻量 mxWindow
   // 把“JSON 输入、预览、插入、入库、导出、刷新”几个核心操作集中在一个面板里。
   function createWindow() {
+    clearDraftSaveTimer();
+    state.nextId = 1;
     state.symbolIdTouched = false;
     state.variantEnabled = false;
     state.lastValidVariantField = "";
@@ -2703,7 +3797,27 @@ Draw.loadPlugin(function (ui) {
     symbolRow.appendChild(state.symbolIdInput);
     mxEvent.addListener(state.symbolIdInput, "input", function () {
       state.symbolIdTouched = true;
+      scheduleEditorDraftSave();
     });
+
+    var nameRow = document.createElement("div");
+    nameRow.style.display = "flex";
+    nameRow.style.alignItems = "center";
+    nameRow.style.marginBottom = "10px";
+    container.appendChild(nameRow);
+
+    var nameLabel = document.createElement("div");
+    nameLabel.style.width = "90px";
+    nameLabel.style.flex = "0 0 90px";
+    nameLabel.innerText = "图元类型名称";
+    nameRow.appendChild(nameLabel);
+
+    state.templateNameInput = document.createElement("input");
+    state.templateNameInput.setAttribute("type", "text");
+    state.templateNameInput.style.flex = "1 1 auto";
+    state.templateNameInput.style.boxSizing = "border-box";
+    state.templateNameInput.value = "电气图元";
+    nameRow.appendChild(state.templateNameInput);
 
     var topRow = document.createElement("div");
     topRow.style.display = "flex";
@@ -2799,6 +3913,7 @@ Draw.loadPlugin(function (ui) {
         renderVariantList();
         updateSelectedItem(null, null);
         updatePreview(state.currentSpec);
+        scheduleEditorDraftSave();
       },
     );
     addVariantButton.style.marginTop = "0";
@@ -2871,6 +3986,7 @@ Draw.loadPlugin(function (ui) {
           if (trim(state.uploadedPrimarySvg).length > 0) {
             parseEditorSpec();
           }
+          scheduleEditorDraftSave();
         });
         deleteButton.style.marginTop = "0";
         deleteButton.style.marginRight = "0";
@@ -2893,6 +4009,7 @@ Draw.loadPlugin(function (ui) {
           if (trim(state.uploadedPrimarySvg).length > 0) {
             parseEditorSpec();
           }
+          scheduleEditorDraftSave();
         });
 
         bindSvgUpload(
@@ -2906,26 +4023,368 @@ Draw.loadPlugin(function (ui) {
             item.svg = svg;
             item.name = fileNameText;
             fileName.innerText = item.name || "未选择变体SVG";
+            scheduleEditorDraftSave();
           },
         );
       });
     }
 
-    state.jsonArea = document.createElement("textarea");
-    state.jsonArea.spellcheck = false;
-    state.jsonArea.style.width = "100%";
-    state.jsonArea.style.height = "220px";
-    state.jsonArea.style.marginTop = "10px";
-    state.jsonArea.style.boxSizing = "border-box";
-    state.jsonArea.value = [
-      "{",
-      "  title: string,",
-      "  name: string,",
-      "  code: string,",
-      "  power: string",
-      "}",
-    ].join("\n");
-    container.appendChild(state.jsonArea);
+    state.schemaFields = getDefaultSchemaFields();
+
+    var schemaSection = document.createElement("div");
+    schemaSection.style.marginTop = "10px";
+    container.appendChild(schemaSection);
+
+    var schemaHeader = document.createElement("div");
+    schemaHeader.style.display = "flex";
+    schemaHeader.style.alignItems = "center";
+    schemaHeader.style.marginBottom = "8px";
+    schemaSection.appendChild(schemaHeader);
+
+    var schemaTitle = document.createElement("div");
+    schemaTitle.style.fontWeight = "bold";
+    schemaTitle.innerText = "属性字段配置";
+    schemaHeader.appendChild(schemaTitle);
+
+    var addFieldButton = createButton("新增字段", function () {
+      state.schemaFields.push(
+        normalizeSchemaField({
+          path: "",
+          type: "string",
+          required: false,
+          enumValues: [],
+        }),
+      );
+      renderSchemaFields();
+      scheduleEditorDraftSave();
+    });
+    addFieldButton.style.marginTop = "0";
+    addFieldButton.style.marginLeft = "12px";
+    schemaHeader.appendChild(addFieldButton);
+
+    var schemaList = document.createElement("div");
+    schemaSection.appendChild(schemaList);
+
+    function renderSchemaFields() {
+      schemaList.innerHTML = "";
+      var hasEnumField = state.schemaFields.some(function (field) {
+        return normalizeSchemaType(field.type) == "enum";
+      });
+
+      var header = document.createElement("div");
+      header.style.display = "grid";
+      header.style.gridTemplateColumns = hasEnumField
+        ? "minmax(0, 1.6fr) 110px minmax(0, 1.2fr) 80px auto"
+        : "minmax(0, 1.6fr) 110px 80px auto";
+      header.style.gap = "8px";
+      header.style.alignItems = "center";
+      header.style.marginBottom = "6px";
+      header.style.fontSize = "12px";
+      header.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+      (hasEnumField
+        ? ["字段路径", "类型", "枚举值", "必填", "操作"]
+        : ["字段路径", "类型", "必填", "操作"]
+      ).forEach(function (text) {
+        var cell = document.createElement("div");
+        cell.innerText = text;
+        header.appendChild(cell);
+      });
+      schemaList.appendChild(header);
+
+      state.schemaFields.forEach(function (field) {
+        var row = document.createElement("div");
+        row.style.display = "grid";
+        row.style.gap = "8px";
+        row.style.alignItems = "center";
+        row.style.marginBottom = "8px";
+        schemaList.appendChild(row);
+
+        var pathInput = document.createElement("input");
+        pathInput.setAttribute("type", "text");
+        pathInput.setAttribute(
+          "placeholder",
+          "字段路径，如 name 或 device.mode",
+        );
+        pathInput.value = field.path;
+        row.appendChild(pathInput);
+
+        var typeSelect = document.createElement("select");
+        ["string", "number", "boolean", "enum"].forEach(function (type) {
+          var option = document.createElement("option");
+          option.value = type;
+          option.innerText = type;
+          typeSelect.appendChild(option);
+        });
+        typeSelect.value = field.type;
+        row.appendChild(typeSelect);
+
+        var enumWrap = document.createElement("div");
+        enumWrap.style.minWidth = "0";
+        row.appendChild(enumWrap);
+
+        var enumInput = document.createElement("input");
+        enumInput.setAttribute("type", "text");
+        enumInput.setAttribute("placeholder", "枚举值，逗号分隔");
+        enumInput.value = (field.enumValues || []).join(", ");
+        enumInput.style.width = "100%";
+        enumInput.style.boxSizing = "border-box";
+        enumWrap.appendChild(enumInput);
+
+        var requiredWrap = document.createElement("label");
+        requiredWrap.style.display = "flex";
+        requiredWrap.style.alignItems = "center";
+        requiredWrap.style.gap = "4px";
+        var requiredInput = document.createElement("input");
+        requiredInput.setAttribute("type", "checkbox");
+        requiredInput.checked = !!field.required;
+        requiredWrap.appendChild(requiredInput);
+        var requiredText = document.createElement("span");
+        requiredText.innerText = "必填";
+        requiredWrap.appendChild(requiredText);
+        row.appendChild(requiredWrap);
+
+        var deleteFieldButton = createButton("删除", function () {
+          state.schemaFields = state.schemaFields.filter(function (entry) {
+            return entry.id != field.id;
+          });
+          renderSchemaFields();
+          updateVariantFieldState(false);
+          scheduleEditorDraftSave();
+        });
+        deleteFieldButton.style.marginTop = "0";
+        deleteFieldButton.style.marginRight = "0";
+        deleteFieldButton.style.padding = "4px 8px";
+        deleteFieldButton.style.minWidth = "64px";
+        deleteFieldButton.style.whiteSpace = "nowrap";
+        row.appendChild(deleteFieldButton);
+
+        function refreshRowLayout() {
+          var enumVisible = normalizeSchemaType(typeSelect.value) == "enum";
+          row.style.gridTemplateColumns = enumVisible
+            ? "minmax(0, 1.6fr) 110px minmax(0, 1.2fr) 80px auto"
+            : "minmax(0, 1.6fr) 110px 80px auto";
+          enumWrap.style.display = enumVisible ? "" : "none";
+        }
+
+        function syncField(showError) {
+          field.path = trim(pathInput.value);
+          field.type = normalizeSchemaType(typeSelect.value);
+          field.required = requiredInput.checked;
+          field.enumValues = normalizeEnumOptions(enumInput.value);
+
+          var valid =
+            field.path.length > 0 &&
+            isValidFieldPath(field.path) &&
+            state.schemaFields.filter(function (entry) {
+              return trim(entry.path) == field.path;
+            }).length == 1 &&
+            (field.type != "enum" || field.enumValues.length > 0);
+
+          pathInput.style.borderColor = valid ? "" : "#b3261e";
+          enumInput.style.borderColor =
+            field.type != "enum" || field.enumValues.length > 0
+              ? ""
+              : "#b3261e";
+
+          if (!valid && showError) {
+            showStatus("字段配置有误，请检查路径唯一性和枚举值", true);
+          }
+
+          updateVariantFieldState(false);
+          scheduleEditorDraftSave();
+        }
+
+        mxEvent.addListener(pathInput, "input", function () {
+          syncField(false);
+        });
+        mxEvent.addListener(typeSelect, "change", function () {
+          refreshRowLayout();
+          syncField(false);
+        });
+        mxEvent.addListener(enumInput, "input", function () {
+          syncField(false);
+        });
+        mxEvent.addListener(requiredInput, "change", function () {
+          syncField(false);
+        });
+        refreshRowLayout();
+      });
+    }
+
+    renderSchemaFields();
+
+    function rebuildEditorUi(specOrNull) {
+      renderSchemaFields();
+      refreshVariantSection();
+      renderVariantList();
+      updateTemplateNameState(false);
+      updateVariantFieldState(false);
+
+      if (specOrNull != null) {
+        updatePreview(specOrNull);
+      } else {
+        updatePreview(null);
+      }
+    }
+
+    function recalcNextItemId() {
+      var maxId = 0;
+
+      function scanId(id) {
+        var match = /:(\d+)$/.exec(trim(id));
+
+        if (match != null) {
+          maxId = Math.max(maxId, parseInt(match[1], 10) || 0);
+        }
+      }
+
+      function scanLayout(layout) {
+        var i;
+        var ports = normalizePortLayout(layout != null ? layout.ports : []);
+        var labels = normalizeLabels(layout != null ? layout.labels : []);
+
+        for (i = 0; i < ports.length; i++) {
+          scanId(ports[i].id);
+        }
+
+        for (i = 0; i < labels.length; i++) {
+          scanId(labels[i].id);
+        }
+      }
+
+      scanLayout(state.currentSpec);
+
+      (state.variantItems || []).forEach(function (item) {
+        scanId(item.id);
+        scanLayout(item);
+      });
+
+      state.nextId = maxId + 1;
+    }
+
+    function loadTemplateIntoEditor(template, options) {
+      var spec = normalizeSpec(cloneJson(template));
+      var layouts = normalizeVariantLayouts(spec.variantLayouts);
+      var keys = Object.keys(spec.svgVariants || {});
+
+      options = options || {};
+      state.symbolIdTouched = !options.allowAutoSymbolId;
+      state.symbolIdInput.value =
+        trim(spec.symbolId).length > 0
+          ? spec.symbolId
+          : generateSymbolId(
+              spec.templateName || spec.title || "electrical-symbol",
+            );
+      state.templateNameInput.value =
+        trim(spec.templateName || spec.title) || "电气图元";
+      state.uploadedPrimarySvg = spec.svg || "";
+      state.uploadedPrimarySvgName =
+        trim(options.primarySvgName || "") ||
+        (trim(spec.templateName || spec.title).length > 0
+          ? trim(spec.templateName || spec.title) + ".svg"
+          : "已加载默认SVG");
+      state.uploadedPrimarySvgSize =
+        spec.size != null
+          ? cloneJson(spec.size)
+          : extractSvgSize(spec.svg || "");
+      primaryName.innerText =
+        trim(state.uploadedPrimarySvg).length > 0
+          ? state.uploadedPrimarySvgName
+          : "未选择默认SVG";
+      state.schemaFields = flattenSchemaFields(spec.schema, "", []).map(
+        function (field) {
+          return normalizeSchemaField(field);
+        },
+      );
+      if (state.schemaFields.length == 0) {
+        state.schemaFields = getDefaultSchemaFields();
+      }
+      state.variantEnabled =
+        trim(spec.variantField).length > 0 ||
+        Object.keys(spec.svgVariants || {}).length > 0;
+      state.variantFieldInput.value = trim(spec.variantField);
+      state.lastValidVariantField = trim(spec.variantField);
+      state.previewVariantId = "";
+      state.selectedItem = null;
+      state.currentSpec = spec;
+      state.variantItems = keys.map(function (key) {
+        var variantLayout = layouts[key] || {};
+
+        return {
+          id: nextItemId("variant"),
+          key: key,
+          svg: spec.svgVariants[key],
+          name: key + ".svg",
+          ports: normalizePortLayout(variantLayout.ports || []),
+          labels: normalizeLabels(variantLayout.labels || []),
+        };
+      });
+      recalcNextItemId();
+      rebuildEditorUi(spec);
+      scheduleEditorDraftSave();
+    }
+
+    function restoreDraftIfExists() {
+      var draft = loadEditorDraft();
+      var draftSpec;
+
+      if (draft == null) {
+        return false;
+      }
+
+      try {
+        state.symbolIdTouched = !!draft.symbolIdTouched;
+        state.symbolIdInput.value =
+          trim(draft.symbolId).length > 0
+            ? draft.symbolId
+            : generateSymbolId("electrical-symbol");
+        state.templateNameInput.value =
+          trim(draft.templateName).length > 0 ? draft.templateName : "电气图元";
+        state.uploadedPrimarySvg = trim(draft.uploadedPrimarySvg);
+        state.uploadedPrimarySvgName = trim(draft.uploadedPrimarySvgName);
+        state.uploadedPrimarySvgSize = isObject(draft.uploadedPrimarySvgSize)
+          ? cloneJson(draft.uploadedPrimarySvgSize)
+          : null;
+        primaryName.innerText =
+          trim(state.uploadedPrimarySvg).length > 0
+            ? state.uploadedPrimarySvgName || "已加载默认SVG"
+            : "未选择默认SVG";
+        state.variantEnabled = !!draft.variantEnabled;
+        state.variantFieldInput.value = trim(draft.variantField);
+        state.lastValidVariantField = trim(draft.variantField);
+        state.previewVariantId = trim(draft.previewVariantId);
+        state.schemaFields = Array.isArray(draft.schemaFields)
+          ? draft.schemaFields.map(function (field) {
+              return normalizeSchemaField(field);
+            })
+          : getDefaultSchemaFields();
+        state.variantItems = Array.isArray(draft.variantItems)
+          ? draft.variantItems.map(function (item) {
+              return {
+                id: trim(item.id) || nextItemId("variant"),
+                key: trim(item.key),
+                svg: trim(item.svg),
+                name: trim(item.name),
+                ports: normalizePortLayout(item.ports || []),
+                labels: normalizeLabels(item.labels || []),
+              };
+            })
+          : [];
+        draftSpec =
+          draft.currentSpec != null &&
+          trim(draft.currentSpec.svg || draft.uploadedPrimarySvg).length > 0
+            ? normalizeSpec(cloneJson(draft.currentSpec))
+            : null;
+        state.currentSpec = draftSpec;
+        recalcNextItemId();
+        rebuildEditorUi(draftSpec);
+        showStatus("已恢复上次未保存的草稿", false);
+        return true;
+      } catch (e) {
+        clearEditorDraft();
+        return false;
+      }
+    }
 
     state.preview = document.createElement("div");
     state.preview.style.marginTop = "10px";
@@ -2943,14 +4402,25 @@ Draw.loadPlugin(function (ui) {
     buttons.style.marginTop = "10px";
     container.appendChild(buttons);
 
-    var previewButton = createButton(mxResources.get("electricalPreview"), function () {
+    var previewButton = createButton(
+      mxResources.get("electricalPreview"),
+      function () {
         parseEditorSpec();
-      });
+      },
+    );
     buttons.appendChild(previewButton);
 
-    var addLibraryButton = createButton(mxResources.get("electricalAddLibrary"), function () {
-        addToLibrary(parseEditorSpec());
-      });
+    var addLibraryButton = createButton(
+      mxResources.get("electricalAddLibrary"),
+      function () {
+        addToLibrary(parseEditorSpec(), function () {
+          clearEditorDraft();
+          if (state.window != null && state.window.window != null) {
+            state.window.window.destroy();
+          }
+        });
+      },
+    );
     buttons.appendChild(addLibraryButton);
 
     state.status = document.createElement("div");
@@ -2964,6 +4434,40 @@ Draw.loadPlugin(function (ui) {
       button.style.pointerEvents = enabled ? "auto" : "none";
     }
 
+    function updateTemplateNameState(showError) {
+      var name = trim(
+        state.templateNameInput != null ? state.templateNameInput.value : "",
+      );
+      var symbolId = trim(
+        state.symbolIdInput != null ? state.symbolIdInput.value : "",
+      );
+      var valid = name.length > 0 && !isTemplateNameTaken(name, symbolId);
+
+      if (state.templateNameInput != null) {
+        state.templateNameInput.style.borderColor = !valid ? "#b3261e" : "";
+        state.templateNameInput.style.boxShadow = !valid
+          ? "0 0 0 1px rgba(179,38,30,0.2)"
+          : "";
+        state.templateNameInput.title =
+          name.length == 0
+            ? "图元类型名称不能为空"
+            : !valid
+              ? "图元类型名称不能重复"
+              : "";
+      }
+
+      setButtonEnabled(addLibraryButton, valid);
+
+      if (!valid && showError) {
+        showStatus(
+          name.length == 0 ? "请先填写图元类型名称" : "图元类型名称不能重复",
+          true,
+        );
+      }
+
+      return valid;
+    }
+
     function updateVariantFieldState(showError) {
       var valid = true;
 
@@ -2972,17 +4476,21 @@ Draw.loadPlugin(function (ui) {
       }
 
       if (state.variantFieldInput != null) {
-        state.variantFieldInput.style.borderColor =
-          !valid ? "#b3261e" : "";
-        state.variantFieldInput.style.boxShadow =
-          !valid ? "0 0 0 1px rgba(179,38,30,0.2)" : "";
-        state.variantFieldInput.title =
-          !valid ? "变体字段必须先在 JSON 类型定义中声明" : "";
+        state.variantFieldInput.style.borderColor = !valid ? "#b3261e" : "";
+        state.variantFieldInput.style.boxShadow = !valid
+          ? "0 0 0 1px rgba(179,38,30,0.2)"
+          : "";
+        state.variantFieldInput.title = !valid
+          ? "变体字段必须先在 JSON 类型定义中声明"
+          : "";
       }
 
       setButtonEnabled(addVariantButton, !state.variantEnabled || valid);
       setButtonEnabled(previewButton, !state.variantEnabled || valid);
-      setButtonEnabled(addLibraryButton, !state.variantEnabled || valid);
+      setButtonEnabled(
+        addLibraryButton,
+        (!state.variantEnabled || valid) && updateTemplateNameState(false),
+      );
 
       return valid;
     }
@@ -3005,7 +4513,15 @@ Draw.loadPlugin(function (ui) {
         state.symbolIdInput.value = generateSymbolId(
           state.uploadedPrimarySvgName || "electrical-symbol",
         );
+        updateTemplateNameState(false);
       }
+    });
+    mxEvent.addListener(state.templateNameInput, "input", function () {
+      updateTemplateNameState(false);
+      scheduleEditorDraftSave();
+    });
+    mxEvent.addListener(state.templateNameInput, "blur", function () {
+      updateTemplateNameState(true);
     });
     mxEvent.addListener(state.variantFieldInput, "change", function () {
       var currentValue = trim(state.variantFieldInput.value);
@@ -3021,9 +4537,12 @@ Draw.loadPlugin(function (ui) {
       if (trim(state.uploadedPrimarySvg).length > 0) {
         parseEditorSpec();
       }
+
+      scheduleEditorDraftSave();
     });
     mxEvent.addListener(state.variantFieldInput, "input", function () {
       updateVariantFieldState(false);
+      scheduleEditorDraftSave();
     });
     mxEvent.addListener(state.variantFieldInput, "blur", function () {
       updateVariantFieldState(true);
@@ -3044,6 +4563,7 @@ Draw.loadPlugin(function (ui) {
 
       refreshVariantSection();
       updateVariantFieldState(false);
+      scheduleEditorDraftSave();
 
       if (trim(state.uploadedPrimarySvg).length > 0) {
         try {
@@ -3055,7 +4575,9 @@ Draw.loadPlugin(function (ui) {
     });
     refreshVariantSection();
     renderVariantList();
+    updateTemplateNameState(false);
     updateVariantFieldState(false);
+    restoreDraftIfExists();
 
     var x = Math.max(20, (document.body.offsetWidth - 560) / 2);
     var y = 80;
@@ -3078,19 +4600,29 @@ Draw.loadPlugin(function (ui) {
       state.window = null;
       state.status = null;
       state.symbolIdInput = null;
+      state.templateNameInput = null;
       state.variantFieldInput = null;
-      state.jsonArea = null;
+      state.schemaFields = [];
       state.preview = null;
       state.variantEnabled = false;
       state.lastValidVariantField = "";
       state.previewVariantId = "";
       state.variantItems = [];
       state.currentSpec = null;
+      clearDraftSaveTimer();
     });
-    updatePreview(null);
+    if (state.currentSpec == null) {
+      updatePreview(null);
+    }
     loadStoredLibrary(null, true);
 
-    return { window: wnd, container: container };
+    return {
+      window: wnd,
+      container: container,
+      loadTemplate: function (template) {
+        loadTemplateIntoEditor(template);
+      },
+    };
   }
 
   // 菜单项再次点击时直接复用已有窗口实例，避免重复创建事件和 DOM
@@ -3103,8 +4635,28 @@ Draw.loadPlugin(function (ui) {
     }
   }
 
+  function openEditorWithTemplate(template) {
+    if (state.window == null) {
+      state.window = createWindow();
+    }
+
+    state.window.window.setVisible(true);
+
+    if (typeof state.window.loadTemplate === "function") {
+      state.window.loadTemplate(template);
+    }
+
+    if (typeof state.window.window.toFront === "function") {
+      state.window.window.toFront();
+    }
+  }
+
   ui.actions.addAction("electricalSymbols", function () {
     toggleWindow();
+  });
+
+  ui.actions.addAction("electricalBrowse", function () {
+    openTemplateBrowserDialog();
   });
 
   ui.actions.addAction("electricalCreate", function () {
@@ -3133,6 +4685,7 @@ Draw.loadPlugin(function (ui) {
       [
         "-",
         "electricalSymbols",
+        "electricalBrowse",
         "electricalCreate",
         "electricalRefresh",
         "electricalExportSvg",
