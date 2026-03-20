@@ -9,23 +9,48 @@ Draw.loadPlugin(function (ui) {
   var BODY_TAG = "ElectricalBody";
   var LABEL_TAG = "ElectricalLabel";
   var BADGE_TAG = "ElectricalBadge";
+  var FRAME_TAG = "DrawingFrame";
+  var FRAME_LABEL_TAG = "DrawingFrameLabel";
+  var CABINET_TAG = "CabinetSegment";
+  var CABINET_BODY_TAG = "CabinetBody";
+  var CABINET_GAP_TAG = "CabinetGap";
   var ROOT_TYPE = "electricalSymbol";
+  var FRAME_TYPE = "drawingFrame";
+  var CABINET_TYPE = "cabinetSegment";
+  var CABINET_GAP_TYPE = "cabinetGap";
   var BODY_KIND = "body";
   var LABEL_KIND = "label";
   var BADGE_KIND = "badge";
+  var FRAME_LABEL_KIND = "pageLabel";
+  var CABINET_BODY_KIND = "cabinetBody";
+  var CABINET_GAP_KIND = "cabinetGap";
   // 预览区新增连接点时，距离边缘多近算“想吸附到边上”。
   var PORT_EDGE_SNAP_THRESHOLD_PX = 14;
   var TEMPLATE_DRAFT_STORAGE_KEY = "electrical-symbol-template-draft";
+  var FRAME_DEFAULT_WIDTH = 820;
+  var FRAME_DEFAULT_HEIGHT = 1180;
+  var FRAME_HORIZONTAL_GAP = 40;
+  var FRAME_VERTICAL_GAP = 56;
+  var FRAME_CONTENT_RATIO = 0.8;
+  var FRAME_MARGIN_RATIO = 0.1;
+  var CABINET_DEFAULT_WIDTH = 86;
+  var CABINET_DEFAULT_PORT_COUNT = 4;
+  var CABINET_DEFAULT_X = 72;
+  var CABINET_TAIL_PADDING = 24;
+  var CABINET_MIN_PORT_FOLLOW_SPACE_RATIO = 0.24;
   // 保存插件窗口和运行期缓存
   var state = {
     libraryImages: [],
     updatingModel: false,
     window: null,
     templatesWindow: null,
+    instanceWindow: null,
     status: null,
     symbolIdInput: null,
     symbolIdTouched: false,
     templateNameInput: null,
+    templateWidthInput: null,
+    templateHeightInput: null,
     variantFieldInput: null,
     variantEnabled: false,
     lastValidVariantField: "",
@@ -41,6 +66,12 @@ Draw.loadPlugin(function (ui) {
     uploadedPrimarySvgSize: null,
     variantItems: [],
     draftSaveTimer: null,
+    frameConfig: null,
+    selectedCabinetGap: null,
+    gapDialogWindow: null,
+    portSwapSession: null,
+    portSwapOverlay: null,
+    allowProtectedDelete: false,
   };
 
   mxResources.parse(
@@ -48,11 +79,16 @@ Draw.loadPlugin(function (ui) {
       "electricalSymbols=定义电气图元",
       "electricalBrowse=已定义图元",
       "electricalCreate=创建电气图元",
+      "electricalEditInstance=编辑图元实例",
       "electricalRefresh=刷新电气图元",
       "electricalExportSvg=导出SVG",
+      "electricalInsertFrame=插入图框",
+      "electricalInsertCabinet=插入配电柜",
+      "electricalReassignPort=更换挂点",
       "electricalPreview=刷新预览",
       "electricalAddLibrary=加入库",
       "electricalExportLibrary=导出库",
+      "electricalClearScreen=清屏",
       "electricalUploadPrimarySvg=上传默认SVG",
       "electricalEnableVariants=启用变体SVG",
       "electricalAddVariantSvg=新增变体SVG",
@@ -189,6 +225,58 @@ Draw.loadPlugin(function (ui) {
     return null;
   }
 
+  function isDrawingFrame(cell) {
+    return getAttr(cell, "pluginType") == FRAME_TYPE;
+  }
+
+  function findDrawingFrame(cell) {
+    while (cell != null) {
+      if (isDrawingFrame(cell)) {
+        return cell;
+      }
+
+      cell = model.getParent(cell);
+    }
+
+    return null;
+  }
+
+  function isCabinetSegment(cell) {
+    return getAttr(cell, "pluginType") == CABINET_TYPE;
+  }
+
+  function findCabinetSegment(cell) {
+    while (cell != null) {
+      if (isCabinetSegment(cell)) {
+        return cell;
+      }
+
+      cell = model.getParent(cell);
+    }
+
+    return null;
+  }
+
+  function isCabinetGap(cell) {
+    return getAttr(cell, "pluginType") == CABINET_GAP_TYPE;
+  }
+
+  function isPortHostRoot(cell) {
+    return isElectricalRoot(cell) || isCabinetSegment(cell);
+  }
+
+  function findPortHostRoot(cell) {
+    while (cell != null) {
+      if (isPortHostRoot(cell)) {
+        return cell;
+      }
+
+      cell = model.getParent(cell);
+    }
+
+    return null;
+  }
+
   // 校验传入的 svg 文本是否合法，并返回规范化后的根节点 XML
   function validateSvg(svg) {
     var text = trim(svg);
@@ -240,6 +328,98 @@ Draw.loadPlugin(function (ui) {
     align = trim(align).toLowerCase();
 
     return align == "left" || align == "right" ? align : "center";
+  }
+
+  function normalizeGapRatio(value, fallbackValue) {
+    return clamp(
+      toFloat(value, fallbackValue != null ? fallbackValue : 0.12),
+      0,
+      1,
+    );
+  }
+
+  function normalizeFrameConfig(raw) {
+    raw = isObject(raw) ? raw : {};
+
+    return {
+      width: Math.max(320, toInt(raw.width, FRAME_DEFAULT_WIDTH)),
+      height: Math.max(240, toInt(raw.height, FRAME_DEFAULT_HEIGHT)),
+    };
+  }
+
+  function normalizeCabinetPort(raw, index) {
+    var base = normalizePortPoint(
+      raw,
+      trim(raw != null ? raw.id : "") || "cabinet-port:" + index,
+      1,
+      0,
+    );
+
+    base.direction = "right";
+    // 配电柜右侧端子只允许接出，不允许接入。
+    base.ioMode = "out";
+    base.order = index;
+    return base;
+  }
+
+  function normalizeCabinetModel(raw) {
+    raw = isObject(raw) ? cloneJson(raw) : {};
+    var portCount = Math.max(
+      2,
+      Array.isArray(raw.ports)
+        ? raw.ports.length
+        : toInt(raw.portCount, CABINET_DEFAULT_PORT_COUNT),
+    );
+    var ports = [];
+    var i;
+
+    if (Array.isArray(raw.ports) && raw.ports.length > 0) {
+      for (i = 0; i < raw.ports.length; i++) {
+        ports.push(normalizeCabinetPort(raw.ports[i], i));
+      }
+    } else {
+      for (i = 0; i < portCount; i++) {
+        ports.push(
+          normalizeCabinetPort(
+            {
+              id: "cabinet-port:" + i,
+              x: 1,
+              y: 0,
+              marker: "cross",
+              direction: "right",
+              ioMode: "out",
+            },
+            i,
+          ),
+        );
+      }
+    }
+
+    var gapRatios = [];
+
+    for (i = 0; i < Math.max(0, ports.length - 1); i++) {
+      gapRatios.push(
+        normalizeGapRatio(
+          Array.isArray(raw.gapRatios) ? raw.gapRatios[i] : null,
+          0.12,
+        ),
+      );
+    }
+
+    return {
+      logicalCabinetId:
+        trim(raw.logicalCabinetId) || generateLogicalCabinetId(),
+      originFrameId: trim(raw.originFrameId),
+      title: trim(raw.title) || "配电柜",
+      cabinetWidth: Math.max(
+        30,
+        toInt(raw.cabinetWidth, CABINET_DEFAULT_WIDTH),
+      ),
+      cabinetX: Math.max(20, toInt(raw.cabinetX, CABINET_DEFAULT_X)),
+      tailPadding: Math.max(8, toInt(raw.tailPadding, CABINET_TAIL_PADDING)),
+      ports: ports,
+      gapRatios: gapRatios,
+    };
   }
 
   function extractSvgSize(svg) {
@@ -312,6 +492,18 @@ Draw.loadPlugin(function (ui) {
 
   // 生成画布实例级唯一标识，避免同一模板多次插入时冲突。
   function generateInstanceId() {
+    return generateUuid();
+  }
+
+  function generateFrameId() {
+    return generateUuid();
+  }
+
+  function generateFrameGroupId() {
+    return generateUuid();
+  }
+
+  function generateLogicalCabinetId() {
     return generateUuid();
   }
 
@@ -843,6 +1035,14 @@ Draw.loadPlugin(function (ui) {
         state.templateNameInput != null
           ? trim(state.templateNameInput.value)
           : "",
+      templateWidth:
+        state.templateWidthInput != null
+          ? trim(state.templateWidthInput.value)
+          : "",
+      templateHeight:
+        state.templateHeightInput != null
+          ? trim(state.templateHeightInput.value)
+          : "",
       uploadedPrimarySvg: state.uploadedPrimarySvg || "",
       uploadedPrimarySvgName: state.uploadedPrimarySvgName || "",
       uploadedPrimarySvgSize: state.uploadedPrimarySvgSize || null,
@@ -985,14 +1185,35 @@ Draw.loadPlugin(function (ui) {
       }
     }
 
+    var baseSize =
+      state.uploadedPrimarySvgSize ||
+      extractSvgSize(state.uploadedPrimarySvg);
+
     return normalizeSpec({
       symbolId: symbolId,
       templateName: templateName,
       title: trim(current.title) || templateName,
       svg: state.uploadedPrimarySvg,
-      size:
-        state.uploadedPrimarySvgSize ||
-        extractSvgSize(state.uploadedPrimarySvg),
+      size: {
+        width: Math.max(
+          20,
+          toInt(
+            state.templateWidthInput != null
+              ? state.templateWidthInput.value
+              : null,
+            baseSize.width,
+          ),
+        ),
+        height: Math.max(
+          20,
+          toInt(
+            state.templateHeightInput != null
+              ? state.templateHeightInput.value
+              : null,
+            baseSize.height,
+          ),
+        ),
+      },
       device: current.device || {},
       ports: current.ports || [],
       labels: current.labels || [],
@@ -1706,6 +1927,153 @@ Draw.loadPlugin(function (ui) {
     );
   }
 
+  function makeFrameStyle() {
+    return (
+      "shape=rectangle;fillColor=none;strokeColor=#6b7280;strokeWidth=2;" +
+      "rounded=0;html=1;whiteSpace=wrap;connectable=0;container=1;dropTarget=1;" +
+      "collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;deletable=0;"
+    );
+  }
+
+  function makeFrameLabelStyle() {
+    return (
+      "text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;" +
+      "align=center;verticalAlign=middle;fontStyle=1;fontSize=13;" +
+      "connectable=0;editable=0;movable=0;resizable=0;rotatable=0;deletable=0;pointerEvents=0;"
+    );
+  }
+
+  function makeCabinetRootStyle() {
+    return (
+      "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;" +
+      "connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;"
+    );
+  }
+
+  // 根据当前这个配电柜片段的描述信息，拼出一段 SVG 字符串
+  // 这里的 descriptor 里会带：width，height，continuesFromPrev，continuesToNext;
+  // 会根据片段是不是跨页首段/中段/末段，决定画哪种轮廓
+  function createCabinetBodySvg(descriptor) {
+    var width = Math.max(20, Math.round(descriptor.width));
+    var height = Math.max(20, Math.round(descriptor.height));
+    var strokeWidth = 4;
+    var inset = strokeWidth / 2;
+    var notchLeft = Math.max(14, Math.round(width * 0.16));
+    var notchWidth = Math.max(18, Math.round(width * 0.16));
+    var notchDepth = Math.max(8, Math.round(Math.min(height, 80) * 0.12));
+    var path;
+
+    if (!descriptor.continuesFromPrev && !descriptor.continuesToNext) {
+      path =
+        "M " +
+        inset +
+        " " +
+        inset +
+        " L " +
+        (width - inset) +
+        " " +
+        inset +
+        " L " +
+        (width - inset) +
+        " " +
+        (height - inset) +
+        " L " +
+        inset +
+        " " +
+        (height - inset) +
+        " Z";
+    } else {
+      var topY = descriptor.continuesFromPrev ? inset + notchDepth : inset;
+      var bottomY = descriptor.continuesToNext
+        ? height - inset - notchDepth
+        : height - inset;
+
+      path =
+        "M " +
+        inset +
+        " " +
+        topY +
+        " " +
+        "L " +
+        notchLeft +
+        " " +
+        topY +
+        " " +
+        (descriptor.continuesFromPrev
+          ? "L " + (notchLeft + notchWidth) + " " + inset + " "
+          : "") +
+        "L " +
+        (width - inset) +
+        " " +
+        inset +
+        " " +
+        "L " +
+        (width - inset) +
+        " " +
+        (height - inset) +
+        " " +
+        (descriptor.continuesToNext
+          ? "L " +
+            (notchLeft + notchWidth) +
+            " " +
+            (height - inset) +
+            " " +
+            "L " +
+            notchLeft +
+            " " +
+            bottomY +
+            " "
+          : "") +
+        "L " +
+        inset +
+        " " +
+        bottomY +
+        " Z";
+    }
+
+    return (
+      '<svg xmlns="http://www.w3.org/2000/svg" width="' +
+      width +
+      '" height="' +
+      height +
+      '" viewBox="0 0 ' +
+      width +
+      " " +
+      height +
+      '">' +
+      '<path d="' +
+      path +
+      '" fill="none" stroke="#111111" stroke-width="' +
+      strokeWidth +
+      '" stroke-linejoin="round" stroke-linecap="round"/>' +
+      "</svg>"
+    );
+  }
+
+  // 把 createCabinetBodySvg 生成的 SVG 包装成一个 draw.io 样式字符串
+  function makeCabinetBodyStyle(descriptor) {
+    return (
+      "shape=image;image=" +
+      "data:image/svg+xml," +
+      encodeURIComponent(createCabinetBodySvg(descriptor)) +
+      ";imageAspect=0;aspect=fixed;html=1;strokeColor=none;fillColor=none;" +
+      "part=1;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;" +
+      "cloneable=0;deletable=0;pointerEvents=0;"
+    );
+  }
+
+  function makeCabinetGapStyle(selected) {
+    return (
+      "shape=rectangle;fillColor=#4dabf7;gradientColor=none;fillOpacity=" +
+      (selected ? "38" : "14") +
+      ";strokeColor=" +
+      (selected ? "#1d4ed8" : "none") +
+      ";strokeWidth=" +
+      (selected ? "2" : "0") +
+      ";connectable=0;editable=0;movable=0;resizable=0;rotatable=0;"
+    );
+  }
+
   // 创建文本子节点的统一样式。
   function makeLabelStyle(align) {
     return (
@@ -1992,6 +2360,1699 @@ Draw.loadPlugin(function (ui) {
     value.setAttribute("label", label || "");
 
     return value;
+  }
+
+  function applyFrameValueMetadata(
+    node,
+    frameId,
+    pageNumber,
+    frameConfig,
+    extra,
+  ) {
+    var config = normalizeFrameConfig(frameConfig);
+    var extras = isObject(extra) ? extra : {};
+    var key;
+
+    node.setAttribute("pluginType", FRAME_TYPE);
+    node.setAttribute("frameId", frameId);
+    node.setAttribute("pageNumber", String(Math.max(1, toInt(pageNumber, 1))));
+    node.setAttribute("frameConfigJson", JSON.stringify(config));
+    node.setAttribute("frameWidth", String(config.width));
+    node.setAttribute("frameHeight", String(config.height));
+    node.setAttribute("label", "");
+
+    for (key in extras) {
+      if (extras.hasOwnProperty(key) && extras[key] != null) {
+        node.setAttribute(key, String(extras[key]));
+      }
+    }
+
+    return node;
+  }
+
+  function getFrameConfig(frame) {
+    var raw = getAttr(frame, "frameConfigJson");
+
+    if (raw != null && raw.length > 0) {
+      try {
+        return normalizeFrameConfig(JSON.parse(raw));
+      } catch (e) {
+        // ignore malformed config
+      }
+    }
+
+    var geometry = model.getGeometry(frame);
+    return normalizeFrameConfig({
+      width: geometry != null ? geometry.width : FRAME_DEFAULT_WIDTH,
+      height: geometry != null ? geometry.height : FRAME_DEFAULT_HEIGHT,
+    });
+  }
+
+  function getFramePageNumber(frame) {
+    return Math.max(1, toInt(getAttr(frame, "pageNumber"), 1));
+  }
+
+  function getFrameGroupId(frame) {
+    if (frame == null) {
+      return "";
+    }
+
+    var groupId = trim(getAttr(frame, "groupId"));
+
+    if (groupId.length > 0) {
+      return groupId;
+    }
+
+    var originFrameId = trim(getAttr(frame, "originFrameId"));
+    var frameId = trim(getAttr(frame, "frameId"));
+
+    if (originFrameId.length > 0 && originFrameId != frameId) {
+      var originFrame = findFrameById(originFrameId);
+
+      if (originFrame != null && originFrame != frame) {
+        return getFrameGroupId(originFrame);
+      }
+
+      return originFrameId;
+    }
+
+    return frameId;
+  }
+
+  function getAllDrawingFrames() {
+    var parent = graph.getDefaultParent();
+    var frames = [];
+    var i;
+
+    for (i = 0; i < model.getChildCount(parent); i++) {
+      var child = model.getChildAt(parent, i);
+
+      if (isDrawingFrame(child)) {
+        frames.push(child);
+      }
+    }
+
+    return frames;
+  }
+
+  function findFrameById(frameId) {
+    var target = trim(frameId);
+    var frames = getAllDrawingFrames();
+    var i;
+
+    for (i = 0; i < frames.length; i++) {
+      if (trim(getAttr(frames[i], "frameId")) == target) {
+        return frames[i];
+      }
+    }
+
+    return null;
+  }
+
+  function getFramesInGroup(groupId) {
+    var target = trim(groupId);
+    var frames = getAllDrawingFrames();
+    var result = [];
+    var i;
+
+    for (i = 0; i < frames.length; i++) {
+      if (getFrameGroupId(frames[i]) == target) {
+        result.push(frames[i]);
+      }
+    }
+
+    return result;
+  }
+
+  function getRightmostFrameInGroup(groupId) {
+    var frames = getFramesInGroup(groupId);
+    var rightmost = null;
+    var i;
+
+    for (i = 0; i < frames.length; i++) {
+      var geometry = model.getGeometry(frames[i]);
+
+      if (geometry == null) {
+        continue;
+      }
+
+      if (
+        rightmost == null ||
+        geometry.x + geometry.width >
+          model.getGeometry(rightmost).x + model.getGeometry(rightmost).width
+      ) {
+        rightmost = frames[i];
+      }
+    }
+
+    return rightmost;
+  }
+
+  function getBottommostFrame() {
+    var frames = getAllDrawingFrames();
+    var bottommost = null;
+    var i;
+
+    for (i = 0; i < frames.length; i++) {
+      var geometry = model.getGeometry(frames[i]);
+
+      if (geometry == null) {
+        continue;
+      }
+
+      if (
+        bottommost == null ||
+        geometry.y + geometry.height >
+          model.getGeometry(bottommost).y + model.getGeometry(bottommost).height
+      ) {
+        bottommost = frames[i];
+      }
+    }
+
+    return bottommost;
+  }
+
+  function getLeftmostFrame() {
+    var frames = getAllDrawingFrames();
+    var leftmost = null;
+    var i;
+
+    for (i = 0; i < frames.length; i++) {
+      var geometry = model.getGeometry(frames[i]);
+
+      if (geometry == null) {
+        continue;
+      }
+
+      if (leftmost == null || geometry.x < model.getGeometry(leftmost).x) {
+        leftmost = frames[i];
+      }
+    }
+
+    return leftmost;
+  }
+
+  function getLastDrawingFrame() {
+    var frames = getAllDrawingFrames();
+    var last = null;
+    var i;
+
+    for (i = 0; i < frames.length; i++) {
+      if (
+        last == null ||
+        getFramePageNumber(frames[i]) > getFramePageNumber(last)
+      ) {
+        last = frames[i];
+      }
+    }
+
+    return last;
+  }
+
+  function getMaxFramePageNumberInGroup(groupId) {
+    var frames = getFramesInGroup(groupId);
+    var maxPage = 0;
+    var i;
+
+    for (i = 0; i < frames.length; i++) {
+      maxPage = Math.max(maxPage, getFramePageNumber(frames[i]));
+    }
+
+    return maxPage;
+  }
+
+  function getActiveFrame(showError) {
+    var frame = findDrawingFrame(graph.getSelectionCell());
+
+    if (frame == null) {
+      frame = getLastDrawingFrame();
+    }
+
+    if (frame == null && showError) {
+      showStatus("请先插入或选中一个图框", true);
+      setCanvasStatus("请先插入或选中一个图框");
+    }
+
+    return frame;
+  }
+
+  function getFrameChildInsertPoint(frame, width, height) {
+    var frameConfig = getFrameConfig(frame);
+    var childCount = 0;
+    var i;
+
+    for (i = 0; i < model.getChildCount(frame); i++) {
+      var child = model.getChildAt(frame, i);
+
+      if (getAttr(child, "esKind") != FRAME_LABEL_KIND) {
+        childCount += 1;
+      }
+    }
+
+    return {
+      x: 40 + (childCount % 6) * 18,
+      y:
+        Math.round(frameConfig.height * FRAME_MARGIN_RATIO) +
+        20 +
+        Math.floor(childCount / 6) * 18,
+    };
+  }
+
+  function createFramePageLabelCell(pageNumber, frameConfig) {
+    var config = normalizeFrameConfig(frameConfig);
+    var width = 140;
+    var height = 24;
+    var geometry = new mxGeometry(config.width - width - 16, 10, width, height);
+    var value = createMetaCell(
+      FRAME_LABEL_TAG,
+      FRAME_LABEL_KIND,
+      "page",
+      "PAGE " + pageNumber,
+    );
+    var cell = new mxCell(value, geometry, makeFrameLabelStyle());
+    cell.vertex = true;
+    cell.setConnectable(false);
+    return cell;
+  }
+
+  function createDrawingFrameCell(frameConfig, pageNumber, extra) {
+    var config = normalizeFrameConfig(frameConfig);
+    var frameId =
+      extra != null && trim(extra.frameId).length > 0
+        ? trim(extra.frameId)
+        : generateFrameId();
+    var root = new mxCell(
+      applyFrameValueMetadata(
+        createNode(FRAME_TAG),
+        frameId,
+        pageNumber,
+        config,
+        extra,
+      ),
+      new mxGeometry(0, 0, config.width, config.height),
+      makeFrameStyle(),
+    );
+    root.vertex = true;
+    root.setConnectable(false);
+    root.insert(createFramePageLabelCell(pageNumber, config));
+    return root;
+  }
+
+  function addTopLevelCell(cell) {
+    model.add(graph.getDefaultParent(), cell);
+    return cell;
+  }
+
+  function getMaxFramePageNumber() {
+    var frames = getAllDrawingFrames();
+    var maxPage = 0;
+    var i;
+
+    for (i = 0; i < frames.length; i++) {
+      maxPage = Math.max(maxPage, getFramePageNumber(frames[i]));
+    }
+
+    return maxPage;
+  }
+
+  function getRightmostFrame() {
+    var frames = getAllDrawingFrames();
+    var result = null;
+    var maxEdge = -Infinity;
+    var i;
+
+    for (i = 0; i < frames.length; i++) {
+      var geometry = model.getGeometry(frames[i]);
+
+      if (geometry != null) {
+        var edge = geometry.x + geometry.width;
+
+        if (edge > maxEdge) {
+          maxEdge = edge;
+          result = frames[i];
+        }
+      }
+    }
+
+    return result;
+  }
+
+  function getRightmostFrameEdge() {
+    var frames = getAllDrawingFrames();
+    var maxEdge = 0;
+    var i;
+
+    for (i = 0; i < frames.length; i++) {
+      var geometry = model.getGeometry(frames[i]);
+
+      if (geometry != null) {
+        maxEdge = Math.max(maxEdge, geometry.x + geometry.width);
+      }
+    }
+
+    return maxEdge;
+  }
+
+  function buildCabinetOffsets(cabinetModel, frameConfig) {
+    var config = normalizeFrameConfig(frameConfig);
+    var modelData = normalizeCabinetModel(cabinetModel);
+    var usableHeight = config.height * FRAME_CONTENT_RATIO;
+    var topMargin = config.height * FRAME_MARGIN_RATIO;
+    var offsets = [];
+    var minFollowSpace = Math.max(
+      modelData.tailPadding * 2,
+      usableHeight * CABINET_MIN_PORT_FOLLOW_SPACE_RATIO,
+    );
+    // 配电柜顶部也保留与尾巴相同长度的“头部”，让首尾留白一致。
+    var currentOffset = modelData.tailPadding;
+    var i;
+
+    if (modelData.ports.length == 0) {
+      modelData.ports = normalizeCabinetModel({ portCount: 2 }).ports;
+      modelData.gapRatios = [0.12];
+    }
+
+    for (i = 0; i < modelData.ports.length; i++) {
+      if (i > 0) {
+        var previousGap = modelData.gapRatios[i - 1] * usableHeight;
+        var nextGap =
+          i < modelData.gapRatios.length
+            ? modelData.gapRatios[i] * usableHeight
+            : 0;
+        var candidateOffset = currentOffset + previousGap;
+        var candidatePage = Math.floor(
+          Math.max(0, candidateOffset - 0.0001) / usableHeight,
+        );
+        var candidateLocalOffset =
+          candidateOffset - candidatePage * usableHeight;
+        var remainingLocalSpace = usableHeight - candidateLocalOffset;
+
+        // 如果当前端子前后的两段连续间距之和已经超过单页最大高度，
+        // 则把当前端子作为“第二段”的头端子移到下一页顶部附近，
+        // 避免它落在本页底部过低位置，导致右侧连接图元几乎没有摆放空间。
+        if (
+          i < modelData.gapRatios.length &&
+          previousGap + nextGap > usableHeight &&
+          candidateLocalOffset > modelData.tailPadding
+        ) {
+          currentOffset =
+            (candidatePage + 1) * usableHeight + modelData.tailPadding;
+        } else if (
+          remainingLocalSpace < minFollowSpace &&
+          candidateLocalOffset > modelData.tailPadding
+        ) {
+          // 如果当前端子落在本页后，后面剩余的可用空间太小，
+          // 则把它整体提到下一页顶部，给该端子后续连接的图元留出足够摆放空间。
+          currentOffset =
+            (candidatePage + 1) * usableHeight + modelData.tailPadding;
+        } else {
+          currentOffset = candidateOffset;
+        }
+      }
+
+      offsets.push(currentOffset);
+    }
+
+    return {
+      frameConfig: config,
+      cabinetModel: modelData,
+      usableHeight: usableHeight,
+      topMargin: topMargin,
+      offsets: offsets,
+      totalLogicalHeight:
+        (offsets.length > 0
+          ? offsets[offsets.length - 1]
+          : modelData.tailPadding) + modelData.tailPadding,
+    };
+  }
+
+  function getPageIndexForOffset(offset, usableHeight, pageCount) {
+    if (pageCount <= 1 || offset <= 0) {
+      return 0;
+    }
+
+    return clamp(
+      Math.floor((offset - 0.0001) / usableHeight),
+      0,
+      pageCount - 1,
+    );
+  }
+
+  function buildCabinetPageDescriptors(cabinetModel, frameConfig) {
+    var layout = buildCabinetOffsets(cabinetModel, frameConfig);
+    // 当前这个配电柜自身需要拆成几个分页片段来显示
+    var pageCount = Math.max(
+      1,
+      Math.ceil(layout.totalLogicalHeight / layout.usableHeight),
+    );
+    var descriptors = [];
+    var pageIndex;
+    var i;
+
+    for (pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+      var pageStart = pageIndex * layout.usableHeight;
+      var remaining = Math.max(0, layout.totalLogicalHeight - pageStart);
+      // 当前这一页配电柜片段应该画多高
+      // 只要这个柜体一共要分到两页及以上，那每一页上的柜体片段高度都直接取整页可用高度
+      // 如果没有跨页，只在一页里
+      var segmentHeight =
+        pageCount > 1
+          ? layout.usableHeight
+          : Math.max(
+              layout.cabinetModel.tailPadding,
+              Math.min(layout.usableHeight, remaining),
+            );
+      var ports = [];
+      var gaps = [];
+
+      for (i = 0; i < layout.cabinetModel.ports.length; i++) {
+        if (
+          getPageIndexForOffset(
+            layout.offsets[i],
+            layout.usableHeight,
+            pageCount,
+          ) == pageIndex
+        ) {
+          var localOffset = layout.offsets[i] - pageStart;
+          var port = cloneJson(layout.cabinetModel.ports[i]);
+          port.x = 1;
+          port.y =
+            segmentHeight > 0 ? clamp(localOffset / segmentHeight, 0, 1) : 0;
+          port.order = i;
+          port.logicalOffset = layout.offsets[i];
+          ports.push(port);
+        }
+      }
+
+      for (i = 0; i < layout.cabinetModel.gapRatios.length; i++) {
+        var gapAbsoluteStart = layout.offsets[i];
+        var gapAbsoluteEnd =
+          i + 1 < layout.offsets.length
+            ? layout.offsets[i + 1]
+            : gapAbsoluteStart;
+        var visibleStart = Math.max(gapAbsoluteStart, pageStart);
+        var visibleEnd = Math.min(gapAbsoluteEnd, pageStart + segmentHeight);
+
+        if (visibleEnd > visibleStart) {
+          var gapStart = clamp(visibleStart - pageStart, 0, segmentHeight);
+          var gapEnd = clamp(visibleEnd - pageStart, gapStart, segmentHeight);
+
+          if (gapEnd - gapStart < 12) {
+            gapEnd = Math.min(segmentHeight, gapStart + 12);
+          }
+
+          gaps.push({
+            id: "cabinet-gap:" + i + ":" + pageIndex,
+            gapIndex: i,
+            y: segmentHeight > 0 ? clamp(gapStart / segmentHeight, 0, 1) : 0,
+            height: Math.max(12, gapEnd - gapStart),
+          });
+        }
+      }
+
+      descriptors.push({
+        segmentIndex: pageIndex,
+        pageCount: pageCount,
+        continuesFromPrev: pageIndex > 0,
+        continuesToNext: pageIndex < pageCount - 1,
+        x: layout.cabinetModel.cabinetX,
+        y: layout.topMargin,
+        width: layout.cabinetModel.cabinetWidth,
+        height: segmentHeight,
+        segmentStartOffset: pageStart,
+        segmentEndOffset: pageStart + segmentHeight,
+        ports: ports,
+        gaps: gaps,
+        frameConfig: layout.frameConfig,
+        cabinetModel: layout.cabinetModel,
+      });
+    }
+
+    return descriptors;
+  }
+
+  function createCabinetValueMetadata(node, cabinetModel, descriptor, frameId) {
+    node.setAttribute("pluginType", CABINET_TYPE);
+    node.setAttribute("logicalCabinetId", trim(cabinetModel.logicalCabinetId));
+    node.setAttribute("originFrameId", trim(cabinetModel.originFrameId));
+    node.setAttribute("frameId", trim(frameId));
+    node.setAttribute("segmentIndex", String(descriptor.segmentIndex));
+    node.setAttribute(
+      "segmentStartOffset",
+      String(Math.round(descriptor.segmentStartOffset * 1000) / 1000),
+    );
+    node.setAttribute(
+      "segmentEndOffset",
+      String(Math.round(descriptor.segmentEndOffset * 1000) / 1000),
+    );
+    node.setAttribute("cabinetModelJson", JSON.stringify(cabinetModel));
+    node.setAttribute("gapRatiosJson", JSON.stringify(cabinetModel.gapRatios));
+    node.setAttribute("portsJson", serializePortLayout(descriptor.ports));
+    node.setAttribute("portLayout", serializePortLayout(descriptor.ports));
+    node.setAttribute("label", "");
+    return node;
+  }
+
+  // 真正创建一个 mxCell 来表示配电柜片段的主体部分，样式里会把 SVG 轮廓字符串嵌入进去。
+  function createCabinetBodyCell(descriptor) {
+    var cell = new mxCell(
+      createMetaCell(CABINET_BODY_TAG, CABINET_BODY_KIND, "main", ""),
+      new mxGeometry(0, 0, descriptor.width, descriptor.height),
+      makeCabinetBodyStyle(descriptor),
+    );
+    cell.vertex = true;
+    cell.setConnectable(false);
+    return cell;
+  }
+
+  function createCabinetGapCell(cabinetModel, descriptor, gap) {
+    var value = createNode(CABINET_GAP_TAG);
+    value.setAttribute("pluginType", CABINET_GAP_TYPE);
+    value.setAttribute("esKind", CABINET_GAP_KIND);
+    value.setAttribute("esKey", String(gap.gapIndex));
+    value.setAttribute("logicalCabinetId", trim(cabinetModel.logicalCabinetId));
+    value.setAttribute("gapIndex", String(gap.gapIndex));
+    value.setAttribute("label", "");
+    var geometry = new mxGeometry(1, gap.y, 14, gap.height);
+    geometry.relative = true;
+    geometry.offset = new mxPoint(-7, 0);
+    var cell = new mxCell(
+      value,
+      geometry,
+      makeCabinetGapStyle(
+        isSelectedCabinetGap(cabinetModel.logicalCabinetId, gap.gapIndex),
+      ),
+    );
+    cell.vertex = true;
+    cell.setConnectable(false);
+    return cell;
+  }
+
+  function getCellAbsoluteGeometry(cell) {
+    var geometry = model.getGeometry(cell);
+    var parent = model.getParent(cell);
+    var x = geometry != null ? geometry.x : 0;
+    var y = geometry != null ? geometry.y : 0;
+
+    while (parent != null) {
+      var parentGeometry = model.getGeometry(parent);
+
+      if (parentGeometry != null) {
+        x += parentGeometry.x;
+        y += parentGeometry.y;
+      }
+
+      parent = model.getParent(parent);
+    }
+
+    return {
+      x: x,
+      y: y,
+      width: geometry != null ? geometry.width : 0,
+      height: geometry != null ? geometry.height : 0,
+    };
+  }
+
+  function getPortAbsolutePosition(root, port) {
+    var geometry = getCellAbsoluteGeometry(root);
+
+    return {
+      x: geometry.x + port.x * geometry.width,
+      y: geometry.y + port.y * geometry.height,
+    };
+  }
+
+  function buildCabinetSegmentCell(cabinetModel, frameId, descriptor) {
+    var root = new mxCell(
+      createCabinetValueMetadata(
+        createNode(CABINET_TAG),
+        cabinetModel,
+        descriptor,
+        frameId,
+      ),
+      new mxGeometry(
+        descriptor.x,
+        descriptor.y,
+        descriptor.width,
+        descriptor.height,
+      ),
+      makeCabinetRootStyle(),
+    );
+    var i;
+    root.vertex = true;
+    root.setConnectable(true);
+    root.insert(createCabinetBodyCell(descriptor));
+
+    for (i = 0; i < descriptor.gaps.length; i++) {
+      root.insert(
+        createCabinetGapCell(cabinetModel, descriptor, descriptor.gaps[i]),
+      );
+    }
+
+    return root;
+  }
+
+  function extractCabinetModel(cell) {
+    var root = findCabinetSegment(cell);
+    var raw;
+
+    if (root == null) {
+      throw new Error("未找到配电柜片段");
+    }
+
+    raw = getAttr(root, "cabinetModelJson");
+
+    if (raw == null || raw.length == 0) {
+      throw new Error("缺少 cabinetModelJson 数据");
+    }
+
+    return normalizeCabinetModel(JSON.parse(raw));
+  }
+
+  function findCabinetSegments(logicalCabinetId) {
+    var target = trim(logicalCabinetId);
+    var frames = getAllDrawingFrames();
+    var result = [];
+    var i;
+    var j;
+
+    for (i = 0; i < frames.length; i++) {
+      for (j = 0; j < model.getChildCount(frames[i]); j++) {
+        var child = model.getChildAt(frames[i], j);
+
+        if (
+          isCabinetSegment(child) &&
+          trim(getAttr(child, "logicalCabinetId")) == target
+        ) {
+          result.push(child);
+        }
+      }
+    }
+
+    return result;
+  }
+
+  function isSelectedCabinetGap(logicalCabinetId, gapIndex) {
+    return (
+      state.selectedCabinetGap != null &&
+      trim(state.selectedCabinetGap.logicalCabinetId) ==
+        trim(logicalCabinetId) &&
+      toInt(state.selectedCabinetGap.gapIndex, -1) == toInt(gapIndex, -1)
+    );
+  }
+
+  function updateCabinetGapHighlight() {
+    var frames = getAllDrawingFrames();
+    var i;
+    var j;
+    var k;
+
+    model.beginUpdate();
+    try {
+      for (i = 0; i < frames.length; i++) {
+        for (j = 0; j < model.getChildCount(frames[i]); j++) {
+          var segment = model.getChildAt(frames[i], j);
+
+          if (!isCabinetSegment(segment)) {
+            continue;
+          }
+
+          for (k = 0; k < model.getChildCount(segment); k++) {
+            var child = model.getChildAt(segment, k);
+
+            if (isCabinetGap(child)) {
+              var nextStyle = makeCabinetGapStyle(
+                isSelectedCabinetGap(
+                  getAttr(child, "logicalCabinetId"),
+                  getAttr(child, "gapIndex"),
+                ),
+              );
+
+              if (child.style != nextStyle) {
+                model.setStyle(child, nextStyle);
+              }
+            }
+          }
+        }
+      }
+    } finally {
+      model.endUpdate();
+    }
+  }
+
+  function setSelectedCabinetGap(logicalCabinetId, gapIndex) {
+    if (trim(logicalCabinetId).length == 0 || toInt(gapIndex, -1) < 0) {
+      state.selectedCabinetGap = null;
+    } else {
+      state.selectedCabinetGap = {
+        logicalCabinetId: trim(logicalCabinetId),
+        gapIndex: toInt(gapIndex, -1),
+      };
+    }
+
+    updateCabinetGapHighlight();
+  }
+
+  function getEdgePortId(edge, root, source) {
+    var style = graph.getCellStyle(edge) || {};
+    var key = source ? "sourcePortId" : "targetPortId";
+    var portId = trim(mxUtils.getValue(style, key, ""));
+
+    if (portId.length > 0) {
+      return portId;
+    }
+
+    var edgeState = graph.view.getState(edge);
+    var terminalState = graph.view.getState(root);
+    var constraint =
+      edgeState != null && terminalState != null
+        ? graph.getConnectionConstraint(edgeState, terminalState, source)
+        : null;
+    var point = constraint != null ? constraint.point : null;
+    var ports = parsePortLayout(getAttr(root, "portsJson"));
+    var i;
+
+    if (point != null) {
+      for (i = 0; i < ports.length; i++) {
+        if (
+          Math.abs(ports[i].x - point.x) < 0.0001 &&
+          Math.abs(ports[i].y - point.y) < 0.0001
+        ) {
+          return trim(ports[i].id);
+        }
+      }
+    }
+
+    return "";
+  }
+
+  function collectCabinetAttachments(segments) {
+    var seen = {};
+    var attachments = [];
+    var i;
+    var j;
+
+    for (i = 0; i < segments.length; i++) {
+      var segment = segments[i];
+      var edgeCount = model.getEdgeCount(segment);
+
+      for (j = 0; j < edgeCount; j++) {
+        var edge = model.getEdgeAt(segment, j);
+        var sourceTerminal = model.getTerminal(edge, true);
+        var targetTerminal = model.getTerminal(edge, false);
+        var sourceIsSegment = sourceTerminal == segment;
+        var targetIsSegment = targetTerminal == segment;
+
+        if (!sourceIsSegment && !targetIsSegment) {
+          continue;
+        }
+
+        var key = mxCellPath.create(edge) + ":" + (sourceIsSegment ? "S" : "T");
+
+        if (seen[key]) {
+          continue;
+        }
+
+        seen[key] = true;
+
+        var source = sourceIsSegment;
+        var portId = getEdgePortId(edge, segment, source);
+        var port = getPortMetaById(segment, portId);
+
+        if (port == null) {
+          continue;
+        }
+
+        attachments.push({
+          edge: edge,
+          source: source,
+          portId: portId,
+          oldPortPosition: getPortAbsolutePosition(segment, port),
+          otherTerminal: model.getTerminal(edge, !source),
+        });
+      }
+    }
+
+    return attachments;
+  }
+
+  function buildCabinetPortMap(segments) {
+    var result = {};
+    var i;
+
+    for (i = 0; i < segments.length; i++) {
+      var segment = segments[i];
+      var frame = findDrawingFrame(segment);
+      var ports = parsePortLayout(getAttr(segment, "portsJson"));
+      var j;
+
+      for (j = 0; j < ports.length; j++) {
+        result[trim(ports[j].id)] = {
+          segment: segment,
+          port: ports[j],
+          frame: frame,
+          absolutePosition: getPortAbsolutePosition(segment, ports[j]),
+        };
+      }
+    }
+
+    return result;
+  }
+
+  function isMovableConnectedTerminal(cell) {
+    return (
+      cell != null &&
+      model.isVertex(cell) &&
+      !isDrawingFrame(cell) &&
+      !isCabinetSegment(cell) &&
+      !isCabinetGap(cell)
+    );
+  }
+
+  function clampCellGeometryToFrame(geometry, frame) {
+    var frameGeometry = model.getGeometry(frame);
+    var nextGeometry = geometry.clone();
+    var padding = 12;
+    var minX = padding;
+    var minY = padding;
+    var maxX = Math.max(minX, frameGeometry.width - geometry.width - padding);
+    var maxY = Math.max(minY, frameGeometry.height - geometry.height - padding);
+
+    nextGeometry.x = clamp(nextGeometry.x, minX, maxX);
+    nextGeometry.y = clamp(nextGeometry.y, minY, maxY);
+
+    return nextGeometry;
+  }
+
+  function moveCellToFrameByDelta(cell, targetFrame, deltaX, deltaY) {
+    if (!isMovableConnectedTerminal(cell) || targetFrame == null) {
+      return;
+    }
+
+    var geometry = model.getGeometry(cell);
+
+    if (geometry == null) {
+      return;
+    }
+
+    var currentFrame = findDrawingFrame(cell);
+    var absolute = getCellAbsoluteGeometry(cell);
+    var targetFrameGeometry = model.getGeometry(targetFrame);
+    var nextGeometry = geometry.clone();
+    var nextAbsoluteX = absolute.x + deltaX;
+    var nextAbsoluteY = absolute.y + deltaY;
+
+    if (currentFrame != targetFrame) {
+      model.add(targetFrame, cell);
+    }
+
+    nextGeometry.x = nextAbsoluteX - targetFrameGeometry.x;
+    nextGeometry.y = nextAbsoluteY - targetFrameGeometry.y;
+    nextGeometry = clampCellGeometryToFrame(nextGeometry, targetFrame);
+    model.setGeometry(cell, nextGeometry);
+  }
+
+  function collectConnectedMovableGroup(startCell) {
+    var queue = [];
+    var vertexMap = {};
+    var edgeMap = {};
+    var vertices = [];
+    var edges = [];
+    var i;
+
+    if (!isMovableConnectedTerminal(startCell)) {
+      return {
+        vertices: vertices,
+        edges: edges,
+      };
+    }
+
+    queue.push(startCell);
+
+    while (queue.length > 0) {
+      var cell = queue.shift();
+      var cellId = mxObjectIdentity.get(cell);
+
+      if (vertexMap[cellId]) {
+        continue;
+      }
+
+      vertexMap[cellId] = true;
+      vertices.push(cell);
+
+      for (i = 0; i < model.getEdgeCount(cell); i++) {
+        var edge = model.getEdgeAt(cell, i);
+        var edgeId = mxObjectIdentity.get(edge);
+        var source = model.getTerminal(edge, true);
+        var target = model.getTerminal(edge, false);
+        var other = source == cell ? target : source;
+
+        if (!edgeMap[edgeId]) {
+          edgeMap[edgeId] = true;
+          edges.push(edge);
+        }
+
+        if (isMovableConnectedTerminal(other)) {
+          queue.push(other);
+        }
+      }
+    }
+
+    return {
+      vertices: vertices,
+      edges: edges,
+    };
+  }
+
+  function getCellsAbsoluteBounds(cells) {
+    var bounds = null;
+    var i;
+
+    for (i = 0; i < cells.length; i++) {
+      var geometry = getCellAbsoluteGeometry(cells[i]);
+
+      if (bounds == null) {
+        bounds = {
+          x: geometry.x,
+          y: geometry.y,
+          width: geometry.width,
+          height: geometry.height,
+        };
+      } else {
+        var minX = Math.min(bounds.x, geometry.x);
+        var minY = Math.min(bounds.y, geometry.y);
+        var maxX = Math.max(bounds.x + bounds.width, geometry.x + geometry.width);
+        var maxY = Math.max(
+          bounds.y + bounds.height,
+          geometry.y + geometry.height,
+        );
+
+        bounds.x = minX;
+        bounds.y = minY;
+        bounds.width = maxX - minX;
+        bounds.height = maxY - minY;
+      }
+    }
+
+    return bounds;
+  }
+
+  function adjustGroupDeltaToFrame(vertices, targetFrame, deltaX, deltaY) {
+    var bounds = getCellsAbsoluteBounds(vertices);
+    var frameGeometry = model.getGeometry(targetFrame);
+    var padding = 12;
+
+    if (bounds == null || frameGeometry == null) {
+      return {
+        x: deltaX,
+        y: deltaY,
+      };
+    }
+
+    var nextX = bounds.x + deltaX;
+    var nextY = bounds.y + deltaY;
+    var minX = frameGeometry.x + padding;
+    var minY = frameGeometry.y + padding;
+    var maxX = frameGeometry.x + frameGeometry.width - padding;
+    var maxY = frameGeometry.y + frameGeometry.height - padding;
+
+    if (nextX < minX) {
+      deltaX += minX - nextX;
+      nextX = minX;
+    }
+
+    if (nextY < minY) {
+      deltaY += minY - nextY;
+      nextY = minY;
+    }
+
+    if (nextX + bounds.width > maxX) {
+      deltaX -= nextX + bounds.width - maxX;
+    }
+
+    if (nextY + bounds.height > maxY) {
+      deltaY -= nextY + bounds.height - maxY;
+    }
+
+    return {
+      x: deltaX,
+      y: deltaY,
+    };
+  }
+
+  function shiftEdgePointsByDelta(edge, deltaX, deltaY) {
+    var geometry = model.getGeometry(edge);
+    var points;
+    var i;
+
+    if (geometry == null || geometry.points == null || geometry.points.length == 0) {
+      return;
+    }
+
+    geometry = geometry.clone();
+    points = [];
+
+    for (i = 0; i < geometry.points.length; i++) {
+      points.push(
+        new mxPoint(
+          geometry.points[i].x + deltaX,
+          geometry.points[i].y + deltaY,
+        ),
+      );
+    }
+
+    geometry.points = points;
+    model.setGeometry(edge, geometry);
+  }
+
+  function clearEdgePoints(edge) {
+    var geometry = model.getGeometry(edge);
+
+    if (geometry != null && geometry.points != null && geometry.points.length > 0) {
+      geometry = geometry.clone();
+      geometry.points = null;
+      model.setGeometry(edge, geometry);
+    }
+  }
+
+  function moveConnectedGroupToCabinetPort(
+    edge,
+    source,
+    oldRoot,
+    oldPortId,
+    newRoot,
+    newPort,
+  ) {
+    var otherTerminal = model.getTerminal(edge, !source);
+    var oldPort = getPortMetaById(oldRoot, oldPortId);
+    var targetFrame = findDrawingFrame(newRoot);
+    var group;
+    var delta;
+    var movedMap = {};
+    var i;
+
+    if (
+      state.updatingModel ||
+      !isCabinetSegment(oldRoot) ||
+      !isCabinetSegment(newRoot) ||
+      oldPort == null ||
+      newPort == null ||
+      !isMovableConnectedTerminal(otherTerminal) ||
+      targetFrame == null
+    ) {
+      return;
+    }
+
+    group = collectConnectedMovableGroup(otherTerminal);
+
+    if (group.vertices.length == 0) {
+      return;
+    }
+
+    delta = adjustGroupDeltaToFrame(
+      group.vertices,
+      targetFrame,
+      getPortAbsolutePosition(newRoot, newPort).x -
+        getPortAbsolutePosition(oldRoot, oldPort).x,
+      getPortAbsolutePosition(newRoot, newPort).y -
+        getPortAbsolutePosition(oldRoot, oldPort).y,
+    );
+
+    if (Math.abs(delta.x) < 0.0001 && Math.abs(delta.y) < 0.0001) {
+      return;
+    }
+
+    state.updatingModel = true;
+    model.beginUpdate();
+
+    try {
+      for (i = 0; i < group.vertices.length; i++) {
+        var vertex = group.vertices[i];
+        var key = mxObjectIdentity.get(vertex);
+
+        if (!movedMap[key]) {
+          movedMap[key] = true;
+          moveCellToFrameByDelta(vertex, targetFrame, delta.x, delta.y);
+        }
+      }
+
+      for (i = 0; i < group.edges.length; i++) {
+        var groupEdge = group.edges[i];
+        var sourceTerminal = model.getTerminal(groupEdge, true);
+        var targetTerminal = model.getTerminal(groupEdge, false);
+        var sourceMoved = movedMap[mxObjectIdentity.get(sourceTerminal)] === true;
+        var targetMoved = movedMap[mxObjectIdentity.get(targetTerminal)] === true;
+
+        if (sourceMoved && targetMoved) {
+          shiftEdgePointsByDelta(groupEdge, delta.x, delta.y);
+        } else {
+          clearEdgePoints(groupEdge);
+        }
+      }
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+  }
+
+  function clearPortSwapOverlay() {
+    if (
+      state.portSwapOverlay != null &&
+      state.portSwapOverlay.parentNode != null
+    ) {
+      state.portSwapOverlay.parentNode.removeChild(state.portSwapOverlay);
+    }
+
+    state.portSwapOverlay = null;
+  }
+
+  function exitPortSwapMode(clearStatus) {
+    clearPortSwapOverlay();
+    state.portSwapSession = null;
+
+    if (clearStatus !== false) {
+      setCanvasStatus("");
+    }
+  }
+
+  function buildPortSwapContextFromEdge(edge) {
+    var sourceTerminal = model.getTerminal(edge, true);
+    var targetTerminal = model.getTerminal(edge, false);
+    var sourceRoot = findPortHostRoot(sourceTerminal);
+    var targetRoot = findPortHostRoot(targetTerminal);
+    var sourceCabinet = isCabinetSegment(sourceRoot);
+    var targetCabinet = isCabinetSegment(targetRoot);
+
+    if (sourceCabinet == targetCabinet) {
+      return null;
+    }
+
+    return {
+      edge: edge,
+      source: sourceCabinet,
+      cabinetRoot: sourceCabinet ? sourceRoot : targetRoot,
+      portId: trim(
+        mxUtils.getValue(
+          graph.getCellStyle(edge) || {},
+          sourceCabinet ? "sourcePortId" : "targetPortId",
+          "",
+        ),
+      ),
+      otherTerminal: sourceCabinet ? targetTerminal : sourceTerminal,
+    };
+  }
+
+  function getPortSwapContextFromSelection() {
+    var cell = graph.getSelectionCell();
+    var i;
+
+    if (model.isEdge(cell)) {
+      return buildPortSwapContextFromEdge(cell);
+    }
+
+    if (isMovableConnectedTerminal(cell)) {
+      var match = null;
+
+      for (i = 0; i < model.getEdgeCount(cell); i++) {
+        var edge = model.getEdgeAt(cell, i);
+        var context = buildPortSwapContextFromEdge(edge);
+
+        if (
+          context != null &&
+          context.otherTerminal == cell &&
+          context.portId.length > 0
+        ) {
+          if (match != null) {
+            return {
+              error: "该图元连接了多个配电柜端子，请直接选中第一条边再执行更换挂点",
+            };
+          }
+
+          match = context;
+        }
+      }
+
+      return match;
+    }
+
+    return null;
+  }
+
+  function renderPortSwapOverlay(session) {
+    var container = document.createElement("div");
+    var segments = findCabinetSegments(
+      trim(getAttr(session.cabinetRoot, "logicalCabinetId")),
+    );
+    var i;
+    var j;
+
+    clearPortSwapOverlay();
+    container.style.position = "absolute";
+    container.style.left = "0";
+    container.style.top = "0";
+    container.style.width = "100%";
+    container.style.height = "100%";
+    container.style.pointerEvents = "none";
+    container.style.zIndex = "3";
+
+    for (i = 0; i < segments.length; i++) {
+      var stateView = graph.view.getState(segments[i]);
+      var ports = parsePortLayout(getAttr(segments[i], "portsJson"));
+
+      if (stateView == null) {
+        continue;
+      }
+
+      for (j = 0; j < ports.length; j++) {
+        var marker = document.createElement("div");
+        var portId = trim(ports[j].id);
+        var selected = trim(ports[j].id) == trim(session.portId);
+        marker.style.position = "absolute";
+        marker.style.width = "14px";
+        marker.style.height = "14px";
+        marker.style.borderRadius = "50%";
+        marker.style.boxSizing = "border-box";
+        marker.style.border = selected
+          ? "2px solid #1a73e8"
+          : "2px solid #16a34a";
+        marker.style.background = selected
+          ? "rgba(26,115,232,0.15)"
+          : "rgba(22,163,74,0.18)";
+        marker.style.pointerEvents = "auto";
+        marker.style.cursor = selected ? "default" : "pointer";
+        marker.style.left =
+          Math.round(stateView.x + ports[j].x * stateView.width - 7) + "px";
+        marker.style.top =
+          Math.round(stateView.y + ports[j].y * stateView.height - 7) + "px";
+        marker.title = selected ? "当前挂点" : "点击切换到该挂点";
+
+        if (!selected) {
+          mxEvent.addListener(marker, "click", (function (root, port) {
+            return function (evt) {
+              mxEvent.consume(evt);
+              commitPortSwap(state.portSwapSession, root, port);
+            };
+          })(segments[i], cloneJson(ports[j])));
+        }
+
+        container.appendChild(marker);
+      }
+    }
+
+    graph.container.appendChild(container);
+    state.portSwapOverlay = container;
+  }
+
+  function getNearestCabinetPortFromClick(root, mouseEvent) {
+    var ports = parsePortLayout(getAttr(root, "portsJson"));
+    var graphX =
+      mouseEvent != null && typeof mouseEvent.getGraphX === "function"
+        ? mouseEvent.getGraphX()
+        : null;
+    var graphY =
+      mouseEvent != null && typeof mouseEvent.getGraphY === "function"
+        ? mouseEvent.getGraphY()
+        : null;
+    var threshold = 18 / graph.view.scale;
+    var best = null;
+    var bestDistance = Infinity;
+    var i;
+
+    if (graphX == null || graphY == null) {
+      return null;
+    }
+
+    for (i = 0; i < ports.length; i++) {
+      var position = getPortAbsolutePosition(root, ports[i]);
+      var dx = position.x - graphX;
+      var dy = position.y - graphY;
+      var distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance <= threshold && distance < bestDistance) {
+        best = ports[i];
+        bestDistance = distance;
+      }
+    }
+
+    return best;
+  }
+
+  function applyEdgePortConstraintMetadata(edge, root, source, constraint) {
+    var port = getPortMetaByConstraint(root, constraint);
+    var direction =
+      port != null ? mapPortDirectionToConstraint(port.direction) : "";
+    var key = source ? "sourcePortConstraint" : "targetPortConstraint";
+    var portKey = source ? "sourcePortId" : "targetPortId";
+    var style = model.getStyle(edge) || "";
+
+    style = mxUtils.setStyle(
+      style,
+      key,
+      direction.length > 0 ? direction : null,
+    );
+    style = mxUtils.setStyle(
+      style,
+      portKey,
+      port != null && trim(port.id).length > 0 ? trim(port.id) : null,
+    );
+    model.setStyle(edge, style);
+  }
+
+  function commitPortSwap(session, newRoot, newPort) {
+    var edge = session.edge;
+    var source = !!session.source;
+    var oldRoot = session.cabinetRoot;
+    var oldPortId = trim(session.portId);
+    var constraint = new mxConnectionConstraint(
+      new mxPoint(newPort.x, newPort.y),
+      false,
+      newPort.id,
+    );
+
+    if (
+      edge == null ||
+      newRoot == null ||
+      newPort == null ||
+      oldPortId.length == 0 ||
+      (oldRoot == newRoot && oldPortId == trim(newPort.id))
+    ) {
+      exitPortSwapMode();
+      return;
+    }
+
+    state.updatingModel = true;
+    model.beginUpdate();
+
+    try {
+      model.setTerminal(edge, newRoot, source);
+      oldSetConnectionConstraint.call(graph, edge, newRoot, source, constraint);
+      applyEdgePortConstraintMetadata(edge, newRoot, source, constraint);
+      clearEdgePoints(edge);
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+
+    moveConnectedGroupToCabinetPort(
+      edge,
+      source,
+      oldRoot,
+      oldPortId,
+      newRoot,
+      newPort,
+    );
+    exitPortSwapMode();
+    showStatus("已更换挂点", false);
+    setCanvasStatus("已更换挂点");
+  }
+
+  function enterPortSwapMode() {
+    if (state.portSwapSession != null) {
+      exitPortSwapMode();
+      return;
+    }
+
+    closeGapDialogWindow();
+    setSelectedCabinetGap(null, null);
+
+    var context = getPortSwapContextFromSelection();
+
+    if (context == null) {
+      showStatus("请先选中与配电柜直接相连的第一条边或第一个图元", true);
+      setCanvasStatus("请先选中与配电柜直接相连的第一条边或第一个图元");
+      return;
+    }
+
+    if (context.error != null) {
+      showStatus(context.error, true);
+      setCanvasStatus(context.error);
+      return;
+    }
+
+    if (context.portId.length == 0 || context.cabinetRoot == null) {
+      showStatus("当前选中对象未绑定到有效的配电柜端子", true);
+      setCanvasStatus("当前选中对象未绑定到有效的配电柜端子");
+      return;
+    }
+
+    state.portSwapSession = context;
+    renderPortSwapOverlay(context);
+    setCanvasStatus("更换挂点模式：点击同一配电柜上的目标连接点，或点空白取消");
+  }
+
+  function restoreCabinetAttachments(attachments, newPortMap) {
+    var movedTerminals = {};
+    var i;
+
+    for (i = 0; i < attachments.length; i++) {
+      var attachment = attachments[i];
+      var target = newPortMap[trim(attachment.portId)];
+
+      if (target == null) {
+        continue;
+      }
+
+      model.setTerminal(attachment.edge, target.segment, attachment.source);
+      graph.setConnectionConstraint(
+        attachment.edge,
+        target.segment,
+        attachment.source,
+        new mxConnectionConstraint(
+          new mxPoint(target.port.x, target.port.y),
+          false,
+          target.port.id,
+        ),
+      );
+
+      var edgeGeometry = model.getGeometry(attachment.edge);
+
+      if (edgeGeometry != null && edgeGeometry.points != null) {
+        edgeGeometry = edgeGeometry.clone();
+        edgeGeometry.points = null;
+        model.setGeometry(attachment.edge, edgeGeometry);
+      }
+
+      if (isMovableConnectedTerminal(attachment.otherTerminal)) {
+        var moveKey = mxObjectIdentity.get(attachment.otherTerminal);
+
+        if (!movedTerminals[moveKey]) {
+          movedTerminals[moveKey] = true;
+          moveCellToFrameByDelta(
+            attachment.otherTerminal,
+            target.frame,
+            target.absolutePosition.x - attachment.oldPortPosition.x,
+            target.absolutePosition.y - attachment.oldPortPosition.y,
+          );
+        }
+      }
+    }
+  }
+
+  function closeGapDialogWindow() {
+    if (state.gapDialogWindow != null) {
+      var wnd = state.gapDialogWindow;
+      state.gapDialogWindow = null;
+      wnd.destroy();
+    }
+  }
+
+  function clearCurrentPage() {
+    var parent = graph.getDefaultParent();
+    var cells = [];
+    var i;
+
+    for (i = 0; i < model.getChildCount(parent); i++) {
+      cells.push(model.getChildAt(parent, i));
+    }
+
+    if (cells.length == 0) {
+      showStatus("当前页面没有可清除的内容", false);
+      return;
+    }
+
+    if (!mxUtils.confirm("确认清除当前页面所有内容？")) {
+      return;
+    }
+
+    if (!mxUtils.confirm("此操作不可恢复，确定继续清除吗？")) {
+      return;
+    }
+
+    closeGapDialogWindow();
+    setSelectedCabinetGap(null, null);
+    exitPortSwapMode(false);
+
+    state.allowProtectedDelete = true;
+
+    try {
+      graph.removeCells(cells, true);
+      showStatus("已清空当前页面", false);
+    } finally {
+      state.allowProtectedDelete = false;
+    }
+  }
+
+  function findAutoFramesForCabinet(originFrameId, logicalCabinetId) {
+    var frames = getAllDrawingFrames();
+    var result = [];
+    var i;
+
+    for (i = 0; i < frames.length; i++) {
+      if (
+        trim(getAttr(frames[i], "originFrameId")) == trim(originFrameId) &&
+        trim(getAttr(frames[i], "autoFrameOwner")) == trim(logicalCabinetId)
+      ) {
+        result.push(frames[i]);
+      }
+    }
+
+    result.sort(function (a, b) {
+      return (
+        toInt(getAttr(a, "autoFrameIndex"), 0) -
+        toInt(getAttr(b, "autoFrameIndex"), 0)
+      );
+    });
+
+    return result;
+  }
+
+  function frameHasOnlyCabinetChildren(frame, logicalCabinetId) {
+    var i;
+
+    for (i = 0; i < model.getChildCount(frame); i++) {
+      var child = model.getChildAt(frame, i);
+
+      if (getAttr(child, "esKind") == FRAME_LABEL_KIND) {
+        continue;
+      }
+
+      if (
+        isCabinetSegment(child) &&
+        trim(getAttr(child, "logicalCabinetId")) == trim(logicalCabinetId)
+      ) {
+        continue;
+      }
+
+      return false;
+    }
+
+    return true;
+  }
+
+  function ensureCabinetFrames(
+    originFrame,
+    cabinetModel,
+    pageCount,
+    skipCleanup,
+  ) {
+    var originFrameId = trim(getAttr(originFrame, "frameId"));
+    var originGroupId = getFrameGroupId(originFrame);
+    var logicalCabinetId = trim(cabinetModel.logicalCabinetId);
+    var config = getFrameConfig(originFrame);
+    var autoFrames = findAutoFramesForCabinet(originFrameId, logicalCabinetId);
+    var frames = [originFrame];
+    var previousFrame = originFrame;
+    var i;
+
+    for (i = 1; i < pageCount; i++) {
+      var frame = autoFrames.length >= i ? autoFrames[i - 1] : null;
+
+      if (frame == null) {
+        var rightmostInGroup = getRightmostFrameInGroup(originGroupId);
+        var rightmostGeometry =
+          rightmostInGroup != null ? model.getGeometry(rightmostInGroup) : null;
+        frame = createDrawingFrameCell(
+          config,
+          Math.max(
+            getMaxFramePageNumberInGroup(originGroupId),
+            getFramePageNumber(previousFrame),
+          ) + 1,
+          {
+            originFrameId: originFrameId,
+            groupId: originGroupId,
+            autoFrameOwner: logicalCabinetId,
+            autoFrameIndex: i,
+          },
+        );
+        frame.geometry = frame.geometry.clone();
+        frame.geometry.x =
+          Math.max(
+            model.getGeometry(previousFrame).x +
+              config.width +
+              FRAME_HORIZONTAL_GAP,
+            rightmostGeometry != null
+              ? rightmostGeometry.x +
+                  rightmostGeometry.width +
+                  FRAME_HORIZONTAL_GAP
+              : model.getGeometry(previousFrame).x +
+                  config.width +
+                  FRAME_HORIZONTAL_GAP,
+          );
+        frame.geometry.y = model.getGeometry(previousFrame).y;
+        addTopLevelCell(frame);
+      }
+
+      frames.push(frame);
+      previousFrame = frame;
+    }
+
+    if (!skipCleanup) {
+      for (i = pageCount; i <= autoFrames.length; i++) {
+        var extraFrame = autoFrames[i - 1];
+
+        if (
+          extraFrame != null &&
+          frameHasOnlyCabinetChildren(extraFrame, logicalCabinetId)
+        ) {
+          model.remove(extraFrame);
+        }
+      }
+    }
+
+    return frames;
+  }
+
+  function relayoutCabinetByModel(cabinetModel) {
+    var normalized = normalizeCabinetModel(cabinetModel);
+    var originFrame = findFrameById(normalized.originFrameId);
+
+    if (originFrame == null) {
+      throw new Error("未找到配电柜所属的起始图框");
+    }
+
+    var frameConfig = getFrameConfig(originFrame);
+    var descriptors = buildCabinetPageDescriptors(normalized, frameConfig);
+    var oldSegments = findCabinetSegments(normalized.logicalCabinetId);
+    var attachments = collectCabinetAttachments(oldSegments);
+    var frames;
+    var newSegments = [];
+    var i;
+
+    frames = ensureCabinetFrames(
+      originFrame,
+      normalized,
+      descriptors.length,
+      true,
+    );
+
+    for (i = 0; i < descriptors.length; i++) {
+      var segment = buildCabinetSegmentCell(
+        normalized,
+        trim(getAttr(frames[i], "frameId")),
+        descriptors[i],
+      );
+      model.add(frames[i], segment);
+      newSegments.push(segment);
+    }
+
+    restoreCabinetAttachments(attachments, buildCabinetPortMap(newSegments));
+
+    for (i = 0; i < oldSegments.length; i++) {
+      model.remove(oldSegments[i]);
+    }
+
+    ensureCabinetFrames(originFrame, normalized, descriptors.length);
+    return newSegments;
   }
 
   // 背景图元是 root 的第一个子节点，采用相对定位，保证整体插入/拖动时能和 root 一起移动。
@@ -2434,7 +4495,7 @@ Draw.loadPlugin(function (ui) {
 
   // 根据根节点元数据动态生成左右两侧的连接点。
   function getElectricalConstraints(cell) {
-    var root = findElectricalRoot(cell);
+    var root = findPortHostRoot(cell);
 
     if (root == null) {
       return null;
@@ -2475,6 +4536,20 @@ Draw.loadPlugin(function (ui) {
     return null;
   }
 
+  function getPortMetaById(root, portId) {
+    var ports = parsePortLayout(getAttr(root, "portsJson"));
+    var target = trim(portId);
+    var i;
+
+    for (i = 0; i < ports.length; i++) {
+      if (trim(ports[i].id) == target) {
+        return ports[i];
+      }
+    }
+
+    return null;
+  }
+
   function mapPortDirectionToConstraint(direction) {
     switch (normalizePortDirection(direction)) {
       case "left":
@@ -2505,9 +4580,8 @@ Draw.loadPlugin(function (ui) {
   var oldGetAllConnectionConstraints = graph.getAllConnectionConstraints;
 
   // 用 mxConnectionConstraint 动态生成 draw.io 原生连接点。
-  // 只拦截电气图元，其他普通图元仍走 draw.io 原生连接点逻辑。
   graph.getAllConnectionConstraints = function (terminal, source) {
-    var root = findElectricalRoot(terminal != null ? terminal.cell : null);
+    var root = findPortHostRoot(terminal != null ? terminal.cell : null);
 
     if (root != null) {
       return getElectricalConstraints(root);
@@ -2526,26 +4600,43 @@ Draw.loadPlugin(function (ui) {
     source,
     constraint,
   ) {
+    if (edge == null) {
+      oldSetConnectionConstraint.apply(this, arguments);
+      return;
+    }
+
+    var previousStyle = model.getStyle(edge) || "";
+    var previousPortId = trim(
+      mxUtils.getValue(previousStyle, source ? "sourcePortId" : "targetPortId", ""),
+    );
+    var previousRoot = findPortHostRoot(model.getTerminal(edge, source));
     oldSetConnectionConstraint.apply(this, arguments);
 
-    var root = findElectricalRoot(terminal);
+    var root = findPortHostRoot(terminal);
 
     if (root == null || edge == null) {
       return;
     }
-
     var port = getPortMetaByConstraint(root, constraint);
-    var direction =
-      port != null ? mapPortDirectionToConstraint(port.direction) : "";
-    var key = source ? "sourcePortConstraint" : "targetPortConstraint";
-    var style = model.getStyle(edge) || "";
+    applyEdgePortConstraintMetadata(edge, root, source, constraint);
 
-    style = mxUtils.setStyle(
-      style,
-      key,
-      direction.length > 0 ? direction : null,
-    );
-    model.setStyle(edge, style);
+    if (
+      previousRoot != null &&
+      root != null &&
+      previousPortId.length > 0 &&
+      port != null &&
+      trim(port.id).length > 0 &&
+      (previousRoot != root || previousPortId != trim(port.id))
+    ) {
+      moveConnectedGroupToCabinetPort(
+        edge,
+        source,
+        previousRoot,
+        previousPortId,
+        root,
+        port,
+      );
+    }
   };
 
   var oldValidateConnection = graph.connectionHandler.validateConnection;
@@ -2558,8 +4649,8 @@ Draw.loadPlugin(function (ui) {
       return error;
     }
 
-    var sourceRoot = findElectricalRoot(source);
-    var targetRoot = findElectricalRoot(target);
+    var sourceRoot = findPortHostRoot(source);
+    var targetRoot = findPortHostRoot(target);
 
     if (sourceRoot == null && targetRoot == null) {
       return null;
@@ -2585,6 +4676,50 @@ Draw.loadPlugin(function (ui) {
 
   graph.connectionHandler.addListener(mxEvent.CONNECT, function () {
     setCanvasStatus("");
+  });
+
+  graph.addListener(mxEvent.CLICK, function (sender, evt) {
+    var cell = evt.getProperty("cell");
+    var mouseEvent = evt.getProperty("event");
+
+     if (state.portSwapSession != null) {
+      var portRoot = findPortHostRoot(cell);
+      var sessionLogicalId =
+        state.portSwapSession.cabinetRoot != null
+          ? trim(getAttr(state.portSwapSession.cabinetRoot, "logicalCabinetId"))
+          : "";
+
+      if (
+        isCabinetSegment(portRoot) &&
+        trim(getAttr(portRoot, "logicalCabinetId")) == sessionLogicalId
+      ) {
+        var nextPort = getNearestCabinetPortFromClick(portRoot, mouseEvent);
+
+        if (nextPort != null) {
+          commitPortSwap(state.portSwapSession, portRoot, nextPort);
+          evt.consume();
+          return;
+        }
+      }
+
+      if (cell == null) {
+        exitPortSwapMode();
+        evt.consume();
+        return;
+      }
+    }
+
+    if (isCabinetGap(cell)) {
+      setSelectedCabinetGap(
+        getAttr(cell, "logicalCabinetId"),
+        getAttr(cell, "gapIndex"),
+      );
+      openCabinetGapDialog(cell, mouseEvent);
+      evt.consume();
+    } else if (state.selectedCabinetGap != null) {
+      closeGapDialogWindow();
+      setSelectedCabinetGap(null, null);
+    }
   });
 
   function createLibraryEntry(spec) {
@@ -2850,7 +4985,7 @@ Draw.loadPlugin(function (ui) {
     });
   }
 
-  function buildInstanceSpec(instanceData, template) {
+  function buildInstanceSpec(instanceData, template, sizeOverride) {
     template =
       template != null
         ? normalizeSpec(cloneJson(template))
@@ -2880,6 +5015,22 @@ Draw.loadPlugin(function (ui) {
     spec.symbolId = template.symbolId;
     spec.instanceId = generateInstanceId();
     spec.title = trim(titleValue) || trim(nameValue) || template.title;
+    spec.size = {
+      width: Math.max(
+        20,
+        toInt(
+          sizeOverride != null ? sizeOverride.width : null,
+          template.size.width,
+        ),
+      ),
+      height: Math.max(
+        20,
+        toInt(
+          sizeOverride != null ? sizeOverride.height : null,
+          template.size.height,
+        ),
+      ),
+    };
     spec.device.name = trim(nameValue);
     spec.device.code = trim(codeValue);
     spec.device.power = trim(powerValue);
@@ -2935,7 +5086,7 @@ Draw.loadPlugin(function (ui) {
       var title = document.createElement("div");
       title.style.fontWeight = "bold";
       title.style.marginBottom = "8px";
-      title.innerText = "选择图元类型并输入实例 JSON";
+      title.innerText = "选择图元类型并填写实例属性";
       div.appendChild(title);
 
       var select = document.createElement("select");
@@ -2943,6 +5094,33 @@ Draw.loadPlugin(function (ui) {
       select.style.boxSizing = "border-box";
       select.style.marginBottom = "10px";
       div.appendChild(select);
+
+      var sizeRow = document.createElement("div");
+      sizeRow.style.display = "flex";
+      sizeRow.style.alignItems = "center";
+      sizeRow.style.gap = "8px";
+      sizeRow.style.marginBottom = "10px";
+      div.appendChild(sizeRow);
+
+      var widthLabel = document.createElement("div");
+      widthLabel.innerText = "宽";
+      sizeRow.appendChild(widthLabel);
+
+      var widthInput = document.createElement("input");
+      widthInput.setAttribute("type", "number");
+      widthInput.setAttribute("min", "20");
+      widthInput.style.width = "120px";
+      sizeRow.appendChild(widthInput);
+
+      var heightLabel = document.createElement("div");
+      heightLabel.innerText = "高";
+      sizeRow.appendChild(heightLabel);
+
+      var heightInput = document.createElement("input");
+      heightInput.setAttribute("type", "number");
+      heightInput.setAttribute("min", "20");
+      heightInput.style.width = "120px";
+      sizeRow.appendChild(heightInput);
 
       var formPanel = document.createElement("div");
       formPanel.style.flex = "1 1 auto";
@@ -2962,6 +5140,8 @@ Draw.loadPlugin(function (ui) {
 
       function syncTemplate(index) {
         currentTemplate = templates[index];
+        widthInput.value = String(currentTemplate.size.width);
+        heightInput.value = String(currentTemplate.size.height);
         formPanel.innerHTML = "";
         formControls = [];
 
@@ -3144,7 +5324,12 @@ Draw.loadPlugin(function (ui) {
             return;
           }
 
-          insertIntoGraph(buildInstanceSpec(payload, currentTemplate));
+          insertIntoGraph(
+            buildInstanceSpec(payload, currentTemplate, {
+              width: widthInput.value,
+              height: heightInput.value,
+            }),
+          );
           wnd.destroy();
         } catch (e) {
           showStatus(e.message || String(e), true);
@@ -3153,6 +5338,638 @@ Draw.loadPlugin(function (ui) {
       submitButton.style.marginTop = "0";
       buttons.appendChild(submitButton);
     });
+  }
+
+  function openEditInstanceDialog() {
+    var root = findElectricalRoot(graph.getSelectionCell());
+
+    if (root == null) {
+      showStatus("请先选择一个电气图元实例", true);
+      return;
+    }
+
+    if (state.instanceWindow != null) {
+      state.instanceWindow.destroy();
+      state.instanceWindow = null;
+    }
+
+    var editorState = {
+      spec: extractSpec(root),
+      selectedItem: null,
+      mode: "select",
+      nextId: 1,
+      preview: null,
+      statusNode: null,
+    };
+
+    editorState.spec.ports = normalizePortLayout(editorState.spec.ports);
+    editorState.spec.labels = normalizeLabels(editorState.spec.labels);
+
+    function scanNextId() {
+      var maxId = 0;
+
+      function scan(id) {
+        var match = /:(\d+)$/.exec(trim(id));
+
+        if (match != null) {
+          maxId = Math.max(maxId, parseInt(match[1], 10) || 0);
+        }
+      }
+
+      editorState.spec.ports.forEach(function (item) {
+        scan(item.id);
+      });
+      editorState.spec.labels.forEach(function (item) {
+        scan(item.id);
+      });
+      editorState.nextId = maxId + 1;
+    }
+
+    function nextEditorId(prefix) {
+      var id = prefix + ":" + editorState.nextId;
+      editorState.nextId += 1;
+      return id;
+    }
+
+    function setEditorSelection(type, id) {
+      editorState.selectedItem =
+        type != null && id != null ? { type: type, id: id } : null;
+    }
+
+    function updateEditorStatus(message, isError) {
+      if (editorState.statusNode != null) {
+        editorState.statusNode.innerText = message || "";
+        editorState.statusNode.style.color = isError ? "#b3261e" : "#2e7d32";
+      }
+    }
+
+    function getEditorLabelText(label) {
+      var binding = trim(label.binding);
+
+      if (binding.length > 0) {
+        var value = getValueByPath(editorState.spec.data || {}, binding);
+
+        if (value != null) {
+          return String(value);
+        }
+
+        if (trim(label.text).length > 0) {
+          return label.text;
+        }
+
+        return "{{" + binding + "}}";
+      }
+
+      return trim(label.text).length > 0 ? label.text : "文本";
+    }
+
+    function deleteEditorSelection() {
+      if (editorState.selectedItem == null) {
+        return;
+      }
+
+      if (editorState.selectedItem.type == "port") {
+        editorState.spec.ports = editorState.spec.ports.filter(function (item) {
+          return item.id != editorState.selectedItem.id;
+        });
+      } else if (editorState.selectedItem.type == "label") {
+        editorState.spec.labels = editorState.spec.labels.filter(function (item) {
+          return item.id != editorState.selectedItem.id;
+        });
+      }
+
+      setEditorSelection(null, null);
+      renderEditorPreview();
+    }
+
+    function renderEditorPreview() {
+      var preview = editorState.preview;
+      preview.innerHTML = "";
+
+      var toolbar = document.createElement("div");
+      toolbar.style.display = "flex";
+      toolbar.style.alignItems = "center";
+      toolbar.style.padding = "8px";
+      toolbar.style.gap = "8px";
+      toolbar.style.borderBottom = "1px solid #d0d7de";
+      preview.appendChild(toolbar);
+
+      function createModeButton(mode, label) {
+        var btn = createButton(label, function () {
+          editorState.mode = mode;
+          renderEditorPreview();
+        });
+        btn.style.marginTop = "0";
+        btn.style.marginRight = "0";
+        btn.style.padding = "4px 10px";
+        if (editorState.mode == mode) {
+          btn.style.borderColor = "#1a73e8";
+          btn.style.color = "#1a73e8";
+        }
+        return btn;
+      }
+
+      toolbar.appendChild(createModeButton("select", "选择"));
+      toolbar.appendChild(createModeButton("port", "添加连接点"));
+      toolbar.appendChild(createModeButton("label", "添加文本框"));
+
+      var deleteBtn = createButton("删除选中", function () {
+        deleteEditorSelection();
+      });
+      deleteBtn.style.marginTop = "0";
+      deleteBtn.style.marginRight = "0";
+      deleteBtn.style.padding = "4px 10px";
+      toolbar.appendChild(deleteBtn);
+
+      if (
+        editorState.selectedItem != null &&
+        editorState.selectedItem.type == "port"
+      ) {
+        var selectedPort = findPort(
+          { ports: editorState.spec.ports },
+          editorState.selectedItem.id,
+        );
+
+        if (selectedPort != null) {
+          var portEditor = document.createElement("div");
+          portEditor.style.display = "flex";
+          portEditor.style.alignItems = "center";
+          portEditor.style.gap = "8px";
+          portEditor.style.padding = "8px";
+          portEditor.style.borderBottom = "1px solid #d0d7de";
+          preview.appendChild(portEditor);
+
+          var portNameInput = document.createElement("input");
+          portNameInput.setAttribute("type", "text");
+          portNameInput.setAttribute("placeholder", "端子名称，如 L1 / N / PE");
+          portNameInput.value = selectedPort.name || "";
+          portNameInput.style.width = "180px";
+          portEditor.appendChild(portNameInput);
+
+          var markerSelect = document.createElement("select");
+          [
+            { value: "cross", label: "叉号" },
+            { value: "circle", label: "圆点" },
+            { value: "hidden", label: "隐藏" },
+          ].forEach(function (item) {
+            var option = document.createElement("option");
+            option.value = item.value;
+            option.innerText = item.label;
+            markerSelect.appendChild(option);
+          });
+          markerSelect.value = selectedPort.marker || "cross";
+          portEditor.appendChild(markerSelect);
+
+          var directionSelect = document.createElement("select");
+          [
+            { value: "any", label: "任意方向" },
+            { value: "left", label: "左侧接入" },
+            { value: "right", label: "右侧接入" },
+            { value: "up", label: "上侧接入" },
+            { value: "down", label: "下侧接入" },
+          ].forEach(function (item) {
+            var option = document.createElement("option");
+            option.value = item.value;
+            option.innerText = item.label;
+            directionSelect.appendChild(option);
+          });
+          directionSelect.value = selectedPort.direction || "any";
+          portEditor.appendChild(directionSelect);
+
+          var ioSelect = document.createElement("select");
+          [
+            { value: "both", label: "可接入可接出" },
+            { value: "in", label: "仅接入" },
+            { value: "out", label: "仅接出" },
+          ].forEach(function (item) {
+            var option = document.createElement("option");
+            option.value = item.value;
+            option.innerText = item.label;
+            ioSelect.appendChild(option);
+          });
+          ioSelect.value = selectedPort.ioMode || "both";
+          portEditor.appendChild(ioSelect);
+
+          mxEvent.addListener(portNameInput, "input", function () {
+            selectedPort.name = trim(portNameInput.value);
+          });
+          mxEvent.addListener(markerSelect, "change", function () {
+            selectedPort.marker = normalizePortMarker(markerSelect.value);
+            renderEditorPreview();
+          });
+          mxEvent.addListener(directionSelect, "change", function () {
+            selectedPort.direction = normalizePortDirection(
+              directionSelect.value,
+            );
+          });
+          mxEvent.addListener(ioSelect, "change", function () {
+            selectedPort.ioMode = normalizePortIoMode(ioSelect.value);
+          });
+        }
+      } else if (
+        editorState.selectedItem != null &&
+        editorState.selectedItem.type == "label"
+      ) {
+        var selectedLabel = findLabel(
+          { labels: editorState.spec.labels },
+          editorState.selectedItem.id,
+        );
+
+        if (selectedLabel != null) {
+          var labelEditor = document.createElement("div");
+          labelEditor.style.display = "flex";
+          labelEditor.style.alignItems = "center";
+          labelEditor.style.gap = "8px";
+          labelEditor.style.padding = "8px";
+          labelEditor.style.borderBottom = "1px solid #d0d7de";
+          preview.appendChild(labelEditor);
+
+          var textInput = document.createElement("input");
+          textInput.setAttribute("type", "text");
+          textInput.setAttribute("placeholder", "文本内容");
+          textInput.value = selectedLabel.text || "";
+          textInput.style.width = "180px";
+          labelEditor.appendChild(textInput);
+
+          var bindingInput = document.createElement("input");
+          bindingInput.setAttribute("type", "text");
+          bindingInput.setAttribute("placeholder", "可选：绑定属性路径");
+          bindingInput.value = selectedLabel.binding || "";
+          bindingInput.style.width = "180px";
+          labelEditor.appendChild(bindingInput);
+
+          var alignSelect = document.createElement("select");
+          [
+            { value: "left", label: "左对齐" },
+            { value: "center", label: "居中" },
+            { value: "right", label: "右对齐" },
+          ].forEach(function (item) {
+            var option = document.createElement("option");
+            option.value = item.value;
+            option.innerText = item.label;
+            alignSelect.appendChild(option);
+          });
+          alignSelect.value = selectedLabel.align || "center";
+          labelEditor.appendChild(alignSelect);
+
+          mxEvent.addListener(textInput, "change", function () {
+            selectedLabel.text = trim(textInput.value);
+            renderEditorPreview();
+          });
+          mxEvent.addListener(bindingInput, "change", function () {
+            selectedLabel.binding = trim(bindingInput.value);
+            renderEditorPreview();
+          });
+          mxEvent.addListener(alignSelect, "change", function () {
+            selectedLabel.align = normalizeLabelAlign(alignSelect.value);
+            renderEditorPreview();
+          });
+        }
+      }
+
+      var surface = document.createElement("div");
+      surface.style.position = "relative";
+      surface.style.height = "300px";
+      surface.style.overflow = "hidden";
+      surface.style.cursor =
+        editorState.mode == "port" || editorState.mode == "label"
+          ? "crosshair"
+          : "default";
+      surface.style.background = Editor.isDarkMode()
+        ? "linear-gradient(180deg, #111111, #171717)"
+        : "linear-gradient(180deg, #fafafa, #f3f4f6)";
+      preview.appendChild(surface);
+
+      var metrics = getPreviewMetrics(editorState.spec, surface);
+      var img = document.createElement("img");
+      img.setAttribute("alt", editorState.spec.title || "图元实例");
+      img.setAttribute("src", toSvgDataUri(editorState.spec));
+      img.style.position = "absolute";
+      img.style.left = metrics.left + "px";
+      img.style.top = metrics.top + "px";
+      img.style.width = metrics.width + "px";
+      img.style.height = metrics.height + "px";
+      img.style.objectFit = "fill";
+      img.style.pointerEvents = "none";
+      surface.appendChild(img);
+
+      function startDrag(type, id, target) {
+        return function (evt) {
+          evt.preventDefault();
+          evt.stopPropagation();
+          setEditorSelection(type, id);
+
+          function moveHandler(moveEvt) {
+            var point = getRelativePoint(
+              moveEvt,
+              surface,
+              metrics,
+              type == "port",
+            );
+
+            if (type == "port") {
+              var port = findPort({ ports: editorState.spec.ports }, id);
+
+              if (port != null) {
+                port.x = point.x;
+                port.y = point.y;
+                target.style.left =
+                  metrics.left + port.x * metrics.width - 7 + "px";
+                target.style.top =
+                  metrics.top + port.y * metrics.height - 7 + "px";
+              }
+            } else {
+              var label = findLabel({ labels: editorState.spec.labels }, id);
+
+              if (label != null) {
+                label.x = point.x;
+                label.y = point.y;
+                target.style.left =
+                  metrics.left +
+                  label.x * metrics.width -
+                  label.width / 2 +
+                  "px";
+                target.style.top =
+                  metrics.top +
+                  label.y * metrics.height -
+                  label.height / 2 +
+                  "px";
+              }
+            }
+          }
+
+          function upHandler() {
+            document.removeEventListener("mousemove", moveHandler);
+            document.removeEventListener("mouseup", upHandler);
+
+            if (type == "port") {
+              var finalPort = findPort({ ports: editorState.spec.ports }, id);
+
+              if (finalPort != null) {
+                var snapped = snapPortPointToEdge(
+                  { x: finalPort.x, y: finalPort.y },
+                  metrics,
+                );
+                finalPort.x = snapped.x;
+                finalPort.y = snapped.y;
+              }
+            }
+
+            renderEditorPreview();
+          }
+
+          document.addEventListener("mousemove", moveHandler);
+          document.addEventListener("mouseup", upHandler);
+        };
+      }
+
+      editorState.spec.ports.forEach(function (point, index) {
+        var handle = document.createElement("div");
+        handle.style.position = "absolute";
+        handle.style.left = metrics.left + point.x * metrics.width - 7 + "px";
+        handle.style.top = metrics.top + point.y * metrics.height - 7 + "px";
+        handle.style.width = "14px";
+        handle.style.height = "14px";
+        handle.style.lineHeight = "14px";
+        handle.style.textAlign = "center";
+        handle.style.color = "#1a73e8";
+        handle.style.fontSize = point.marker == "circle" ? "12px" : "16px";
+        handle.style.fontWeight = "700";
+        handle.style.cursor = "move";
+        handle.style.userSelect = "none";
+        handle.style.zIndex = "2";
+        handle.style.opacity = point.marker == "hidden" ? "0.35" : "1";
+        handle.innerText =
+          point.marker == "circle"
+            ? "●"
+            : point.marker == "hidden"
+              ? ""
+              : "×";
+        handle.title = point.name || point.id || "连接点" + (index + 1);
+        if (
+          editorState.selectedItem != null &&
+          editorState.selectedItem.type == "port" &&
+          editorState.selectedItem.id == point.id
+        ) {
+          handle.style.textShadow = "0 0 6px rgba(26,115,232,0.45)";
+        }
+        mxEvent.addListener(
+          handle,
+          "mousedown",
+          startDrag("port", point.id, handle),
+        );
+        mxEvent.addListener(handle, "click", function (evt) {
+          evt.stopPropagation();
+          setEditorSelection("port", point.id);
+          renderEditorPreview();
+        });
+        surface.appendChild(handle);
+      });
+
+      editorState.spec.labels.forEach(function (label) {
+        var box = document.createElement("div");
+        box.style.position = "absolute";
+        box.style.left =
+          metrics.left + label.x * metrics.width - label.width / 2 + "px";
+        box.style.top =
+          metrics.top + label.y * metrics.height - label.height / 2 + "px";
+        box.style.width = label.width + "px";
+        box.style.minHeight = label.height + "px";
+        box.style.padding = "2px 6px";
+        box.style.boxSizing = "border-box";
+        box.style.background = Editor.isDarkMode() ? "#1f1f1f" : "#ffffff";
+        box.style.border =
+          editorState.selectedItem != null &&
+          editorState.selectedItem.type == "label" &&
+          editorState.selectedItem.id == label.id
+            ? "2px solid #1a73e8"
+            : "1px dashed #9aa4b2";
+        box.style.borderRadius = "4px";
+        box.style.fontSize = "12px";
+        box.style.lineHeight = "20px";
+        box.style.textAlign = label.align;
+        box.style.cursor = "move";
+        box.style.userSelect = "none";
+        box.style.zIndex = "2";
+        box.innerText = getEditorLabelText(label);
+        mxEvent.addListener(
+          box,
+          "mousedown",
+          startDrag("label", label.id, box),
+        );
+        mxEvent.addListener(box, "click", function (evt) {
+          evt.stopPropagation();
+          setEditorSelection("label", label.id);
+          renderEditorPreview();
+        });
+        surface.appendChild(box);
+      });
+
+      mxEvent.addListener(surface, "click", function (evt) {
+        if (evt.target !== surface) {
+          return;
+        }
+
+        var point = getRelativePoint(
+          evt,
+          surface,
+          metrics,
+          editorState.mode == "port",
+        );
+
+        if (editorState.mode == "port") {
+          point = snapPortPointToEdge(point, metrics);
+          var portId = nextEditorId("port");
+          editorState.spec.ports.push(
+            normalizePortPoint(
+              {
+                id: portId,
+                x: point.x,
+                y: point.y,
+                name: "",
+                marker: "cross",
+                direction: "any",
+                ioMode: "both",
+              },
+              portId,
+              point.x,
+              point.y,
+            ),
+          );
+          setEditorSelection(
+            "port",
+            editorState.spec.ports[editorState.spec.ports.length - 1].id,
+          );
+        } else if (editorState.mode == "label") {
+          var labelId = nextEditorId("label");
+          editorState.spec.labels.push(
+            normalizeLabelItem(
+              {
+                id: labelId,
+                text: "文本",
+                binding: "",
+                x: point.x,
+                y: point.y,
+                width: 120,
+                height: 26,
+                align: "center",
+              },
+              labelId,
+              "文本",
+            ),
+          );
+          setEditorSelection(
+            "label",
+            editorState.spec.labels[editorState.spec.labels.length - 1].id,
+          );
+        } else {
+          setEditorSelection(null, null);
+        }
+
+        renderEditorPreview();
+      });
+    }
+
+    scanNextId();
+
+    var container = document.createElement("div");
+    container.style.width = "100%";
+    container.style.height = "100%";
+    container.style.boxSizing = "border-box";
+    container.style.padding = "12px";
+    container.style.overflow = "auto";
+    container.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
+    container.style.display = "flex";
+    container.style.flexDirection = "column";
+
+    var title = document.createElement("div");
+    title.style.fontWeight = "bold";
+    title.style.marginBottom = "8px";
+    title.innerText = "编辑图元实例";
+    container.appendChild(title);
+
+    var hint = document.createElement("div");
+    hint.style.marginBottom = "10px";
+    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+    hint.style.fontSize = "12px";
+    hint.innerText =
+      "这里修改的是当前画布上的这个图元实例，不会影响图元类型模板。";
+    container.appendChild(hint);
+
+    editorState.preview = document.createElement("div");
+    editorState.preview.style.flex = "1 1 auto";
+    editorState.preview.style.border = "1px solid #d0d7de";
+    editorState.preview.style.borderRadius = "8px";
+    editorState.preview.style.overflow = "hidden";
+    container.appendChild(editorState.preview);
+
+    var buttons = document.createElement("div");
+    buttons.style.marginTop = "10px";
+    buttons.style.display = "flex";
+    buttons.style.alignItems = "center";
+    buttons.style.gap = "8px";
+    container.appendChild(buttons);
+
+    var applyButton = createButton("应用到图元", function () {
+      if (root.parent == null) {
+        updateEditorStatus("当前图元已不存在，无法应用修改", true);
+        return;
+      }
+
+      state.updatingModel = true;
+      model.beginUpdate();
+
+      try {
+        syncRoot(root, editorState.spec, editorState.spec.ports);
+        graph.setSelectionCell(root);
+      } catch (e) {
+        updateEditorStatus(e.message || String(e), true);
+        return;
+      } finally {
+        model.endUpdate();
+        state.updatingModel = false;
+      }
+
+      showStatus("已更新图元实例", false);
+      updateEditorStatus("已更新图元实例", false);
+      if (state.instanceWindow != null) {
+        state.instanceWindow.destroy();
+      }
+    });
+    applyButton.style.marginTop = "0";
+    applyButton.style.marginRight = "0";
+    buttons.appendChild(applyButton);
+
+    var closeButton = createButton("关闭", function () {
+      if (state.instanceWindow != null) {
+        state.instanceWindow.destroy();
+      }
+    });
+    closeButton.style.marginTop = "0";
+    closeButton.style.marginRight = "0";
+    buttons.appendChild(closeButton);
+
+    editorState.statusNode = document.createElement("div");
+    editorState.statusNode.style.marginLeft = "8px";
+    editorState.statusNode.style.fontSize = "12px";
+    editorState.statusNode.style.minHeight = "18px";
+    buttons.appendChild(editorState.statusNode);
+
+    renderEditorPreview();
+
+    var wnd = new mxWindow("编辑图元实例", container, 220, 120, 680, 520, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(true);
+    wnd.setScrollable(true);
+    wnd.addListener(mxEvent.DESTROY, function () {
+      if (state.instanceWindow == wnd) {
+        state.instanceWindow = null;
+      }
+    });
+    wnd.setVisible(true);
+    state.instanceWindow = wnd;
   }
 
   // 单独展示“已定义图元”的浏览窗口，避免用户只能去左侧图库里找模板。
@@ -3415,19 +6232,444 @@ Draw.loadPlugin(function (ui) {
     });
   }
 
+  function openInsertFrameDialog() {
+    var defaultConfig = normalizeFrameConfig(state.frameConfig || {});
+    var selectedFrame = findDrawingFrame(graph.getSelectionCell());
+    var existingFrames = getAllDrawingFrames();
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.gap = "10px";
+    div.style.boxSizing = "border-box";
+    div.style.width = "100%";
+    div.style.height = "100%";
+
+    var row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "8px";
+    div.appendChild(row);
+
+    var widthLabel = document.createElement("div");
+    widthLabel.innerText = "宽";
+    row.appendChild(widthLabel);
+
+    var widthInput = document.createElement("input");
+    widthInput.setAttribute("type", "number");
+    widthInput.setAttribute("min", "320");
+    widthInput.style.width = "140px";
+    widthInput.value = String(defaultConfig.width);
+    row.appendChild(widthInput);
+
+    var heightLabel = document.createElement("div");
+    heightLabel.innerText = "高";
+    row.appendChild(heightLabel);
+
+    var heightInput = document.createElement("input");
+    heightInput.setAttribute("type", "number");
+    heightInput.setAttribute("min", "240");
+    heightInput.style.width = "140px";
+    heightInput.value = String(defaultConfig.height);
+    row.appendChild(heightInput);
+
+    var hint = document.createElement("div");
+    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+    hint.style.fontSize = "12px";
+    hint.innerText =
+      selectedFrame != null
+        ? "已选中图框组：新图框会续接到当前组右侧；未选中图框时会在现有组下方新建一组。"
+        : existingFrames.length > 0
+          ? "当前未选中图框：新图框会在现有图框组下方新建一组。选中某个图框后再插入，可续接到该组右侧。"
+          : "首次设置的尺寸会作为后续自动分页图框的默认尺寸。";
+    div.appendChild(hint);
+
+    var buttons = document.createElement("div");
+    div.appendChild(buttons);
+
+    var wnd = new mxWindow("插入图框", div, 180, 140, 420, 170, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(false);
+    wnd.setScrollable(false);
+
+    var submitButton = createButton("插入图框", function () {
+      var config = normalizeFrameConfig({
+        width: widthInput.value,
+        height: heightInput.value,
+      });
+      var groupId =
+        selectedFrame != null ? getFrameGroupId(selectedFrame) : generateFrameGroupId();
+      var nextPageNumber =
+        selectedFrame != null ? getMaxFramePageNumberInGroup(groupId) + 1 : 1;
+      var frame = createDrawingFrameCell(config, nextPageNumber, {
+        groupId: groupId,
+      });
+      state.frameConfig = cloneJson(config);
+
+      if (selectedFrame != null) {
+        var anchorFrame = getRightmostFrameInGroup(groupId) || selectedFrame;
+        var anchorGeometry = model.getGeometry(anchorFrame);
+        frame.geometry = frame.geometry.clone();
+        frame.geometry.x =
+          anchorGeometry.x + anchorGeometry.width + FRAME_HORIZONTAL_GAP;
+        frame.geometry.y = anchorGeometry.y;
+        addTopLevelCell(frame);
+        graph.setSelectionCell(frame);
+      } else if (existingFrames.length > 0) {
+        var leftmostFrame = getLeftmostFrame();
+        var bottommostFrame = getBottommostFrame();
+        var leftGeometry = leftmostFrame != null ? model.getGeometry(leftmostFrame) : null;
+        var bottomGeometry =
+          bottommostFrame != null ? model.getGeometry(bottommostFrame) : null;
+        frame.geometry = frame.geometry.clone();
+        frame.geometry.x = leftGeometry != null ? leftGeometry.x : 0;
+        frame.geometry.y =
+          bottomGeometry != null
+            ? bottomGeometry.y + bottomGeometry.height + FRAME_VERTICAL_GAP
+            : 0;
+        addTopLevelCell(frame);
+        graph.setSelectionCell(frame);
+      } else {
+        var point = graph.getFreeInsertPoint();
+        graph.setSelectionCells(graph.importCells([frame], point.x, point.y));
+      }
+
+      graph.scrollCellToVisible(graph.getSelectionCell());
+      showStatus("已插入图框", false);
+      setCanvasStatus("已插入图框");
+      wnd.destroy();
+    });
+    submitButton.style.marginTop = "0";
+    buttons.appendChild(submitButton);
+
+    wnd.setVisible(true);
+  }
+
+  function openInsertCabinetDialog() {
+    var frame = getActiveFrame(true);
+
+    if (frame == null) {
+      return;
+    }
+
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.gap = "10px";
+    div.style.boxSizing = "border-box";
+    div.style.width = "100%";
+    div.style.height = "100%";
+
+    var nameRow = document.createElement("div");
+    nameRow.style.display = "grid";
+    nameRow.style.gridTemplateColumns = "90px 1fr";
+    nameRow.style.alignItems = "center";
+    nameRow.style.gap = "8px";
+    div.appendChild(nameRow);
+
+    var nameLabel = document.createElement("div");
+    nameLabel.innerText = "名称";
+    nameRow.appendChild(nameLabel);
+
+    var nameInput = document.createElement("input");
+    nameInput.setAttribute("type", "text");
+    nameInput.value = "配电柜";
+    nameRow.appendChild(nameInput);
+
+    var configRow = document.createElement("div");
+    configRow.style.display = "grid";
+    configRow.style.gridTemplateColumns = "90px 120px 90px 120px";
+    configRow.style.alignItems = "center";
+    configRow.style.gap = "8px";
+    div.appendChild(configRow);
+
+    var widthLabel = document.createElement("div");
+    widthLabel.innerText = "柜宽";
+    configRow.appendChild(widthLabel);
+
+    var widthInput = document.createElement("input");
+    widthInput.setAttribute("type", "number");
+    widthInput.setAttribute("min", "30");
+    widthInput.value = String(CABINET_DEFAULT_WIDTH);
+    configRow.appendChild(widthInput);
+
+    var countLabel = document.createElement("div");
+    countLabel.innerText = "右侧端子数";
+    configRow.appendChild(countLabel);
+
+    var countInput = document.createElement("input");
+    countInput.setAttribute("type", "number");
+    countInput.setAttribute("min", "2");
+    countInput.value = String(CABINET_DEFAULT_PORT_COUNT);
+    configRow.appendChild(countInput);
+
+    var hint = document.createElement("div");
+    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+    hint.style.fontSize = "12px";
+    hint.innerText =
+      "仅生成专用配电柜主体和右侧连接点，间距后续通过右侧热点编辑。";
+    div.appendChild(hint);
+
+    var buttons = document.createElement("div");
+    div.appendChild(buttons);
+
+    var wnd = new mxWindow("插入配电柜", div, 200, 160, 460, 190, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(false);
+    wnd.setScrollable(false);
+
+    var submitButton = createButton("插入配电柜", function () {
+      var cabinetModel = normalizeCabinetModel({
+        logicalCabinetId: generateLogicalCabinetId(),
+        originFrameId: trim(getAttr(frame, "frameId")),
+        title: trim(nameInput.value) || "配电柜",
+        cabinetWidth: widthInput.value,
+        portCount: countInput.value,
+      });
+
+      state.updatingModel = true;
+      model.beginUpdate();
+
+      try {
+        relayoutCabinetByModel(cabinetModel);
+      } catch (e) {
+        showStatus(e.message || String(e), true);
+        setCanvasStatus(e.message || String(e));
+        return;
+      } finally {
+        model.endUpdate();
+        state.updatingModel = false;
+      }
+
+      var segments = findCabinetSegments(cabinetModel.logicalCabinetId);
+
+      if (segments.length > 0) {
+        graph.setSelectionCell(segments[0]);
+        graph.scrollCellToVisible(segments[0]);
+      }
+
+      showStatus("已插入配电柜", false);
+      setCanvasStatus("已插入配电柜");
+      wnd.destroy();
+    });
+    submitButton.style.marginTop = "0";
+    buttons.appendChild(submitButton);
+
+    wnd.setVisible(true);
+  }
+
+  function getGapDialogPosition(nativeEvent, width, height) {
+    var fallback = { x: 220, y: 180 };
+
+    if (nativeEvent == null) {
+      return fallback;
+    }
+
+    var offsetX = 36;
+    var offsetY = -24;
+    var rawEvent =
+      typeof nativeEvent.getEvent == "function"
+        ? nativeEvent.getEvent()
+        : nativeEvent;
+    var pageX =
+      mxEvent.getClientX(rawEvent) +
+      (window.pageXOffset || document.documentElement.scrollLeft || 0);
+    var pageY =
+      mxEvent.getClientY(rawEvent) +
+      (window.pageYOffset || document.documentElement.scrollTop || 0);
+    var viewportWidth =
+      window.innerWidth || document.documentElement.clientWidth || 1280;
+    var viewportHeight =
+      window.innerHeight || document.documentElement.clientHeight || 720;
+    var minX =
+      (window.pageXOffset || document.documentElement.scrollLeft || 0) + 12;
+    var minY =
+      (window.pageYOffset || document.documentElement.scrollTop || 0) + 12;
+    var maxX =
+      (window.pageXOffset || document.documentElement.scrollLeft || 0) +
+      viewportWidth -
+      width -
+      12;
+    var maxY =
+      (window.pageYOffset || document.documentElement.scrollTop || 0) +
+      viewportHeight -
+      height -
+      12;
+    var x = pageX + offsetX;
+    var y = pageY + offsetY;
+
+    if (x > maxX) {
+      x = pageX - width - offsetX;
+    }
+
+    if (y > maxY) {
+      y = maxY;
+    }
+
+    return {
+      x: clamp(x, minX, Math.max(minX, maxX)),
+      y: clamp(y, minY, Math.max(minY, maxY)),
+    };
+  }
+
+  function openCabinetGapDialog(gapCell, nativeEvent) {
+    var segment = findCabinetSegment(gapCell);
+    var gapIndex = toInt(getAttr(gapCell, "gapIndex"), -1);
+
+    if (segment == null || gapIndex < 0) {
+      return;
+    }
+
+    closeGapDialogWindow();
+
+    var cabinetModel = extractCabinetModel(segment);
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.gap = "10px";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.boxSizing = "border-box";
+
+    var label = document.createElement("div");
+    label.innerText = "输入 0 到 1 之间的比例值";
+    div.appendChild(label);
+
+    var input = document.createElement("input");
+    input.setAttribute("type", "number");
+    input.setAttribute("min", "0");
+    input.setAttribute("max", "1");
+    input.setAttribute("step", "0.01");
+    input.value = String(cabinetModel.gapRatios[gapIndex] || 0);
+    div.appendChild(input);
+
+    var error = document.createElement("div");
+    error.style.minHeight = "18px";
+    error.style.fontSize = "12px";
+    error.style.color = "#b3261e";
+    div.appendChild(error);
+
+    var buttons = document.createElement("div");
+    div.appendChild(buttons);
+
+    var dialogWidth = 320;
+    var dialogHeight = 170;
+    var dialogPosition = getGapDialogPosition(
+      nativeEvent,
+      dialogWidth,
+      dialogHeight,
+    );
+    var wnd = new mxWindow(
+      "设置端子间距",
+      div,
+      dialogPosition.x,
+      dialogPosition.y,
+      dialogWidth,
+      dialogHeight,
+      true,
+      true,
+    );
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(false);
+    wnd.setScrollable(false);
+    wnd.addListener(mxEvent.DESTROY, function () {
+      if (state.gapDialogWindow == wnd) {
+        state.gapDialogWindow = null;
+      }
+    });
+    state.gapDialogWindow = wnd;
+
+    var saveButton = createButton("保存", function () {
+      var ratio = toFloat(input.value, NaN);
+
+      if (isNaN(ratio) || ratio < 0 || ratio > 1) {
+        error.innerText = "请输入 0 到 1 之间的数值";
+        return;
+      }
+
+      cabinetModel.gapRatios[gapIndex] = ratio;
+      state.updatingModel = true;
+      model.beginUpdate();
+
+      try {
+        relayoutCabinetByModel(cabinetModel);
+      } catch (e) {
+        error.innerText = e.message || String(e);
+        return;
+      } finally {
+        model.endUpdate();
+        state.updatingModel = false;
+      }
+
+      showStatus("已更新端子间距", false);
+      setCanvasStatus("已更新端子间距");
+      wnd.destroy();
+    });
+    saveButton.style.marginTop = "0";
+    buttons.appendChild(saveButton);
+
+    wnd.setVisible(true);
+  }
+
+  function insertCellIntoFrame(cell, frame) {
+    var insertPoint = getFrameChildInsertPoint(
+      frame,
+      cell.geometry != null ? cell.geometry.width : 0,
+      cell.geometry != null ? cell.geometry.height : 0,
+    );
+    graph.setSelectionCells(
+      graph.importCells([cell], insertPoint.x, insertPoint.y, frame),
+    );
+    graph.scrollCellToVisible(graph.getSelectionCell());
+  }
+
   // 插入画布时只需要导入 root，子节点会随 root 一起进入图模型。
   function insertIntoGraph(spec) {
     var root = buildSymbolCell(spec);
-    var pt = graph.getFreeInsertPoint();
-    graph.setSelectionCells(graph.importCells([root], pt.x, pt.y));
+    var frame = getActiveFrame(false);
+
+    if (frame != null) {
+      insertCellIntoFrame(root, frame);
+    } else {
+      var pt = graph.getFreeInsertPoint();
+      graph.setSelectionCells(graph.importCells([root], pt.x, pt.y));
+    }
+
     graph.scrollCellToVisible(graph.getSelectionCell());
     showStatus("已插入图元", false);
+    setCanvasStatus("已插入图元");
   }
 
   // 菜单里的“刷新电气图元”动作
   // 手工 Edit Data 后，让图形外观重新和元数据对齐
   function refreshSelection() {
     var root = findElectricalRoot(graph.getSelectionCell());
+    var cabinet = findCabinetSegment(graph.getSelectionCell());
+
+    if (cabinet != null) {
+      try {
+        state.updatingModel = true;
+        model.beginUpdate();
+        relayoutCabinetByModel(extractCabinetModel(cabinet));
+        showStatus("配电柜已刷新", false);
+        setCanvasStatus("配电柜已刷新");
+      } catch (e) {
+        showStatus(e.message || String(e), true);
+        setCanvasStatus(e.message || String(e));
+      } finally {
+        model.endUpdate();
+        state.updatingModel = false;
+      }
+      return;
+    }
 
     if (root == null) {
       showStatus("请先选择一个电气图元", true);
@@ -3684,6 +6926,11 @@ Draw.loadPlugin(function (ui) {
     addTopButton("electricalSymbols", "electricalSymbols");
     addTopButton("electricalBrowse", "electricalBrowse");
     addTopButton("electricalCreate", "electricalCreate");
+    addTopButton("electricalEditInstance", "electricalEditInstance");
+    addTopButton("electricalInsertFrame", "electricalInsertFrame");
+    addTopButton("electricalInsertCabinet", "electricalInsertCabinet");
+    addTopButton("electricalClearScreen", "electricalClearScreen");
+    addTopButton("electricalReassignPort", "electricalReassignPort");
     addTopButton("electricalExportSvg", "electricalExportSvg");
 
     ui.menubarContainer.appendChild(bar);
@@ -3818,6 +7065,37 @@ Draw.loadPlugin(function (ui) {
     state.templateNameInput.style.boxSizing = "border-box";
     state.templateNameInput.value = "电气图元";
     nameRow.appendChild(state.templateNameInput);
+
+    var sizeRow = document.createElement("div");
+    sizeRow.style.display = "flex";
+    sizeRow.style.alignItems = "center";
+    sizeRow.style.gap = "8px";
+    sizeRow.style.marginBottom = "10px";
+    container.appendChild(sizeRow);
+
+    var sizeLabel = document.createElement("div");
+    sizeLabel.style.width = "90px";
+    sizeLabel.style.flex = "0 0 90px";
+    sizeLabel.innerText = "默认宽高";
+    sizeRow.appendChild(sizeLabel);
+
+    state.templateWidthInput = document.createElement("input");
+    state.templateWidthInput.setAttribute("type", "number");
+    state.templateWidthInput.setAttribute("min", "20");
+    state.templateWidthInput.style.width = "120px";
+    state.templateWidthInput.value = "120";
+    sizeRow.appendChild(state.templateWidthInput);
+
+    var sizeSplit = document.createElement("div");
+    sizeSplit.innerText = "x";
+    sizeRow.appendChild(sizeSplit);
+
+    state.templateHeightInput = document.createElement("input");
+    state.templateHeightInput.setAttribute("type", "number");
+    state.templateHeightInput.setAttribute("min", "20");
+    state.templateHeightInput.style.width = "120px";
+    state.templateHeightInput.value = "80";
+    sizeRow.appendChild(state.templateHeightInput);
 
     var topRow = document.createElement("div");
     topRow.style.display = "flex";
@@ -4287,6 +7565,12 @@ Draw.loadPlugin(function (ui) {
         spec.size != null
           ? cloneJson(spec.size)
           : extractSvgSize(spec.svg || "");
+      if (state.templateWidthInput != null) {
+        state.templateWidthInput.value = String(spec.size.width);
+      }
+      if (state.templateHeightInput != null) {
+        state.templateHeightInput.value = String(spec.size.height);
+      }
       primaryName.innerText =
         trim(state.uploadedPrimarySvg).length > 0
           ? state.uploadedPrimarySvgName
@@ -4345,6 +7629,30 @@ Draw.loadPlugin(function (ui) {
         state.uploadedPrimarySvgSize = isObject(draft.uploadedPrimarySvgSize)
           ? cloneJson(draft.uploadedPrimarySvgSize)
           : null;
+        if (state.templateWidthInput != null) {
+          state.templateWidthInput.value =
+            trim(draft.templateWidth).length > 0
+              ? trim(draft.templateWidth)
+              : String(
+                  draft.currentSpec != null && draft.currentSpec.size != null
+                    ? draft.currentSpec.size.width
+                    : state.uploadedPrimarySvgSize != null
+                      ? state.uploadedPrimarySvgSize.width
+                      : 120,
+                );
+        }
+        if (state.templateHeightInput != null) {
+          state.templateHeightInput.value =
+            trim(draft.templateHeight).length > 0
+              ? trim(draft.templateHeight)
+              : String(
+                  draft.currentSpec != null && draft.currentSpec.size != null
+                    ? draft.currentSpec.size.height
+                    : state.uploadedPrimarySvgSize != null
+                      ? state.uploadedPrimarySvgSize.height
+                      : 80,
+                );
+        }
         primaryName.innerText =
           trim(state.uploadedPrimarySvg).length > 0
             ? state.uploadedPrimarySvgName || "已加载默认SVG"
@@ -4505,6 +7813,12 @@ Draw.loadPlugin(function (ui) {
       function () {
         state.previewVariantId = "";
         updateSelectedItem(null, null);
+        if (state.templateWidthInput != null && state.uploadedPrimarySvgSize != null) {
+          state.templateWidthInput.value = String(state.uploadedPrimarySvgSize.width);
+        }
+        if (state.templateHeightInput != null && state.uploadedPrimarySvgSize != null) {
+          state.templateHeightInput.value = String(state.uploadedPrimarySvgSize.height);
+        }
       },
     );
 
@@ -4522,6 +7836,28 @@ Draw.loadPlugin(function (ui) {
     });
     mxEvent.addListener(state.templateNameInput, "blur", function () {
       updateTemplateNameState(true);
+    });
+    mxEvent.addListener(state.templateWidthInput, "change", function () {
+      if (trim(state.uploadedPrimarySvg).length > 0) {
+        try {
+          parseEditorSpec();
+        } catch (e) {
+          // keep status feedback only
+        }
+      } else {
+        scheduleEditorDraftSave();
+      }
+    });
+    mxEvent.addListener(state.templateHeightInput, "change", function () {
+      if (trim(state.uploadedPrimarySvg).length > 0) {
+        try {
+          parseEditorSpec();
+        } catch (e) {
+          // keep status feedback only
+        }
+      } else {
+        scheduleEditorDraftSave();
+      }
     });
     mxEvent.addListener(state.variantFieldInput, "change", function () {
       var currentValue = trim(state.variantFieldInput.value);
@@ -4601,6 +7937,8 @@ Draw.loadPlugin(function (ui) {
       state.status = null;
       state.symbolIdInput = null;
       state.templateNameInput = null;
+      state.templateWidthInput = null;
+      state.templateHeightInput = null;
       state.variantFieldInput = null;
       state.schemaFields = [];
       state.preview = null;
@@ -4651,6 +7989,15 @@ Draw.loadPlugin(function (ui) {
     }
   }
 
+  var graphIsCellDeletable = graph.isCellDeletable;
+  graph.isCellDeletable = function (cell) {
+    if (isDrawingFrame(cell)) {
+      return !!state.allowProtectedDelete;
+    }
+
+    return graphIsCellDeletable.apply(this, arguments);
+  };
+
   ui.actions.addAction("electricalSymbols", function () {
     toggleWindow();
   });
@@ -4663,6 +8010,22 @@ Draw.loadPlugin(function (ui) {
     openCreateFromLibraryDialog();
   });
 
+  ui.actions.addAction("electricalEditInstance", function () {
+    openEditInstanceDialog();
+  });
+
+  ui.actions.addAction("electricalInsertFrame", function () {
+    openInsertFrameDialog();
+  });
+
+  ui.actions.addAction("electricalInsertCabinet", function () {
+    openInsertCabinetDialog();
+  });
+
+  ui.actions.addAction("electricalReassignPort", function () {
+    enterPortSwapMode();
+  });
+
   ui.actions.addAction("electricalRefresh", function () {
     refreshSelection();
   });
@@ -4671,6 +8034,15 @@ Draw.loadPlugin(function (ui) {
     try {
       openSvgExportDialog();
     } catch (e) {
+      showStatus(e.message || String(e), true);
+    }
+  });
+
+  ui.actions.addAction("electricalClearScreen", function () {
+    try {
+      clearCurrentPage();
+    } catch (e) {
+      state.allowProtectedDelete = false;
       showStatus(e.message || String(e), true);
     }
   });
@@ -4687,6 +8059,11 @@ Draw.loadPlugin(function (ui) {
         "electricalSymbols",
         "electricalBrowse",
         "electricalCreate",
+        "electricalEditInstance",
+        "electricalInsertFrame",
+        "electricalInsertCabinet",
+        "electricalClearScreen",
+        "electricalReassignPort",
         "electricalRefresh",
         "electricalExportSvg",
       ],
