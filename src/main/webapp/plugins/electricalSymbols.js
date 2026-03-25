@@ -1,45 +1,47 @@
 Draw.loadPlugin(function (ui) {
   // 当前 draw.io 编辑器里的核心图对象
-  var graph = ui.editor.graph;
+  const graph = ui.editor.graph;
   // graph 底层的数据模型
-  var model = graph.getModel();
+  const model = graph.getModel();
   // 统一定义插件里会用到的节点标签和类型，避免字符串散落在各处
-  var LIBRARY_TITLE = "电气图元库";
-  var ROOT_TAG = "ElectricalSymbol";
-  var BODY_TAG = "ElectricalBody";
-  var LABEL_TAG = "ElectricalLabel";
-  var BADGE_TAG = "ElectricalBadge";
-  var FRAME_TAG = "DrawingFrame";
-  var FRAME_LABEL_TAG = "DrawingFrameLabel";
-  var CABINET_TAG = "CabinetSegment";
-  var CABINET_BODY_TAG = "CabinetBody";
-  var CABINET_GAP_TAG = "CabinetGap";
-  var ROOT_TYPE = "electricalSymbol";
-  var FRAME_TYPE = "drawingFrame";
-  var CABINET_TYPE = "cabinetSegment";
-  var CABINET_GAP_TYPE = "cabinetGap";
-  var BODY_KIND = "body";
-  var LABEL_KIND = "label";
-  var BADGE_KIND = "badge";
-  var FRAME_LABEL_KIND = "pageLabel";
-  var CABINET_BODY_KIND = "cabinetBody";
-  var CABINET_GAP_KIND = "cabinetGap";
+  const LIBRARY_TITLE = "电气图元库";
+  const ROOT_TAG = "ElectricalSymbol";
+  const BODY_TAG = "ElectricalBody";
+  const LABEL_TAG = "ElectricalLabel";
+  const BADGE_TAG = "ElectricalBadge";
+  const FRAME_TAG = "DrawingFrame";
+  const FRAME_LABEL_TAG = "DrawingFrameLabel";
+  const CABINET_TAG = "CabinetSegment";
+  const CABINET_BODY_TAG = "CabinetBody";
+  const CABINET_GAP_TAG = "CabinetGap";
+  const ROOT_TYPE = "electricalSymbol";
+  const FRAME_TYPE = "drawingFrame";
+  const CABINET_TYPE = "cabinetSegment";
+  const CABINET_GAP_TYPE = "cabinetGap";
+  const BODY_KIND = "body";
+  const LABEL_KIND = "label";
+  const BADGE_KIND = "badge";
+  const FRAME_LABEL_KIND = "pageLabel";
+  const CABINET_BODY_KIND = "cabinetBody";
+  const CABINET_GAP_KIND = "cabinetGap";
   // 预览区新增连接点时，距离边缘多近算“想吸附到边上”。
-  var PORT_EDGE_SNAP_THRESHOLD_PX = 14;
-  var TEMPLATE_DRAFT_STORAGE_KEY = "electrical-symbol-template-draft";
-  var FRAME_DEFAULT_WIDTH = 820;
-  var FRAME_DEFAULT_HEIGHT = 1180;
-  var FRAME_HORIZONTAL_GAP = 40;
-  var FRAME_VERTICAL_GAP = 56;
-  var FRAME_CONTENT_RATIO = 0.8;
-  var FRAME_MARGIN_RATIO = 0.1;
-  var CABINET_DEFAULT_WIDTH = 86;
-  var CABINET_DEFAULT_PORT_COUNT = 4;
-  var CABINET_DEFAULT_X = 72;
-  var CABINET_TAIL_PADDING = 24;
-  var CABINET_MIN_PORT_FOLLOW_SPACE_RATIO = 0.24;
+  const PORT_EDGE_SNAP_THRESHOLD_PX = 14;
+  const TEMPLATE_DRAFT_STORAGE_KEY = "electrical-symbol-template-draft";
+  const FRAME_DEFAULT_WIDTH = 820;
+  const FRAME_DEFAULT_HEIGHT = 1180;
+  const FRAME_HORIZONTAL_GAP = 40;
+  const FRAME_VERTICAL_GAP = 56;
+  const FRAME_CONTENT_RATIO = 0.8;
+  const FRAME_MARGIN_RATIO = 0.1;
+  const CABINET_DEFAULT_WIDTH = 86;
+  const CABINET_DEFAULT_PORT_COUNT = 4;
+  const CABINET_DEFAULT_X = 72;
+  const CABINET_TAIL_PADDING = 24;
+  const CABINET_MIN_PORT_FOLLOW_SPACE_RATIO = 0.24;
+  const BACKEND_SESSION_STORAGE_KEY = "electrical-symbol-backend-session";
+  const BACKEND_DEFAULT_BASE_URL = "/api";
   // 保存插件窗口和运行期缓存
-  var state = {
+  const state = {
     libraryImages: [],
     updatingModel: false,
     window: null,
@@ -72,6 +74,12 @@ Draw.loadPlugin(function (ui) {
     portSwapSession: null,
     portSwapOverlay: null,
     allowProtectedDelete: false,
+    backendBaseUrl: BACKEND_DEFAULT_BASE_URL,
+    backendActorId: "local-user",
+    backendDiagramId: "",
+    backendDiagramTitle: "",
+    backendDiagramVersion: 0,
+    backendLastSnapshot: null,
   };
 
   mxResources.parse(
@@ -85,15 +93,74 @@ Draw.loadPlugin(function (ui) {
       "electricalInsertFrame=插入图框",
       "electricalInsertCabinet=插入配电柜",
       "electricalReassignPort=更换挂点",
+      "electricalSaveBackend=保存到后端",
+      "electricalLoadBackend=从后端加载",
       "electricalPreview=刷新预览",
       "electricalAddLibrary=加入库",
-      "electricalExportLibrary=导出库",
       "electricalClearScreen=清屏",
       "electricalUploadPrimarySvg=上传默认SVG",
       "electricalEnableVariants=启用变体SVG",
       "electricalAddVariantSvg=新增变体SVG",
     ].join("\n"),
   );
+
+  function loadBackendSession() {
+    if (typeof localStorage === "undefined") {
+      return;
+    }
+
+    try {
+      const raw = localStorage.getItem(BACKEND_SESSION_STORAGE_KEY);
+
+      if (!raw) {
+        return;
+      }
+
+      const session = JSON.parse(raw);
+      state.backendBaseUrl = normalizeBackendBaseUrl(session.baseUrl);
+      state.backendActorId = trim(session.actorId) || "local-user";
+      state.backendDiagramId = trim(session.diagramId);
+      state.backendDiagramTitle = trim(session.diagramTitle);
+      state.backendDiagramVersion = Math.max(
+        0,
+        toInt(session.diagramVersion, 0),
+      );
+      state.backendLastSnapshot = isObject(session.lastSnapshot)
+        ? cloneJson(session.lastSnapshot)
+        : null;
+    } catch (e) {
+      state.backendBaseUrl = BACKEND_DEFAULT_BASE_URL;
+      state.backendActorId = "local-user";
+      state.backendDiagramId = "";
+      state.backendDiagramTitle = "";
+      state.backendDiagramVersion = 0;
+      state.backendLastSnapshot = null;
+    }
+  }
+
+  function saveBackendSession() {
+    if (typeof localStorage === "undefined") {
+      return;
+    }
+
+    try {
+      localStorage.setItem(
+        BACKEND_SESSION_STORAGE_KEY,
+        JSON.stringify({
+          baseUrl: state.backendBaseUrl,
+          actorId: state.backendActorId,
+          diagramId: state.backendDiagramId,
+          diagramTitle: state.backendDiagramTitle,
+          diagramVersion: state.backendDiagramVersion,
+          lastSnapshot: state.backendLastSnapshot,
+        }),
+      );
+    } catch (e) {
+      // ignore storage failures
+    }
+  }
+
+  loadBackendSession();
 
   // 把任意输入安全转成去首尾空格的字符串
   function trim(value) {
@@ -122,15 +189,14 @@ Draw.loadPlugin(function (ui) {
   }
 
   function normalizeEnumOptions(options) {
-    var list = Array.isArray(options)
+    const list = Array.isArray(options)
       ? options
       : String(options || "").split(",");
-    var result = [];
-    var seen = {};
-    var i;
+    const result = [];
+    const seen = {};
 
-    for (i = 0; i < list.length; i++) {
-      var value = trim(list[i]);
+    for (let i = 0; i < list.length; i++) {
+      const value = trim(list[i]);
 
       if (value.length > 0 && seen[value] == null) {
         seen[value] = true;
@@ -142,7 +208,7 @@ Draw.loadPlugin(function (ui) {
   }
 
   function normalizeSchemaField(raw) {
-    var field = isObject(raw) ? cloneJson(raw) : {};
+    const field = isObject(raw) ? cloneJson(raw) : {};
     field.id = trim(field.id) || nextItemId("field");
     field.path = trim(field.path);
     field.type = normalizeSchemaType(field.type);
@@ -167,14 +233,14 @@ Draw.loadPlugin(function (ui) {
 
   // 把输入转成整数，失败时回退到默认值
   function toInt(value, defaultValue) {
-    var parsed = parseInt(value, 10);
+    const parsed = parseInt(value, 10);
 
     return isNaN(parsed) ? defaultValue : parsed;
   }
 
   // 把输入转成浮点数，失败时回退到默认值
   function toFloat(value, defaultValue) {
-    var parsed = parseFloat(value);
+    const parsed = parseFloat(value);
 
     return isNaN(parsed) ? defaultValue : parsed;
   }
@@ -279,14 +345,14 @@ Draw.loadPlugin(function (ui) {
 
   // 校验传入的 svg 文本是否合法，并返回规范化后的根节点 XML
   function validateSvg(svg) {
-    var text = trim(svg);
+    const text = trim(svg);
 
     if (text.length == 0) {
       throw new Error("缺少 svg 字段");
     }
 
-    var doc = mxUtils.parseXml(text);
-    var root = doc.documentElement;
+    const doc = mxUtils.parseXml(text);
+    const root = doc.documentElement;
 
     if (root == null || root.nodeName.toLowerCase() != "svg") {
       throw new Error("svg 内容必须包含根节点 <svg>");
@@ -505,55 +571,6 @@ Draw.loadPlugin(function (ui) {
 
   function generateLogicalCabinetId() {
     return generateUuid();
-  }
-
-  function isIdentifierKey(key) {
-    return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key);
-  }
-
-  function formatTypeDefinitionValue(value, indent) {
-    indent = indent || 0;
-    var pad = new Array(indent + 1).join(" ");
-    var childPad = new Array(indent + 3).join(" ");
-    var key;
-    var lines;
-
-    if (isObject(value)) {
-      lines = ["{"];
-
-      for (key in value) {
-        if (value.hasOwnProperty(key)) {
-          lines.push(
-            childPad +
-              (isIdentifierKey(key) ? key : JSON.stringify(key)) +
-              ": " +
-              formatTypeDefinitionValue(value[key], indent + 2) +
-              ",",
-          );
-        }
-      }
-
-      lines.push(pad + "}");
-      return lines.join("\n");
-    }
-
-    if (Array.isArray(value)) {
-      return "array";
-    }
-
-    if (typeof value === "string" && isIdentifierKey(value)) {
-      return value;
-    }
-
-    if (value === null) {
-      return "nullType";
-    }
-
-    return JSON.stringify(value);
-  }
-
-  function formatTypeDefinition(schema) {
-    return formatTypeDefinitionValue(schema, 0);
   }
 
   // 校验 schema 中是否存在给定路径，变体字段只能引用用户已经定义好的字段。
@@ -1060,7 +1077,7 @@ Draw.loadPlugin(function (ui) {
   }
 
   function saveEditorDraftNow() {
-    var storage = getDraftStorage();
+    const storage = getDraftStorage();
 
     clearDraftSaveTimer();
 
@@ -1084,8 +1101,8 @@ Draw.loadPlugin(function (ui) {
   }
 
   function loadEditorDraft() {
-    var storage = getDraftStorage();
-    var raw;
+    const storage = getDraftStorage();
+    let raw;
 
     if (storage == null) {
       return null;
@@ -1109,7 +1126,7 @@ Draw.loadPlugin(function (ui) {
   }
 
   function clearEditorDraft() {
-    var storage = getDraftStorage();
+    const storage = getDraftStorage();
 
     clearDraftSaveTimer();
 
@@ -1125,7 +1142,7 @@ Draw.loadPlugin(function (ui) {
   }
 
   function setCanvasStatus(message) {
-    var text = trim(message);
+    const text = trim(message);
 
     if (text.length == 0) {
       if (typeof ui.clearStatus === "function") {
@@ -1153,17 +1170,17 @@ Draw.loadPlugin(function (ui) {
       throw new Error("请先上传默认SVG");
     }
 
-    var schema = getEditorSchema();
+    const schema = getEditorSchema();
 
     if (!isObject(schema)) {
       throw new Error("类型定义必须是对象");
     }
 
-    var current = state.currentSpec || {};
-    var symbolId = trim(
+    const current = state.currentSpec || {};
+    const symbolId = trim(
       state.symbolIdInput != null ? state.symbolIdInput.value : "",
     );
-    var templateName = trim(
+    const templateName = trim(
       state.templateNameInput != null ? state.templateNameInput.value : "",
     );
 
@@ -1175,7 +1192,7 @@ Draw.loadPlugin(function (ui) {
       throw new Error("请先填写图元类型名称");
     }
 
-    var variantField = "";
+    let variantField = "";
 
     if (state.variantEnabled) {
       variantField = validateVariantField(true);
@@ -1185,7 +1202,7 @@ Draw.loadPlugin(function (ui) {
       }
     }
 
-    var baseSize =
+    const baseSize =
       state.uploadedPrimarySvgSize ||
       extractSvgSize(state.uploadedPrimarySvg);
 
@@ -1231,15 +1248,13 @@ Draw.loadPlugin(function (ui) {
   }
 
   function nextItemId(prefix) {
-    var id = prefix + ":" + state.nextId;
+    const id = prefix + ":" + state.nextId;
     state.nextId += 1;
     return id;
   }
 
   function findPort(spec, id) {
-    var i;
-
-    for (i = 0; i < spec.ports.length; i++) {
+    for (let i = 0; i < spec.ports.length; i++) {
       if (spec.ports[i].id == id) {
         return spec.ports[i];
       }
@@ -1249,9 +1264,7 @@ Draw.loadPlugin(function (ui) {
   }
 
   function findLabel(spec, id) {
-    var i;
-
-    for (i = 0; i < spec.labels.length; i++) {
+    for (let i = 0; i < spec.labels.length; i++) {
       if (spec.labels[i].id == id) {
         return spec.labels[i];
       }
@@ -1262,14 +1275,13 @@ Draw.loadPlugin(function (ui) {
 
   // 文本框绑定属性必须唯一，同一个字段不允许重复挂多个文本框。
   function hasLabelBinding(spec, binding, ignoreId) {
-    var normalized = trim(binding);
-    var i;
+    const normalized = trim(binding);
 
     if (normalized.length == 0) {
       return false;
     }
 
-    for (i = 0; i < spec.labels.length; i++) {
+    for (let i = 0; i < spec.labels.length; i++) {
       if (
         spec.labels[i].id != ignoreId &&
         trim(spec.labels[i].binding) == normalized
@@ -1338,18 +1350,18 @@ Draw.loadPlugin(function (ui) {
   }
 
   function getPreviewMetrics(spec, surface) {
-    var surfaceWidth = Math.max(200, surface.clientWidth || 520);
-    var surfaceHeight = Math.max(200, surface.clientHeight || 260);
-    var padding = 52;
-    var scale = Math.min(
+    const surfaceWidth = Math.max(200, surface.clientWidth || 520);
+    const surfaceHeight = Math.max(200, surface.clientHeight || 260);
+    const padding = 52;
+    let scale = Math.min(
       (surfaceWidth - padding * 2) / spec.size.width,
       (surfaceHeight - padding * 2) / spec.size.height,
     );
 
     scale = clamp(scale, 0.35, 2.5);
 
-    var width = spec.size.width * scale;
-    var height = spec.size.height * scale;
+    const width = spec.size.width * scale;
+    const height = spec.size.height * scale;
 
     return {
       left: Math.round((surfaceWidth - width) / 2),
@@ -1361,9 +1373,9 @@ Draw.loadPlugin(function (ui) {
   }
 
   function getRelativePoint(evt, surface, metrics, clampToBody) {
-    var rect = surface.getBoundingClientRect();
-    var x = (evt.clientX - rect.left - metrics.left) / metrics.width;
-    var y = (evt.clientY - rect.top - metrics.top) / metrics.height;
+    const rect = surface.getBoundingClientRect();
+    const x = (evt.clientX - rect.left - metrics.left) / metrics.width;
+    const y = (evt.clientY - rect.top - metrics.top) / metrics.height;
 
     return {
       x: clampToBody ? clamp(x, 0, 1) : clamp(x, -1.5, 2.5),
@@ -1374,9 +1386,9 @@ Draw.loadPlugin(function (ui) {
   // 新增连接点时，如果点击位置已经很靠近图元边缘，就自动吸附到其最近的边上。
   // 阈值按像素换算成相对坐标，避免不同尺寸 SVG 下吸附手感不一致。
   function snapPortPointToEdge(point, metrics) {
-    var thresholdX = PORT_EDGE_SNAP_THRESHOLD_PX / Math.max(1, metrics.width);
-    var thresholdY = PORT_EDGE_SNAP_THRESHOLD_PX / Math.max(1, metrics.height);
-    var distances = [];
+    const thresholdX = PORT_EDGE_SNAP_THRESHOLD_PX / Math.max(1, metrics.width);
+    const thresholdY = PORT_EDGE_SNAP_THRESHOLD_PX / Math.max(1, metrics.height);
+    const distances = [];
 
     if (point.x <= thresholdX) {
       distances.push({ edge: "left", distance: point.x });
@@ -1402,7 +1414,7 @@ Draw.loadPlugin(function (ui) {
       return a.distance - b.distance;
     });
 
-    var snapped = {
+    const snapped = {
       x: point.x,
       y: point.y,
     };
@@ -1430,8 +1442,8 @@ Draw.loadPlugin(function (ui) {
       return;
     }
 
-    var next = cloneJson(state.currentSpec);
-    var layout = getPreviewLayoutStore(next);
+    const next = cloneJson(state.currentSpec);
+    const layout = getPreviewLayoutStore(next);
 
     if (state.selectedItem.type == "port") {
       layout.ports = layout.ports.filter(function (item) {
@@ -1448,13 +1460,13 @@ Draw.loadPlugin(function (ui) {
     updatePreview(state.currentSpec);
   }
 
-  // 预览区是一个轻量交互编辑面板
-  // 用户可以直接在这里添加/拖动连接点和文本框，修改会实时写回 JSON
+  // 预览区是一个轻量交互编辑面板。
+  // 用户在这里编辑的是当前模板/实例的内存布局，随后再同步到草稿或图元元数据。
   function updatePreview(spec) {
     state.preview.innerHTML = "";
 
     if (spec == null || trim(spec.svg).length == 0) {
-      var empty = document.createElement("div");
+      const empty = document.createElement("div");
       empty.style.height = "100%";
       empty.style.display = "flex";
       empty.style.alignItems = "center";
@@ -2663,56 +2675,6 @@ Draw.loadPlugin(function (ui) {
     return cell;
   }
 
-  function getMaxFramePageNumber() {
-    var frames = getAllDrawingFrames();
-    var maxPage = 0;
-    var i;
-
-    for (i = 0; i < frames.length; i++) {
-      maxPage = Math.max(maxPage, getFramePageNumber(frames[i]));
-    }
-
-    return maxPage;
-  }
-
-  function getRightmostFrame() {
-    var frames = getAllDrawingFrames();
-    var result = null;
-    var maxEdge = -Infinity;
-    var i;
-
-    for (i = 0; i < frames.length; i++) {
-      var geometry = model.getGeometry(frames[i]);
-
-      if (geometry != null) {
-        var edge = geometry.x + geometry.width;
-
-        if (edge > maxEdge) {
-          maxEdge = edge;
-          result = frames[i];
-        }
-      }
-    }
-
-    return result;
-  }
-
-  function getRightmostFrameEdge() {
-    var frames = getAllDrawingFrames();
-    var maxEdge = 0;
-    var i;
-
-    for (i = 0; i < frames.length; i++) {
-      var geometry = model.getGeometry(frames[i]);
-
-      if (geometry != null) {
-        maxEdge = Math.max(maxEdge, geometry.x + geometry.width);
-      }
-    }
-
-    return maxEdge;
-  }
-
   function buildCabinetOffsets(cabinetModel, frameConfig) {
     var config = normalizeFrameConfig(frameConfig);
     var modelData = normalizeCabinetModel(cabinetModel);
@@ -3892,6 +3854,605 @@ Draw.loadPlugin(function (ui) {
     }
   }
 
+  function clearPageForImport() {
+    var parent = graph.getDefaultParent();
+    var cells = [];
+    var i;
+
+    for (i = 0; i < model.getChildCount(parent); i++) {
+      cells.push(model.getChildAt(parent, i));
+    }
+
+    closeGapDialogWindow();
+    setSelectedCabinetGap(null, null);
+    exitPortSwapMode(false);
+
+    if (cells.length == 0) {
+      return;
+    }
+
+    state.allowProtectedDelete = true;
+
+    try {
+      graph.removeCells(cells, true);
+    } finally {
+      state.allowProtectedDelete = false;
+    }
+  }
+
+  function normalizeBackendBaseUrl(url) {
+    var normalized = trim(url).replace(/\/+$/, "");
+
+    if (normalized.length == 0) {
+      return BACKEND_DEFAULT_BASE_URL;
+    }
+
+    if (
+      /^https?:\/\/localhost(?::\d+)?\/api$/i.test(normalized) ||
+      /^https?:\/\/127\.0\.0\.1(?::\d+)?\/api$/i.test(normalized)
+    ) {
+      return BACKEND_DEFAULT_BASE_URL;
+    }
+
+    return normalized;
+  }
+
+  function buildBackendUrl(path) {
+    return normalizeBackendBaseUrl(state.backendBaseUrl) + path;
+  }
+
+  function requestBackendJson(method, url, body) {
+    var options = {
+      method: method,
+      headers: {
+        Accept: "application/json",
+      },
+    };
+
+    if (body != null) {
+      options.headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(body);
+    }
+
+    return fetch(url, options).then(function (response) {
+      return response.text().then(function (text) {
+        var payload = text.length > 0 ? JSON.parse(text) : null;
+
+        if (!response.ok) {
+          var error = new Error(
+            payload != null && payload.message != null
+              ? payload.message
+              : "后端请求失败",
+          );
+          error.payload = payload;
+          throw error;
+        }
+
+        return payload;
+      });
+    });
+  }
+
+  function collectCellsRecursive(parent, result) {
+    var i;
+
+    for (i = 0; i < model.getChildCount(parent); i++) {
+      var child = model.getChildAt(parent, i);
+      result.push(child);
+      collectCellsRecursive(child, result);
+    }
+  }
+
+  function getAllModelCells() {
+    var cells = [];
+    collectCellsRecursive(graph.getDefaultParent(), cells);
+    return cells;
+  }
+
+  function getSymbolObjectId(root) {
+    var spec = extractSpec(root);
+    return trim(spec.instanceId) || trim(spec.symbolId);
+  }
+
+  function exportFrameObject(frame) {
+    var geometry = model.getGeometry(frame);
+    var frameId = trim(getAttr(frame, "frameId"));
+    var frameConfig = getFrameConfig(frame);
+
+    return {
+      id: frameId,
+      kind: "frame",
+      parentId: null,
+      groupId: getFrameGroupId(frame) || null,
+      geometry: {
+        x: geometry != null ? geometry.x : 0,
+        y: geometry != null ? geometry.y : 0,
+        width: geometry != null ? geometry.width : frameConfig.width,
+        height: geometry != null ? geometry.height : frameConfig.height,
+      },
+      props: {
+        pageNumber: getFramePageNumber(frame),
+        frameConfig: frameConfig,
+        originFrameId: trim(getAttr(frame, "originFrameId")) || null,
+        autoFrameOwner: trim(getAttr(frame, "autoFrameOwner")) || null,
+        autoFrameIndex: toInt(getAttr(frame, "autoFrameIndex"), 0),
+      },
+    };
+  }
+
+  function exportCabinetObject(segment) {
+    var cabinetModel = extractCabinetModel(segment);
+    var originFrame = findFrameById(cabinetModel.originFrameId);
+
+    return {
+      id: trim(cabinetModel.logicalCabinetId),
+      kind: "cabinet",
+      parentId: trim(cabinetModel.originFrameId) || null,
+      groupId: originFrame != null ? getFrameGroupId(originFrame) : null,
+      geometry: {
+        x: cabinetModel.cabinetX,
+        y:
+          originFrame != null
+            ? Math.round(getFrameConfig(originFrame).height * FRAME_MARGIN_RATIO)
+            : 0,
+        width: cabinetModel.cabinetWidth,
+        height: 0,
+      },
+      props: {
+        cabinetModel: cabinetModel,
+      },
+    };
+  }
+
+  function exportSymbolObject(root) {
+    var spec = extractSpec(root);
+    var geometry = model.getGeometry(root);
+    var frame = findDrawingFrame(root);
+
+    return {
+      id: getSymbolObjectId(root),
+      kind: "symbol",
+      parentId: frame != null ? trim(getAttr(frame, "frameId")) || null : null,
+      groupId: frame != null ? getFrameGroupId(frame) : null,
+      geometry: {
+        x: geometry != null ? geometry.x : 0,
+        y: geometry != null ? geometry.y : 0,
+        width: geometry != null ? geometry.width : spec.size.width,
+        height: geometry != null ? geometry.height : spec.size.height,
+      },
+      props: {
+        spec: spec,
+      },
+    };
+  }
+
+  function exportEdgeObject(edge) {
+    var sourceTerminal = model.getTerminal(edge, true);
+    var targetTerminal = model.getTerminal(edge, false);
+    var sourceRoot = findPortHostRoot(sourceTerminal);
+    var targetRoot = findPortHostRoot(targetTerminal);
+    var sourcePortId = sourceRoot != null ? getEdgePortId(edge, sourceRoot, true) : "";
+    var targetPortId =
+      targetRoot != null ? getEdgePortId(edge, targetRoot, false) : "";
+    var geometry = model.getGeometry(edge);
+    var style = model.getStyle(edge) || "";
+
+    if (
+      sourceRoot == null ||
+      targetRoot == null ||
+      trim(sourcePortId).length == 0 ||
+      trim(targetPortId).length == 0
+    ) {
+      return null;
+    }
+
+    return {
+      id: edge.id || mxObjectIdentity.get(edge),
+      source: {
+        objectId: isCabinetSegment(sourceRoot)
+          ? trim(getAttr(sourceRoot, "logicalCabinetId"))
+          : getSymbolObjectId(sourceRoot),
+        portId: sourcePortId,
+      },
+      target: {
+        objectId: isCabinetSegment(targetRoot)
+          ? trim(getAttr(targetRoot, "logicalCabinetId"))
+          : getSymbolObjectId(targetRoot),
+        portId: targetPortId,
+      },
+      props: {
+        points:
+          geometry != null && Array.isArray(geometry.points)
+            ? geometry.points.map(function (point) {
+                return { x: point.x, y: point.y };
+              })
+            : [],
+        style: {
+          raw: style,
+          sourcePortId: sourcePortId,
+          targetPortId: targetPortId,
+          sourcePortConstraint: mxUtils.getValue(style, "sourcePortConstraint", ""),
+          targetPortConstraint: mxUtils.getValue(style, "targetPortConstraint", ""),
+        },
+      },
+    };
+  }
+
+  function getCurrentGraphXmlString() {
+    var xml = "";
+
+    try {
+      if (ui != null && typeof ui.getFileData === "function") {
+        xml = trim(ui.getFileData(true));
+
+        if (xml.length > 0) {
+          return xml;
+        }
+      }
+    } catch (e) {
+      // ignore and try editor-level fallbacks
+    }
+
+    try {
+      if (ui.editor != null && typeof ui.editor.getGraphXml === "function") {
+        var node = ui.editor.getGraphXml();
+        xml = node != null ? trim(mxUtils.getXml(node)) : "";
+
+        if (xml.length > 0) {
+          return xml;
+        }
+      }
+    } catch (e) {
+      // ignore and try the explicit full-graph fallback
+    }
+
+    try {
+      if (ui.editor != null && typeof ui.editor.getGraphXml === "function") {
+        var fullNode = ui.editor.getGraphXml(true);
+        xml = fullNode != null ? trim(mxUtils.getXml(fullNode)) : "";
+
+        if (xml.length > 0) {
+          return xml;
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    return "";
+  }
+
+  function exportDiagramSnapshot() {
+    var frames = getAllDrawingFrames();
+    var frameObjects = [];
+    var cabinetObjects = [];
+    var symbolObjects = [];
+    var edgeObjects = [];
+    var cabinetSeen = {};
+    var allCells = getAllModelCells();
+    var i;
+
+    for (i = 0; i < frames.length; i++) {
+      frameObjects.push(exportFrameObject(frames[i]));
+    }
+
+    for (i = 0; i < allCells.length; i++) {
+      var cell = allCells[i];
+
+      if (isCabinetSegment(cell)) {
+        var logicalId = trim(getAttr(cell, "logicalCabinetId"));
+
+        if (!cabinetSeen[logicalId]) {
+          cabinetSeen[logicalId] = true;
+          cabinetObjects.push(exportCabinetObject(cell));
+        }
+      } else if (isElectricalRoot(cell)) {
+        symbolObjects.push(exportSymbolObject(cell));
+      } else if (cell.edge === true) {
+        var edgeObject = exportEdgeObject(cell);
+
+        if (edgeObject != null) {
+          edgeObjects.push(edgeObject);
+        }
+      }
+    }
+
+    return {
+      diagramId: trim(state.backendDiagramId),
+      version: Math.max(0, state.backendDiagramVersion),
+      updatedAt: new Date().toISOString(),
+      rawGraphXml: getCurrentGraphXmlString(),
+      objects: frameObjects.concat(cabinetObjects).concat(symbolObjects),
+      edges: edgeObjects,
+    };
+  }
+
+  function indexSnapshotEntries(snapshot) {
+    var map = {};
+    var i;
+
+    if (!isObject(snapshot)) {
+      return map;
+    }
+
+    if (Array.isArray(snapshot.objects)) {
+      for (i = 0; i < snapshot.objects.length; i++) {
+        map["object:" + snapshot.objects[i].id] = snapshot.objects[i];
+      }
+    }
+
+    if (Array.isArray(snapshot.edges)) {
+      for (i = 0; i < snapshot.edges.length; i++) {
+        map["edge:" + snapshot.edges[i].id] = snapshot.edges[i];
+      }
+    }
+
+    if (typeof snapshot.rawGraphXml === "string") {
+      map["object:__raw_graph__"] = snapshot.rawGraphXml;
+    }
+
+    return map;
+  }
+
+  function computeSnapshotChanges(previousSnapshot, nextSnapshot) {
+    var previousMap = indexSnapshotEntries(previousSnapshot);
+    var nextMap = indexSnapshotEntries(nextSnapshot);
+    var keys = {};
+    var changes = [];
+    var touchedObjectIds = [];
+    var key;
+
+    for (key in previousMap) {
+      keys[key] = true;
+    }
+
+    for (key in nextMap) {
+      keys[key] = true;
+    }
+
+    for (key in keys) {
+      if (!keys.hasOwnProperty(key)) {
+        continue;
+      }
+
+      var previousValue = previousMap[key];
+      var nextValue = nextMap[key];
+      var parts = key.split(":");
+      var objectType = parts[0] == "edge" ? "edge" : "object";
+      var objectId = key.substring(key.indexOf(":") + 1);
+      var op = null;
+
+      if (previousValue == null && nextValue != null) {
+        op = "create";
+      } else if (previousValue != null && nextValue == null) {
+        op = "delete";
+      } else if (JSON.stringify(previousValue) != JSON.stringify(nextValue)) {
+        op = "update";
+      }
+
+      if (op != null) {
+        changes.push({
+          objectType: objectType,
+          objectId: objectId,
+          op: op,
+          before: previousValue != null ? cloneJson(previousValue) : null,
+          after: nextValue != null ? cloneJson(nextValue) : null,
+        });
+        touchedObjectIds.push(objectId);
+      }
+    }
+
+    return {
+      touchedObjectIds: touchedObjectIds,
+      changes: changes,
+    };
+  }
+
+  function findCabinetSegmentForPort(logicalCabinetId, portId) {
+    var segments = findCabinetSegments(logicalCabinetId);
+    var i;
+
+    for (i = 0; i < segments.length; i++) {
+      if (getPortMetaById(segments[i], portId) != null) {
+        return segments[i];
+      }
+    }
+
+    return null;
+  }
+
+  function buildConstraintForPort(root, portId) {
+    var port = getPortMetaById(root, portId);
+
+    if (port == null) {
+      return null;
+    }
+
+    return new mxConnectionConstraint(
+      new mxPoint(port.x, port.y),
+      false,
+      port.id,
+    );
+  }
+
+  function restoreDiagramSnapshot(snapshot) {
+    var frameObjects = [];
+    var cabinetObjects = [];
+    var symbolObjects = [];
+    var i;
+    var frameMap = {};
+    var symbolMap = {};
+
+    clearPageForImport();
+
+    if (!isObject(snapshot)) {
+      throw new Error("后端返回的图纸数据无效");
+    }
+
+    if (trim(snapshot.rawGraphXml).length > 0) {
+      var doc = mxUtils.parseXml(snapshot.rawGraphXml);
+      ui.editor.setGraphXml(doc.documentElement);
+      graph.refresh();
+      return;
+    }
+
+    if (Array.isArray(snapshot.objects)) {
+      for (i = 0; i < snapshot.objects.length; i++) {
+        var item = snapshot.objects[i];
+
+        if (item.kind == "frame") {
+          frameObjects.push(item);
+        } else if (item.kind == "cabinet") {
+          cabinetObjects.push(item);
+        } else if (item.kind == "symbol") {
+          symbolObjects.push(item);
+        }
+      }
+    }
+
+    state.updatingModel = true;
+    model.beginUpdate();
+
+    try {
+      for (i = 0; i < frameObjects.length; i++) {
+        var frameObject = frameObjects[i];
+        var frame = createDrawingFrameCell(
+          frameObject.props != null ? frameObject.props.frameConfig : null,
+          frameObject.props != null ? frameObject.props.pageNumber : 1,
+          {
+            frameId: frameObject.id,
+            groupId: frameObject.groupId,
+            originFrameId:
+              frameObject.props != null ? frameObject.props.originFrameId : null,
+            autoFrameOwner:
+              frameObject.props != null ? frameObject.props.autoFrameOwner : null,
+            autoFrameIndex:
+              frameObject.props != null ? frameObject.props.autoFrameIndex : null,
+          },
+        );
+        frame.geometry = new mxGeometry(
+          frameObject.geometry.x,
+          frameObject.geometry.y,
+          frameObject.geometry.width,
+          frameObject.geometry.height,
+        );
+        addTopLevelCell(frame);
+        frameMap[frameObject.id] = frame;
+      }
+
+      for (i = 0; i < cabinetObjects.length; i++) {
+        var cabinetObject = cabinetObjects[i];
+        var cabinetModel = cloneJson(
+          cabinetObject.props != null ? cabinetObject.props.cabinetModel : {},
+        );
+        cabinetModel.logicalCabinetId = cabinetObject.id;
+        cabinetModel.originFrameId = cabinetObject.parentId;
+        cabinetModel.cabinetX = cabinetObject.geometry.x;
+        cabinetModel.cabinetWidth = cabinetObject.geometry.width;
+        relayoutCabinetByModel(cabinetModel);
+      }
+
+      for (i = 0; i < symbolObjects.length; i++) {
+        var symbolObject = symbolObjects[i];
+        var spec = normalizeSpec(
+          cloneJson(symbolObject.props != null ? symbolObject.props.spec : {}),
+        );
+        var root = buildSymbolCell(spec);
+        root.geometry = new mxGeometry(
+          symbolObject.geometry.x,
+          symbolObject.geometry.y,
+          symbolObject.geometry.width,
+          symbolObject.geometry.height,
+        );
+
+        if (
+          symbolObject.parentId != null &&
+          frameMap[symbolObject.parentId] != null
+        ) {
+          model.add(frameMap[symbolObject.parentId], root);
+        } else {
+          addTopLevelCell(root);
+        }
+
+        symbolMap[symbolObject.id] = root;
+      }
+
+      if (Array.isArray(snapshot.edges)) {
+        for (i = 0; i < snapshot.edges.length; i++) {
+          var edgeObject = snapshot.edges[i];
+          var sourceRoot =
+            symbolMap[edgeObject.source.objectId] ||
+            findCabinetSegmentForPort(
+              edgeObject.source.objectId,
+              edgeObject.source.portId,
+            );
+          var targetRoot =
+            symbolMap[edgeObject.target.objectId] ||
+            findCabinetSegmentForPort(
+              edgeObject.target.objectId,
+              edgeObject.target.portId,
+            );
+
+          if (sourceRoot == null || targetRoot == null) {
+            continue;
+          }
+
+          var style =
+            edgeObject.props != null &&
+            edgeObject.props.style != null &&
+            trim(edgeObject.props.style.raw).length > 0
+              ? edgeObject.props.style.raw
+              : "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;";
+          var edge = graph.insertEdge(
+            graph.getDefaultParent(),
+            edgeObject.id,
+            "",
+            sourceRoot,
+            targetRoot,
+            style,
+          );
+          var sourceConstraint = buildConstraintForPort(
+            sourceRoot,
+            edgeObject.source.portId,
+          );
+          var targetConstraint = buildConstraintForPort(
+            targetRoot,
+            edgeObject.target.portId,
+          );
+
+          if (sourceConstraint != null) {
+            graph.setConnectionConstraint(edge, sourceRoot, true, sourceConstraint);
+          }
+
+          if (targetConstraint != null) {
+            graph.setConnectionConstraint(edge, targetRoot, false, targetConstraint);
+          }
+
+          if (
+            edgeObject.props != null &&
+            Array.isArray(edgeObject.props.points) &&
+            edgeObject.props.points.length > 0
+          ) {
+            var edgeGeometry = model.getGeometry(edge);
+
+            if (edgeGeometry != null) {
+              edgeGeometry = edgeGeometry.clone();
+              edgeGeometry.points = edgeObject.props.points.map(function (point) {
+                return new mxPoint(point.x, point.y);
+              });
+              model.setGeometry(edge, edgeGeometry);
+            }
+          }
+        }
+      }
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+
+    graph.refresh();
+  }
+
   function findAutoFramesForCabinet(originFrameId, logicalCabinetId) {
     var frames = getAllDrawingFrames();
     var result = [];
@@ -4925,29 +5486,6 @@ Draw.loadPlugin(function (ui) {
           onSaved();
         }
       });
-    });
-  }
-
-  // 导出 .drawiolib
-  function exportLibrary() {
-    loadStoredLibrary(function (images) {
-      if (images.length == 0) {
-        showStatus("电气图库为空", true);
-        return;
-      }
-
-      var xml = ui.createLibraryDataFromImages(images);
-      ui.saveLocalFile(
-        xml,
-        "electrical-symbols.drawiolib",
-        "text/xml",
-        null,
-        null,
-        true,
-        null,
-        "drawiolib",
-      );
-      showStatus("已开始导出图库", false);
     });
   }
 
@@ -6695,7 +7233,7 @@ Draw.loadPlugin(function (ui) {
   // 从编辑器文本框读取 JSON，校验通过后同时刷新预览和状态栏
   function parseEditorSpec() {
     try {
-      var spec = getSpecFromEditor();
+      const spec = getSpecFromEditor();
       state.currentSpec = spec;
       updatePreview(spec);
       showStatus("预览已刷新", false);
@@ -6708,7 +7246,7 @@ Draw.loadPlugin(function (ui) {
 
   // 统一生成插件窗口里的按钮样式和点击行为。
   function createButton(label, fn) {
-    var button = mxUtils.button(label, fn);
+    const button = mxUtils.button(label, fn);
     button.className = "geBtn";
     button.style.marginRight = "8px";
     button.style.marginTop = "8px";
@@ -6717,8 +7255,8 @@ Draw.loadPlugin(function (ui) {
 
   // 返回当前画布图形内容的未缩放包围盒，用于给 SVG 导出提供默认宽高。
   function getDiagramExportBounds() {
-    var bounds = graph.getGraphBounds();
-    var viewScale = graph.view.scale || 1;
+    const bounds = graph.getGraphBounds();
+    const viewScale = graph.view.scale || 1;
 
     if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
       throw new Error("画布上没有可导出的图形");
@@ -6732,14 +7270,14 @@ Draw.loadPlugin(function (ui) {
 
   // 复用 draw.io 原生 graph.getSvg 导出当前图形，只返回纯 SVG 节点文本。
   function createSvgExportCode(width, height) {
-    var exportBounds = getDiagramExportBounds();
-    var targetWidth = Math.max(1, toInt(width, exportBounds.width));
-    var targetHeight = Math.max(1, toInt(height, exportBounds.height));
-    var scale = Math.min(
+    const exportBounds = getDiagramExportBounds();
+    const targetWidth = Math.max(1, toInt(width, exportBounds.width));
+    const targetHeight = Math.max(1, toInt(height, exportBounds.height));
+    const scale = Math.min(
       targetWidth / exportBounds.width,
       targetHeight / exportBounds.height,
     );
-    var svgRoot = graph.getSvg(
+    const svgRoot = graph.getSvg(
       null,
       scale,
       0,
@@ -6895,6 +7433,331 @@ Draw.loadPlugin(function (ui) {
     wnd.setVisible(true);
   }
 
+  function syncBackendState(diagramId, version, snapshot, title) {
+    state.backendDiagramId = trim(diagramId);
+    state.backendDiagramTitle = trim(title || state.backendDiagramTitle);
+    state.backendDiagramVersion = Math.max(0, toInt(version, 0));
+    state.backendLastSnapshot = snapshot != null ? cloneJson(snapshot) : null;
+    saveBackendSession();
+  }
+
+  function createLabeledInputRow(container, labelText, input) {
+    var row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "100px 1fr";
+    row.style.alignItems = "center";
+    row.style.gap = "8px";
+    row.style.marginBottom = "8px";
+    container.appendChild(row);
+
+    var label = document.createElement("div");
+    label.innerText = labelText;
+    row.appendChild(label);
+
+    input.style.width = "100%";
+    input.style.boxSizing = "border-box";
+    row.appendChild(input);
+  }
+
+  async function saveDiagramToBackend(title) {
+    var snapshot = exportDiagramSnapshot();
+    var backendUrl = normalizeBackendBaseUrl(state.backendBaseUrl);
+    var actorId = trim(state.backendActorId) || "local-user";
+    var diagramId = trim(state.backendDiagramId);
+    var response;
+
+    if (diagramId.length == 0) {
+      response = await requestBackendJson("POST", backendUrl + "/diagrams", {
+        title: trim(title) || "未命名图纸",
+      });
+      diagramId = trim(response.diagramId);
+      state.backendDiagramId = diagramId;
+      state.backendDiagramTitle = trim(response.title) || trim(title) || "未命名图纸";
+      state.backendDiagramVersion = 0;
+      state.backendLastSnapshot = response.snapshot || null;
+    }
+
+    snapshot.diagramId = diagramId;
+    var diff = computeSnapshotChanges(state.backendLastSnapshot, snapshot);
+
+    if (typeof console !== "undefined" && typeof console.groupCollapsed === "function") {
+      console.groupCollapsed(
+        "[electricalSymbols] saveDiagramToBackend",
+        diagramId || "(new)",
+      );
+      console.log("snapshot", snapshot);
+      console.log("diff", diff);
+      console.groupEnd();
+    } else if (typeof console !== "undefined" && typeof console.log === "function") {
+      console.log("[electricalSymbols] snapshot", snapshot);
+      console.log("[electricalSymbols] diff", diff);
+    }
+
+    if (diff.changes.length == 0) {
+      showStatus("没有检测到需要保存的变更", false);
+      return;
+    }
+
+    response = await requestBackendJson(
+      "POST",
+      backendUrl + "/diagrams/" + encodeURIComponent(diagramId) + "/commits",
+      {
+        baseVersion: Math.max(0, state.backendDiagramVersion),
+        actorId: actorId,
+        touchedObjectIds: diff.touchedObjectIds,
+        changes: diff.changes,
+        snapshot: snapshot,
+      },
+    );
+
+    syncBackendState(
+      diagramId,
+      response.version,
+      response.snapshot,
+      trim(title) || state.backendDiagramTitle,
+    );
+    showStatus(
+      "已保存到后端：" +
+        (state.backendDiagramTitle || diagramId) +
+        "，版本：" +
+        String(response.version),
+      false,
+    );
+  }
+
+  function listDiagramsFromBackend() {
+    return requestBackendJson(
+      "GET",
+      normalizeBackendBaseUrl(state.backendBaseUrl) + "/diagrams",
+    );
+  }
+
+  async function loadDiagramFromBackend(diagramId) {
+    var targetDiagramId = trim(diagramId || state.backendDiagramId);
+
+    if (targetDiagramId.length == 0) {
+      throw new Error("请先选择一张图纸");
+    }
+
+    var backendUrl = normalizeBackendBaseUrl(state.backendBaseUrl);
+    var snapshot = await requestBackendJson(
+      "GET",
+      backendUrl + "/diagrams/" + encodeURIComponent(targetDiagramId),
+    );
+
+    restoreDiagramSnapshot(snapshot);
+    syncBackendState(targetDiagramId, snapshot.version, snapshot);
+    showStatus(
+      "已从后端加载图纸，版本：" +
+        String(snapshot.version),
+      false,
+    );
+  }
+
+  async function openBackendSaveDialog() {
+    if (trim(state.backendDiagramId).length > 0) {
+      try {
+        await saveDiagramToBackend(state.backendDiagramTitle || "未命名图纸");
+      } catch (e) {
+        var payload = e.payload || {};
+        if (
+          payload != null &&
+          payload.latestVersion != null &&
+          Array.isArray(payload.conflictingObjectIds)
+        ) {
+          showStatus(
+            "保存冲突，最新版本：" +
+              payload.latestVersion +
+              "，冲突对象：" +
+              payload.conflictingObjectIds.join(", "),
+            true,
+          );
+        } else {
+          showStatus(e.message || String(e), true);
+        }
+      }
+      return;
+    }
+
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.boxSizing = "border-box";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+
+    var title = document.createElement("div");
+    title.style.fontWeight = "bold";
+    title.style.marginBottom = "8px";
+    title.innerText = "保存当前图纸到后端";
+    div.appendChild(title);
+
+    var titleInput = document.createElement("input");
+    titleInput.value = state.backendDiagramTitle || "未命名图纸";
+    createLabeledInputRow(div, "图纸标题", titleInput);
+
+    var note = document.createElement("div");
+    note.style.fontSize = "12px";
+    note.style.color = "#666";
+    note.style.marginBottom = "10px";
+    note.innerText = "首次保存会在后端创建一张新图，后续保存将直接覆盖到同一图纸版本链。";
+    div.appendChild(note);
+
+    var buttons = document.createElement("div");
+    div.appendChild(buttons);
+
+    var wnd = new mxWindow("保存到后端", div, 180, 120, 440, 190, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(true);
+    wnd.setScrollable(true);
+
+    var saveButton = createButton("保存", async function () {
+      try {
+        state.backendDiagramTitle = trim(titleInput.value) || "未命名图纸";
+        saveBackendSession();
+        await saveDiagramToBackend(state.backendDiagramTitle);
+        wnd.destroy();
+      } catch (e) {
+        var payload = e.payload || {};
+        if (
+          payload != null &&
+          payload.latestVersion != null &&
+          Array.isArray(payload.conflictingObjectIds)
+        ) {
+          showStatus(
+            "保存冲突，最新版本：" +
+              payload.latestVersion +
+              "，冲突对象：" +
+              payload.conflictingObjectIds.join(", "),
+            true,
+          );
+        } else {
+          showStatus(e.message || String(e), true);
+        }
+      }
+    });
+    saveButton.style.marginTop = "0";
+    buttons.appendChild(saveButton);
+
+    wnd.setVisible(true);
+  }
+
+  async function openBackendLoadDialog() {
+    if (trim(state.backendDiagramId).length > 0) {
+      try {
+        await loadDiagramFromBackend(state.backendDiagramId);
+      } catch (e) {
+        showStatus(e.message || String(e), true);
+      }
+      return;
+    }
+
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.boxSizing = "border-box";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+
+    var title = document.createElement("div");
+    title.style.fontWeight = "bold";
+    title.style.marginBottom = "8px";
+    title.innerText = "选择要加载的图纸";
+    div.appendChild(title);
+
+    var select = document.createElement("select");
+    select.style.width = "100%";
+    select.style.boxSizing = "border-box";
+    select.style.marginBottom = "10px";
+    div.appendChild(select);
+
+    var note = document.createElement("div");
+    note.style.fontSize = "12px";
+    note.style.color = "#666";
+    note.style.marginBottom = "10px";
+    note.innerText = "加载会先清空当前页面，再按后端快照完整恢复。";
+    div.appendChild(note);
+
+    var buttons = document.createElement("div");
+    div.appendChild(buttons);
+
+    var wnd = new mxWindow("从后端加载", div, 220, 140, 520, 220, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(true);
+    wnd.setScrollable(true);
+
+    var loadButton = createButton("加载", async function () {
+      try {
+        var diagramId =
+          select.options.length > 0 ? select.options[select.selectedIndex].value : "";
+        var titleText =
+          select.options.length > 0
+            ? trim(select.options[select.selectedIndex].getAttribute("data-title")) ||
+              select.options[select.selectedIndex].innerText
+            : "";
+        await loadDiagramFromBackend(diagramId);
+        state.backendDiagramTitle = titleText;
+        saveBackendSession();
+        wnd.destroy();
+      } catch (e) {
+        showStatus(e.message || String(e), true);
+      }
+    });
+    loadButton.style.marginTop = "0";
+    buttons.appendChild(loadButton);
+
+    var refreshButton = createButton("刷新列表", function () {
+      select.innerHTML = "";
+      note.innerText = "正在从后端读取图纸列表...";
+      listDiagramsFromBackend()
+        .then(function (payload) {
+          var diagrams = Array.isArray(payload.diagrams) ? payload.diagrams : [];
+
+          diagrams.forEach(function (diagram) {
+            var option = document.createElement("option");
+            option.value = diagram.diagramId;
+            var titleText =
+              trim(diagram.title) ||
+              ("图纸 " + diagram.diagramId.slice(0, 8));
+            option.innerText =
+              titleText +
+              " | v" +
+              diagram.latestVersion +
+              (diagram.updatedAt != null
+                ? " | " + String(diagram.updatedAt).replace("T", " ").slice(0, 19)
+                : "");
+            option.setAttribute("data-title", titleText);
+            if (trim(state.backendDiagramId) == trim(diagram.diagramId)) {
+              option.selected = true;
+            }
+            select.appendChild(option);
+          });
+
+          if (diagrams.length == 0) {
+            note.innerText = "后端还没有可加载的图纸。";
+          } else {
+            note.innerText = "请选择一张图纸进行加载。";
+          }
+        })
+        .catch(function (error) {
+          note.innerText = "读取图纸列表失败";
+          showStatus(error.message || String(error), true);
+        });
+    });
+    refreshButton.style.marginTop = "0";
+    refreshButton.style.marginLeft = "8px";
+    buttons.appendChild(refreshButton);
+
+    wnd.setVisible(true);
+    refreshButton.click();
+  }
+
   // 接管顶部菜单栏，只保留电气插件自己的几个入口按钮。
   function installTopActionBar() {
     if (ui.menubarContainer == null) {
@@ -6932,6 +7795,8 @@ Draw.loadPlugin(function (ui) {
     addTopButton("electricalClearScreen", "electricalClearScreen");
     addTopButton("electricalReassignPort", "electricalReassignPort");
     addTopButton("electricalExportSvg", "electricalExportSvg");
+    addTopButton("electricalSaveBackend", "electricalSaveBackend");
+    addTopButton("electricalLoadBackend", "electricalLoadBackend");
 
     ui.menubarContainer.appendChild(bar);
   }
@@ -7989,7 +8854,7 @@ Draw.loadPlugin(function (ui) {
     }
   }
 
-  var graphIsCellDeletable = graph.isCellDeletable;
+  const graphIsCellDeletable = graph.isCellDeletable;
   graph.isCellDeletable = function (cell) {
     if (isDrawingFrame(cell)) {
       return !!state.allowProtectedDelete;
@@ -8038,6 +8903,22 @@ Draw.loadPlugin(function (ui) {
     }
   });
 
+  ui.actions.addAction("electricalSaveBackend", function () {
+    try {
+      openBackendSaveDialog();
+    } catch (e) {
+      showStatus(e.message || String(e), true);
+    }
+  });
+
+  ui.actions.addAction("electricalLoadBackend", function () {
+    try {
+      openBackendLoadDialog();
+    } catch (e) {
+      showStatus(e.message || String(e), true);
+    }
+  });
+
   ui.actions.addAction("electricalClearScreen", function () {
     try {
       clearCurrentPage();
@@ -8047,8 +8928,8 @@ Draw.loadPlugin(function (ui) {
     }
   });
 
-  var menu = ui.menus.get("extras");
-  var oldExtrasMenu = menu.funct;
+  const menu = ui.menus.get("extras");
+  const oldExtrasMenu = menu.funct;
 
   menu.funct = function (menu, parent) {
     oldExtrasMenu.apply(this, arguments);
@@ -8066,6 +8947,8 @@ Draw.loadPlugin(function (ui) {
         "electricalReassignPort",
         "electricalRefresh",
         "electricalExportSvg",
+        "electricalSaveBackend",
+        "electricalLoadBackend",
       ],
       parent,
     );
