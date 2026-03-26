@@ -1,6 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { json, urlencoded } from 'express';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { AppModule } from './app.module';
@@ -38,6 +39,8 @@ async function bootstrap() {
       forbidUnknownValues: false,
     }),
   );
+  app.use(json({ limit: '5mb' }));
+  app.use(urlencoded({ extended: true, limit: '5mb' }));
 
   const drawioRoot = resolveDrawioRoot();
   app.useStaticAssets(drawioRoot, { index: false });

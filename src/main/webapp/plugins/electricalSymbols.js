@@ -95,6 +95,7 @@ Draw.loadPlugin(function (ui) {
       "electricalReassignPort=更换挂点",
       "electricalSaveBackend=保存到后端",
       "electricalLoadBackend=从后端加载",
+      "electricalRollbackBackend=版本回滚",
       "electricalPreview=刷新预览",
       "electricalAddLibrary=加入库",
       "electricalClearScreen=清屏",
@@ -1203,8 +1204,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     const baseSize =
-      state.uploadedPrimarySvgSize ||
-      extractSvgSize(state.uploadedPrimarySvg);
+      state.uploadedPrimarySvgSize || extractSvgSize(state.uploadedPrimarySvg);
 
     return normalizeSpec({
       symbolId: symbolId,
@@ -1387,7 +1387,8 @@ Draw.loadPlugin(function (ui) {
   // 阈值按像素换算成相对坐标，避免不同尺寸 SVG 下吸附手感不一致。
   function snapPortPointToEdge(point, metrics) {
     const thresholdX = PORT_EDGE_SNAP_THRESHOLD_PX / Math.max(1, metrics.width);
-    const thresholdY = PORT_EDGE_SNAP_THRESHOLD_PX / Math.max(1, metrics.height);
+    const thresholdY =
+      PORT_EDGE_SNAP_THRESHOLD_PX / Math.max(1, metrics.height);
     const distances = [];
 
     if (point.x <= thresholdX) {
@@ -3303,7 +3304,10 @@ Draw.loadPlugin(function (ui) {
       } else {
         var minX = Math.min(bounds.x, geometry.x);
         var minY = Math.min(bounds.y, geometry.y);
-        var maxX = Math.max(bounds.x + bounds.width, geometry.x + geometry.width);
+        var maxX = Math.max(
+          bounds.x + bounds.width,
+          geometry.x + geometry.width,
+        );
         var maxY = Math.max(
           bounds.y + bounds.height,
           geometry.y + geometry.height,
@@ -3367,7 +3371,11 @@ Draw.loadPlugin(function (ui) {
     var points;
     var i;
 
-    if (geometry == null || geometry.points == null || geometry.points.length == 0) {
+    if (
+      geometry == null ||
+      geometry.points == null ||
+      geometry.points.length == 0
+    ) {
       return;
     }
 
@@ -3390,7 +3398,11 @@ Draw.loadPlugin(function (ui) {
   function clearEdgePoints(edge) {
     var geometry = model.getGeometry(edge);
 
-    if (geometry != null && geometry.points != null && geometry.points.length > 0) {
+    if (
+      geometry != null &&
+      geometry.points != null &&
+      geometry.points.length > 0
+    ) {
       geometry = geometry.clone();
       geometry.points = null;
       model.setGeometry(edge, geometry);
@@ -3462,8 +3474,10 @@ Draw.loadPlugin(function (ui) {
         var groupEdge = group.edges[i];
         var sourceTerminal = model.getTerminal(groupEdge, true);
         var targetTerminal = model.getTerminal(groupEdge, false);
-        var sourceMoved = movedMap[mxObjectIdentity.get(sourceTerminal)] === true;
-        var targetMoved = movedMap[mxObjectIdentity.get(targetTerminal)] === true;
+        var sourceMoved =
+          movedMap[mxObjectIdentity.get(sourceTerminal)] === true;
+        var targetMoved =
+          movedMap[mxObjectIdentity.get(targetTerminal)] === true;
 
         if (sourceMoved && targetMoved) {
           shiftEdgePointsByDelta(groupEdge, delta.x, delta.y);
@@ -3546,7 +3560,8 @@ Draw.loadPlugin(function (ui) {
         ) {
           if (match != null) {
             return {
-              error: "该图元连接了多个配电柜端子，请直接选中第一条边再执行更换挂点",
+              error:
+                "该图元连接了多个配电柜端子，请直接选中第一条边再执行更换挂点",
             };
           }
 
@@ -3609,12 +3624,16 @@ Draw.loadPlugin(function (ui) {
         marker.title = selected ? "当前挂点" : "点击切换到该挂点";
 
         if (!selected) {
-          mxEvent.addListener(marker, "click", (function (root, port) {
-            return function (evt) {
-              mxEvent.consume(evt);
-              commitPortSwap(state.portSwapSession, root, port);
-            };
-          })(segments[i], cloneJson(ports[j])));
+          mxEvent.addListener(
+            marker,
+            "click",
+            (function (root, port) {
+              return function (evt) {
+                mxEvent.consume(evt);
+                commitPortSwap(state.portSwapSession, root, port);
+              };
+            })(segments[i], cloneJson(ports[j])),
+          );
         }
 
         container.appendChild(marker);
@@ -3943,10 +3962,384 @@ Draw.loadPlugin(function (ui) {
     }
   }
 
+  function belongsToCurrentDefaultParent(cell) {
+    var parent = cell != null ? model.getParent(cell) : null;
+    var defaultParent = graph.getDefaultParent();
+
+    while (parent != null) {
+      if (parent == defaultParent) {
+        return true;
+      }
+
+      parent = model.getParent(parent);
+    }
+
+    return false;
+  }
+
   function getAllModelCells() {
     var cells = [];
-    collectCellsRecursive(graph.getDefaultParent(), cells);
+    var seen = {};
+    var key;
+
+    // 不能只递归 defaultParent 的 child。某些 draw.io 普通连线在当前页里可见，
+    // 但在模型层级上不一定能被这条递归链稳定覆盖，直接遍历 model.cells 更稳。
+    for (key in model.cells) {
+      if (
+        Object.prototype.hasOwnProperty.call(model.cells, key) &&
+        model.cells[key] != null &&
+        model.cells[key] != graph.getDefaultParent() &&
+        belongsToCurrentDefaultParent(model.cells[key]) &&
+        !seen[key]
+      ) {
+        seen[key] = true;
+        cells.push(model.cells[key]);
+      }
+    }
+
     return cells;
+  }
+
+  function getCellStableId(cell) {
+    return trim(
+      cell != null
+        ? cell.id != null
+          ? cell.id
+          : mxObjectIdentity.get(cell)
+        : "",
+    );
+  }
+
+  function getGenericObjectId(cell) {
+    return "generic:" + getCellStableId(cell);
+  }
+
+  function isPlainXmlNode(value) {
+    return (
+      value != null &&
+      typeof value === "object" &&
+      typeof value.nodeType === "number" &&
+      typeof value.nodeName === "string"
+    );
+  }
+
+  function serializeXmlNode(node) {
+    var attrs = {};
+    var children = [];
+    var i;
+
+    if (!isPlainXmlNode(node)) {
+      return null;
+    }
+
+    if (node.attributes != null) {
+      for (i = 0; i < node.attributes.length; i++) {
+        attrs[node.attributes[i].name] = node.attributes[i].value;
+      }
+    }
+
+    if (node.childNodes != null) {
+      for (i = 0; i < node.childNodes.length; i++) {
+        var child = node.childNodes[i];
+
+        if (child.nodeType == 1) {
+          children.push({
+            kind: "element",
+            value: serializeXmlNode(child),
+          });
+        } else if (child.nodeType == 3 || child.nodeType == 4) {
+          children.push({
+            kind: "text",
+            value: child.nodeValue || "",
+          });
+        }
+      }
+    }
+
+    return {
+      tagName: node.nodeName,
+      attributes: attrs,
+      children: children,
+    };
+  }
+
+  function deserializeXmlNode(data) {
+    var node;
+    var attrs;
+    var children;
+    var i;
+
+    if (!isObject(data) || trim(data.tagName).length == 0) {
+      return null;
+    }
+
+    node = createNode(data.tagName);
+    attrs = isObject(data.attributes) ? data.attributes : {};
+
+    for (var key in attrs) {
+      if (attrs.hasOwnProperty(key)) {
+        node.setAttribute(key, attrs[key]);
+      }
+    }
+
+    children = Array.isArray(data.children) ? data.children : [];
+
+    for (i = 0; i < children.length; i++) {
+      var child = children[i];
+
+      if (!isObject(child)) {
+        continue;
+      }
+
+      if (child.kind == "element") {
+        var elementChild = deserializeXmlNode(child.value);
+
+        if (elementChild != null) {
+          node.appendChild(elementChild);
+        }
+      } else if (child.kind == "text") {
+        node.appendChild(node.ownerDocument.createTextNode(String(child.value)));
+      }
+    }
+
+    return node;
+  }
+
+  function serializeCellValue(value) {
+    if (value == null) {
+      return {
+        kind: "null",
+        value: null,
+      };
+    }
+
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      return {
+        kind: "primitive",
+        value: value,
+      };
+    }
+
+    if (isPlainXmlNode(value)) {
+      return {
+        kind: "xml",
+        value: serializeXmlNode(value),
+      };
+    }
+
+    return {
+      kind: "json",
+      value: cloneJson(value),
+    };
+  }
+
+  function deserializeCellValue(data) {
+    if (!isObject(data)) {
+      return data;
+    }
+
+    if (data.kind == "null") {
+      return null;
+    }
+
+    if (data.kind == "primitive") {
+      return data.value;
+    }
+
+    if (data.kind == "xml") {
+      return deserializeXmlNode(data.value);
+    }
+
+    if (data.kind == "json") {
+      return cloneJson(data.value);
+    }
+
+    return null;
+  }
+
+  function toNumber(value, fallback) {
+    var parsed = Number(value);
+    return isFinite(parsed) ? parsed : fallback;
+  }
+
+  function serializeGeometry(geometry) {
+    return {
+      x: geometry != null ? toNumber(geometry.x, 0) : 0,
+      y: geometry != null ? toNumber(geometry.y, 0) : 0,
+      width: geometry != null ? toNumber(geometry.width, 0) : 0,
+      height: geometry != null ? toNumber(geometry.height, 0) : 0,
+      relative: geometry != null ? !!geometry.relative : false,
+      offset:
+        geometry != null && geometry.offset != null
+          ? {
+              x: toNumber(geometry.offset.x, 0),
+              y: toNumber(geometry.offset.y, 0),
+            }
+          : null,
+      sourcePoint:
+        geometry != null && geometry.sourcePoint != null
+          ? {
+              x: toNumber(geometry.sourcePoint.x, 0),
+              y: toNumber(geometry.sourcePoint.y, 0),
+            }
+          : null,
+      targetPoint:
+        geometry != null && geometry.targetPoint != null
+          ? {
+              x: toNumber(geometry.targetPoint.x, 0),
+              y: toNumber(geometry.targetPoint.y, 0),
+            }
+          : null,
+      points:
+        geometry != null && Array.isArray(geometry.points)
+          ? geometry.points.map(function (point) {
+              return {
+                x: toNumber(point.x, 0),
+                y: toNumber(point.y, 0),
+              };
+            })
+          : [],
+      alternateBounds:
+        geometry != null && geometry.alternateBounds != null
+          ? {
+              x: toNumber(geometry.alternateBounds.x, 0),
+              y: toNumber(geometry.alternateBounds.y, 0),
+              width: toNumber(geometry.alternateBounds.width, 0),
+              height: toNumber(geometry.alternateBounds.height, 0),
+            }
+          : null,
+    };
+  }
+
+  function deserializeGeometry(data) {
+    var geometry = new mxGeometry(
+      isObject(data) ? toNumber(data.x, 0) : 0,
+      isObject(data) ? toNumber(data.y, 0) : 0,
+      isObject(data) ? toNumber(data.width, 0) : 0,
+      isObject(data) ? toNumber(data.height, 0) : 0,
+    );
+
+    geometry.relative = isObject(data) ? !!data.relative : false;
+
+    if (isObject(data) && isObject(data.offset)) {
+      geometry.offset = new mxPoint(
+        toNumber(data.offset.x, 0),
+        toNumber(data.offset.y, 0),
+      );
+    }
+
+    if (isObject(data) && isObject(data.sourcePoint)) {
+      geometry.sourcePoint = new mxPoint(
+        toNumber(data.sourcePoint.x, 0),
+        toNumber(data.sourcePoint.y, 0),
+      );
+    }
+
+    if (isObject(data) && isObject(data.targetPoint)) {
+      geometry.targetPoint = new mxPoint(
+        toNumber(data.targetPoint.x, 0),
+        toNumber(data.targetPoint.y, 0),
+      );
+    }
+
+    if (isObject(data) && Array.isArray(data.points) && data.points.length > 0) {
+      geometry.points = data.points.map(function (point) {
+        return new mxPoint(toNumber(point.x, 0), toNumber(point.y, 0));
+      });
+    }
+
+    if (isObject(data) && isObject(data.alternateBounds)) {
+      geometry.alternateBounds = new mxRectangle(
+        toNumber(data.alternateBounds.x, 0),
+        toNumber(data.alternateBounds.y, 0),
+        toNumber(data.alternateBounds.width, 0),
+        toNumber(data.alternateBounds.height, 0),
+      );
+    }
+
+    return geometry;
+  }
+
+  function isPluginInternalCell(cell) {
+    var kind = trim(getAttr(cell, "esKind"));
+
+    return (
+      isCabinetGap(cell) ||
+      kind == BODY_KIND ||
+      kind == LABEL_KIND ||
+      kind == BADGE_KIND ||
+      kind == FRAME_LABEL_KIND ||
+      kind == CABINET_BODY_KIND ||
+      kind == CABINET_GAP_KIND
+    );
+  }
+
+  function shouldExportGenericObject(cell) {
+    return (
+      cell != null &&
+      model.isVertex(cell) &&
+      !isDrawingFrame(cell) &&
+      !isCabinetSegment(cell) &&
+      !isElectricalRoot(cell) &&
+      !isPluginInternalCell(cell)
+    );
+  }
+
+  function resolveSnapshotObjectId(cell) {
+    if (cell == null) {
+      return null;
+    }
+
+    if (isDrawingFrame(cell)) {
+      return trim(getAttr(cell, "frameId")) || null;
+    }
+
+    if (isCabinetSegment(cell)) {
+      return trim(getAttr(cell, "logicalCabinetId")) || null;
+    }
+
+    if (isElectricalRoot(cell)) {
+      return getSymbolObjectId(cell);
+    }
+
+    if (shouldExportGenericObject(cell)) {
+      return getGenericObjectId(cell);
+    }
+
+    return null;
+  }
+
+  function exportGenericObject(cell) {
+    var geometry = model.getGeometry(cell);
+    var frame = findDrawingFrame(cell);
+    var parent = model.getParent(cell);
+
+    if (parent == graph.getDefaultParent()) {
+      parent = null;
+    }
+
+    return {
+      id: getGenericObjectId(cell),
+      kind: "generic",
+      parentId: resolveSnapshotObjectId(parent),
+      groupId: frame != null ? getFrameGroupId(frame) : null,
+      geometry: serializeGeometry(geometry),
+      props: {
+        style: model.getStyle(cell) || "",
+        value: serializeCellValue(cell.value),
+        vertex: cell.vertex === true,
+        connectable:
+          typeof cell.isConnectable === "function"
+            ? !!cell.isConnectable()
+            : cell.connectable !== false,
+        visible: cell.visible !== false,
+        collapsed: !!cell.collapsed,
+      },
+    };
   }
 
   function getSymbolObjectId(root) {
@@ -3993,7 +4386,9 @@ Draw.loadPlugin(function (ui) {
         x: cabinetModel.cabinetX,
         y:
           originFrame != null
-            ? Math.round(getFrameConfig(originFrame).height * FRAME_MARGIN_RATIO)
+            ? Math.round(
+                getFrameConfig(originFrame).height * FRAME_MARGIN_RATIO,
+              )
             : 0,
         width: cabinetModel.cabinetWidth,
         height: 0,
@@ -4031,95 +4426,52 @@ Draw.loadPlugin(function (ui) {
     var targetTerminal = model.getTerminal(edge, false);
     var sourceRoot = findPortHostRoot(sourceTerminal);
     var targetRoot = findPortHostRoot(targetTerminal);
-    var sourcePortId = sourceRoot != null ? getEdgePortId(edge, sourceRoot, true) : "";
-    var targetPortId =
-      targetRoot != null ? getEdgePortId(edge, targetRoot, false) : "";
     var geometry = model.getGeometry(edge);
     var style = model.getStyle(edge) || "";
-
-    if (
-      sourceRoot == null ||
-      targetRoot == null ||
-      trim(sourcePortId).length == 0 ||
-      trim(targetPortId).length == 0
-    ) {
-      return null;
-    }
+    var parent = model.getParent(edge);
+    var sourcePortId =
+      sourceRoot != null ? getEdgePortId(edge, sourceRoot, true) : null;
+    var targetPortId =
+      targetRoot != null ? getEdgePortId(edge, targetRoot, false) : null;
 
     return {
       id: edge.id || mxObjectIdentity.get(edge),
       source: {
-        objectId: isCabinetSegment(sourceRoot)
-          ? trim(getAttr(sourceRoot, "logicalCabinetId"))
-          : getSymbolObjectId(sourceRoot),
-        portId: sourcePortId,
+        objectId: resolveSnapshotObjectId(
+          sourceRoot != null ? sourceRoot : sourceTerminal,
+        ),
+        portId: trim(sourcePortId) || null,
       },
       target: {
-        objectId: isCabinetSegment(targetRoot)
-          ? trim(getAttr(targetRoot, "logicalCabinetId"))
-          : getSymbolObjectId(targetRoot),
-        portId: targetPortId,
+        objectId: resolveSnapshotObjectId(
+          targetRoot != null ? targetRoot : targetTerminal,
+        ),
+        portId: trim(targetPortId) || null,
       },
       props: {
-        points:
-          geometry != null && Array.isArray(geometry.points)
-            ? geometry.points.map(function (point) {
-                return { x: point.x, y: point.y };
-              })
-            : [],
+        parentId:
+          parent != null && parent != graph.getDefaultParent()
+            ? resolveSnapshotObjectId(parent)
+            : null,
         style: {
           raw: style,
-          sourcePortId: sourcePortId,
-          targetPortId: targetPortId,
-          sourcePortConstraint: mxUtils.getValue(style, "sourcePortConstraint", ""),
-          targetPortConstraint: mxUtils.getValue(style, "targetPortConstraint", ""),
+          sourcePortId: trim(sourcePortId) || null,
+          targetPortId: trim(targetPortId) || null,
+          sourcePortConstraint: mxUtils.getValue(
+            style,
+            "sourcePortConstraint",
+            "",
+          ),
+          targetPortConstraint: mxUtils.getValue(
+            style,
+            "targetPortConstraint",
+            "",
+          ),
         },
+        value: serializeCellValue(edge.value),
+        geometry: serializeGeometry(geometry),
       },
     };
-  }
-
-  function getCurrentGraphXmlString() {
-    var xml = "";
-
-    try {
-      if (ui != null && typeof ui.getFileData === "function") {
-        xml = trim(ui.getFileData(true));
-
-        if (xml.length > 0) {
-          return xml;
-        }
-      }
-    } catch (e) {
-      // ignore and try editor-level fallbacks
-    }
-
-    try {
-      if (ui.editor != null && typeof ui.editor.getGraphXml === "function") {
-        var node = ui.editor.getGraphXml();
-        xml = node != null ? trim(mxUtils.getXml(node)) : "";
-
-        if (xml.length > 0) {
-          return xml;
-        }
-      }
-    } catch (e) {
-      // ignore and try the explicit full-graph fallback
-    }
-
-    try {
-      if (ui.editor != null && typeof ui.editor.getGraphXml === "function") {
-        var fullNode = ui.editor.getGraphXml(true);
-        xml = fullNode != null ? trim(mxUtils.getXml(fullNode)) : "";
-
-        if (xml.length > 0) {
-          return xml;
-        }
-      }
-    } catch (e) {
-      // ignore
-    }
-
-    return "";
   }
 
   function exportDiagramSnapshot() {
@@ -4127,6 +4479,7 @@ Draw.loadPlugin(function (ui) {
     var frameObjects = [];
     var cabinetObjects = [];
     var symbolObjects = [];
+    var genericObjects = [];
     var edgeObjects = [];
     var cabinetSeen = {};
     var allCells = getAllModelCells();
@@ -4148,21 +4501,21 @@ Draw.loadPlugin(function (ui) {
         }
       } else if (isElectricalRoot(cell)) {
         symbolObjects.push(exportSymbolObject(cell));
-      } else if (cell.edge === true) {
-        var edgeObject = exportEdgeObject(cell);
-
-        if (edgeObject != null) {
-          edgeObjects.push(edgeObject);
+      } else if (shouldExportGenericObject(cell)) {
+        genericObjects.push(exportGenericObject(cell));
+        } else if (model.isEdge(cell)) {
+          edgeObjects.push(exportEdgeObject(cell));
         }
       }
-    }
 
     return {
       diagramId: trim(state.backendDiagramId),
       version: Math.max(0, state.backendDiagramVersion),
       updatedAt: new Date().toISOString(),
-      rawGraphXml: getCurrentGraphXmlString(),
-      objects: frameObjects.concat(cabinetObjects).concat(symbolObjects),
+      objects: frameObjects
+        .concat(cabinetObjects)
+        .concat(symbolObjects)
+        .concat(genericObjects),
       edges: edgeObjects,
     };
   }
@@ -4185,10 +4538,6 @@ Draw.loadPlugin(function (ui) {
       for (i = 0; i < snapshot.edges.length; i++) {
         map["edge:" + snapshot.edges[i].id] = snapshot.edges[i];
       }
-    }
-
-    if (typeof snapshot.rawGraphXml === "string") {
-      map["object:__raw_graph__"] = snapshot.rawGraphXml;
     }
 
     return map;
@@ -4275,13 +4624,76 @@ Draw.loadPlugin(function (ui) {
     );
   }
 
+  function createGenericCellFromSnapshot(object) {
+    var cell = new mxCell(
+      deserializeCellValue(object.props != null ? object.props.value : null),
+      deserializeGeometry(object.geometry),
+      object.props != null ? object.props.style || "" : "",
+    );
+    cell.setId(trim(object.id));
+    cell.vertex =
+      object.props == null || object.props.vertex == null
+        ? true
+        : !!object.props.vertex;
+    cell.edge = false;
+    cell.setConnectable(
+      object.props == null || object.props.connectable == null
+        ? true
+        : !!object.props.connectable,
+    );
+    cell.visible =
+      object.props == null || object.props.visible == null
+        ? true
+        : !!object.props.visible;
+    cell.collapsed =
+      object.props != null && object.props.collapsed != null
+        ? !!object.props.collapsed
+        : false;
+    return cell;
+  }
+
+  function resolveImportedObjectParent(parentId, frameMap, symbolMap, genericMap) {
+    var key = trim(parentId);
+
+    if (key.length == 0) {
+      return graph.getDefaultParent();
+    }
+
+    return genericMap[key] || frameMap[key] || symbolMap[key] || null;
+  }
+
+  function resolveImportedEdgeTerminal(terminal, symbolMap, genericMap) {
+    var objectId = trim(terminal != null ? terminal.objectId : "");
+    var portId = trim(terminal != null ? terminal.portId : "");
+
+    if (objectId.length == 0) {
+      return null;
+    }
+
+    if (genericMap[objectId] != null) {
+      return genericMap[objectId];
+    }
+
+    if (symbolMap[objectId] != null) {
+      return symbolMap[objectId];
+    }
+
+    if (portId.length > 0) {
+      return findCabinetSegmentForPort(objectId, portId);
+    }
+
+    return null;
+  }
+
   function restoreDiagramSnapshot(snapshot) {
     var frameObjects = [];
     var cabinetObjects = [];
     var symbolObjects = [];
+    var genericObjects = [];
     var i;
     var frameMap = {};
     var symbolMap = {};
+    var genericMap = {};
 
     clearPageForImport();
 
@@ -4289,9 +4701,13 @@ Draw.loadPlugin(function (ui) {
       throw new Error("后端返回的图纸数据无效");
     }
 
-    if (trim(snapshot.rawGraphXml).length > 0) {
-      var doc = mxUtils.parseXml(snapshot.rawGraphXml);
-      ui.editor.setGraphXml(doc.documentElement);
+    if (
+      trim(snapshot.rawGraphXml).length > 0 &&
+      (!Array.isArray(snapshot.objects) || snapshot.objects.length == 0) &&
+      (!Array.isArray(snapshot.edges) || snapshot.edges.length == 0)
+    ) {
+      var legacyDoc = mxUtils.parseXml(snapshot.rawGraphXml);
+      ui.editor.setGraphXml(legacyDoc.documentElement);
       graph.refresh();
       return;
     }
@@ -4306,6 +4722,8 @@ Draw.loadPlugin(function (ui) {
           cabinetObjects.push(item);
         } else if (item.kind == "symbol") {
           symbolObjects.push(item);
+        } else if (item.kind == "generic") {
+          genericObjects.push(item);
         }
       }
     }
@@ -4323,11 +4741,17 @@ Draw.loadPlugin(function (ui) {
             frameId: frameObject.id,
             groupId: frameObject.groupId,
             originFrameId:
-              frameObject.props != null ? frameObject.props.originFrameId : null,
+              frameObject.props != null
+                ? frameObject.props.originFrameId
+                : null,
             autoFrameOwner:
-              frameObject.props != null ? frameObject.props.autoFrameOwner : null,
+              frameObject.props != null
+                ? frameObject.props.autoFrameOwner
+                : null,
             autoFrameIndex:
-              frameObject.props != null ? frameObject.props.autoFrameIndex : null,
+              frameObject.props != null
+                ? frameObject.props.autoFrameIndex
+                : null,
           },
         );
         frame.geometry = new mxGeometry(
@@ -4377,23 +4801,67 @@ Draw.loadPlugin(function (ui) {
         symbolMap[symbolObject.id] = root;
       }
 
+      if (genericObjects.length > 0) {
+        var pendingGenericObjects = genericObjects.slice();
+        var safetyCounter = 0;
+
+        while (pendingGenericObjects.length > 0 && safetyCounter < 1000) {
+          var nextPending = [];
+          var progressed = false;
+
+          for (i = 0; i < pendingGenericObjects.length; i++) {
+            var genericObject = pendingGenericObjects[i];
+            var parent = resolveImportedObjectParent(
+              genericObject.parentId,
+              frameMap,
+              symbolMap,
+              genericMap,
+            );
+
+            if (parent == null) {
+              nextPending.push(genericObject);
+              continue;
+            }
+
+            var genericCell = createGenericCellFromSnapshot(genericObject);
+            model.add(parent, genericCell);
+            genericMap[genericObject.id] = genericCell;
+            progressed = true;
+          }
+
+          if (!progressed) {
+            for (i = 0; i < nextPending.length; i++) {
+              var fallbackCell = createGenericCellFromSnapshot(nextPending[i]);
+              addTopLevelCell(fallbackCell);
+              genericMap[nextPending[i].id] = fallbackCell;
+            }
+            break;
+          }
+
+          pendingGenericObjects = nextPending;
+          safetyCounter += 1;
+        }
+      }
+
       if (Array.isArray(snapshot.edges)) {
         for (i = 0; i < snapshot.edges.length; i++) {
           var edgeObject = snapshot.edges[i];
-          var sourceRoot =
-            symbolMap[edgeObject.source.objectId] ||
-            findCabinetSegmentForPort(
-              edgeObject.source.objectId,
-              edgeObject.source.portId,
-            );
-          var targetRoot =
-            symbolMap[edgeObject.target.objectId] ||
-            findCabinetSegmentForPort(
-              edgeObject.target.objectId,
-              edgeObject.target.portId,
-            );
+          var sourceRoot = resolveImportedEdgeTerminal(
+            edgeObject.source,
+            symbolMap,
+            genericMap,
+          );
+          var targetRoot = resolveImportedEdgeTerminal(
+            edgeObject.target,
+            symbolMap,
+            genericMap,
+          );
 
-          if (sourceRoot == null || targetRoot == null) {
+          if (
+            sourceRoot == null &&
+            targetRoot == null &&
+            !isObject(edgeObject.props != null ? edgeObject.props.geometry : null)
+          ) {
             continue;
           }
 
@@ -4403,10 +4871,18 @@ Draw.loadPlugin(function (ui) {
             trim(edgeObject.props.style.raw).length > 0
               ? edgeObject.props.style.raw
               : "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;";
+          var edgeParent = resolveImportedObjectParent(
+            edgeObject.props != null ? edgeObject.props.parentId : null,
+            frameMap,
+            symbolMap,
+            genericMap,
+          );
           var edge = graph.insertEdge(
-            graph.getDefaultParent(),
+            edgeParent != null ? edgeParent : graph.getDefaultParent(),
             edgeObject.id,
-            "",
+            deserializeCellValue(
+              edgeObject.props != null ? edgeObject.props.value : null,
+            ),
             sourceRoot,
             targetRoot,
             style,
@@ -4421,28 +4897,29 @@ Draw.loadPlugin(function (ui) {
           );
 
           if (sourceConstraint != null) {
-            graph.setConnectionConstraint(edge, sourceRoot, true, sourceConstraint);
+            graph.setConnectionConstraint(
+              edge,
+              sourceRoot,
+              true,
+              sourceConstraint,
+            );
           }
 
           if (targetConstraint != null) {
-            graph.setConnectionConstraint(edge, targetRoot, false, targetConstraint);
+            graph.setConnectionConstraint(
+              edge,
+              targetRoot,
+              false,
+              targetConstraint,
+            );
           }
 
-          if (
-            edgeObject.props != null &&
-            Array.isArray(edgeObject.props.points) &&
-            edgeObject.props.points.length > 0
-          ) {
-            var edgeGeometry = model.getGeometry(edge);
-
-            if (edgeGeometry != null) {
-              edgeGeometry = edgeGeometry.clone();
-              edgeGeometry.points = edgeObject.props.points.map(function (point) {
-                return new mxPoint(point.x, point.y);
-              });
-              model.setGeometry(edge, edgeGeometry);
-            }
-          }
+          model.setGeometry(
+            edge,
+            deserializeGeometry(
+              edgeObject.props != null ? edgeObject.props.geometry : null,
+            ),
+          );
         }
       }
     } finally {
@@ -4536,19 +5013,18 @@ Draw.loadPlugin(function (ui) {
           },
         );
         frame.geometry = frame.geometry.clone();
-        frame.geometry.x =
-          Math.max(
-            model.getGeometry(previousFrame).x +
-              config.width +
-              FRAME_HORIZONTAL_GAP,
-            rightmostGeometry != null
-              ? rightmostGeometry.x +
-                  rightmostGeometry.width +
-                  FRAME_HORIZONTAL_GAP
-              : model.getGeometry(previousFrame).x +
-                  config.width +
-                  FRAME_HORIZONTAL_GAP,
-          );
+        frame.geometry.x = Math.max(
+          model.getGeometry(previousFrame).x +
+            config.width +
+            FRAME_HORIZONTAL_GAP,
+          rightmostGeometry != null
+            ? rightmostGeometry.x +
+                rightmostGeometry.width +
+                FRAME_HORIZONTAL_GAP
+            : model.getGeometry(previousFrame).x +
+                config.width +
+                FRAME_HORIZONTAL_GAP,
+        );
         frame.geometry.y = model.getGeometry(previousFrame).y;
         addTopLevelCell(frame);
       }
@@ -5168,7 +5644,11 @@ Draw.loadPlugin(function (ui) {
 
     var previousStyle = model.getStyle(edge) || "";
     var previousPortId = trim(
-      mxUtils.getValue(previousStyle, source ? "sourcePortId" : "targetPortId", ""),
+      mxUtils.getValue(
+        previousStyle,
+        source ? "sourcePortId" : "targetPortId",
+        "",
+      ),
     );
     var previousRoot = findPortHostRoot(model.getTerminal(edge, source));
     oldSetConnectionConstraint.apply(this, arguments);
@@ -5243,7 +5723,7 @@ Draw.loadPlugin(function (ui) {
     var cell = evt.getProperty("cell");
     var mouseEvent = evt.getProperty("event");
 
-     if (state.portSwapSession != null) {
+    if (state.portSwapSession != null) {
       var portRoot = findPortHostRoot(cell);
       var sessionLogicalId =
         state.portSwapSession.cabinetRoot != null
@@ -5971,9 +6451,11 @@ Draw.loadPlugin(function (ui) {
           return item.id != editorState.selectedItem.id;
         });
       } else if (editorState.selectedItem.type == "label") {
-        editorState.spec.labels = editorState.spec.labels.filter(function (item) {
-          return item.id != editorState.selectedItem.id;
-        });
+        editorState.spec.labels = editorState.spec.labels.filter(
+          function (item) {
+            return item.id != editorState.selectedItem.id;
+          },
+        );
       }
 
       setEditorSelection(null, null);
@@ -6278,11 +6760,7 @@ Draw.loadPlugin(function (ui) {
         handle.style.zIndex = "2";
         handle.style.opacity = point.marker == "hidden" ? "0.35" : "1";
         handle.innerText =
-          point.marker == "circle"
-            ? "●"
-            : point.marker == "hidden"
-              ? ""
-              : "×";
+          point.marker == "circle" ? "●" : point.marker == "hidden" ? "" : "×";
         handle.title = point.name || point.id || "连接点" + (index + 1);
         if (
           editorState.selectedItem != null &&
@@ -6495,7 +6973,16 @@ Draw.loadPlugin(function (ui) {
 
     renderEditorPreview();
 
-    var wnd = new mxWindow("编辑图元实例", container, 220, 120, 680, 520, true, true);
+    var wnd = new mxWindow(
+      "编辑图元实例",
+      container,
+      220,
+      120,
+      680,
+      520,
+      true,
+      true,
+    );
     wnd.destroyOnClose = true;
     wnd.setClosable(true);
     wnd.setMaximizable(false);
@@ -6838,7 +7325,9 @@ Draw.loadPlugin(function (ui) {
         height: heightInput.value,
       });
       var groupId =
-        selectedFrame != null ? getFrameGroupId(selectedFrame) : generateFrameGroupId();
+        selectedFrame != null
+          ? getFrameGroupId(selectedFrame)
+          : generateFrameGroupId();
       var nextPageNumber =
         selectedFrame != null ? getMaxFramePageNumberInGroup(groupId) + 1 : 1;
       var frame = createDrawingFrameCell(config, nextPageNumber, {
@@ -6858,7 +7347,8 @@ Draw.loadPlugin(function (ui) {
       } else if (existingFrames.length > 0) {
         var leftmostFrame = getLeftmostFrame();
         var bottommostFrame = getBottommostFrame();
-        var leftGeometry = leftmostFrame != null ? model.getGeometry(leftmostFrame) : null;
+        var leftGeometry =
+          leftmostFrame != null ? model.getGeometry(leftmostFrame) : null;
         var bottomGeometry =
           bottommostFrame != null ? model.getGeometry(bottommostFrame) : null;
         frame.geometry = frame.geometry.clone();
@@ -7472,7 +7962,8 @@ Draw.loadPlugin(function (ui) {
       });
       diagramId = trim(response.diagramId);
       state.backendDiagramId = diagramId;
-      state.backendDiagramTitle = trim(response.title) || trim(title) || "未命名图纸";
+      state.backendDiagramTitle =
+        trim(response.title) || trim(title) || "未命名图纸";
       state.backendDiagramVersion = 0;
       state.backendLastSnapshot = response.snapshot || null;
     }
@@ -7480,7 +7971,10 @@ Draw.loadPlugin(function (ui) {
     snapshot.diagramId = diagramId;
     var diff = computeSnapshotChanges(state.backendLastSnapshot, snapshot);
 
-    if (typeof console !== "undefined" && typeof console.groupCollapsed === "function") {
+    if (
+      typeof console !== "undefined" &&
+      typeof console.groupCollapsed === "function"
+    ) {
       console.groupCollapsed(
         "[electricalSymbols] saveDiagramToBackend",
         diagramId || "(new)",
@@ -7488,7 +7982,10 @@ Draw.loadPlugin(function (ui) {
       console.log("snapshot", snapshot);
       console.log("diff", diff);
       console.groupEnd();
-    } else if (typeof console !== "undefined" && typeof console.log === "function") {
+    } else if (
+      typeof console !== "undefined" &&
+      typeof console.log === "function"
+    ) {
       console.log("[electricalSymbols] snapshot", snapshot);
       console.log("[electricalSymbols] diff", diff);
     }
@@ -7532,6 +8029,53 @@ Draw.loadPlugin(function (ui) {
     );
   }
 
+  function getDiagramHistoryFromBackend(diagramId) {
+    return requestBackendJson(
+      "GET",
+      normalizeBackendBaseUrl(state.backendBaseUrl) +
+        "/diagrams/" +
+        encodeURIComponent(diagramId) +
+        "/history",
+    );
+  }
+
+  async function rollbackDiagramToVersion(targetVersion) {
+    var diagramId = trim(state.backendDiagramId);
+
+    if (diagramId.length == 0) {
+      throw new Error("请先保存图纸到后端，再执行版本回滚");
+    }
+
+    var response = await requestBackendJson(
+      "POST",
+      normalizeBackendBaseUrl(state.backendBaseUrl) +
+        "/diagrams/" +
+        encodeURIComponent(diagramId) +
+        "/rollback",
+      {
+        targetVersion: Math.max(0, toInt(targetVersion, 0)),
+        actorId: trim(state.backendActorId) || "local-user",
+      },
+    );
+
+    restoreDiagramSnapshot(response.snapshot);
+    syncBackendState(
+      diagramId,
+      response.version,
+      response.snapshot,
+      state.backendDiagramTitle,
+    );
+    showStatus(
+      "已回滚到版本 v" +
+        String(targetVersion) +
+        "，当前最新版本为 v" +
+        String(response.version),
+      false,
+    );
+
+    return response;
+  }
+
   async function loadDiagramFromBackend(diagramId) {
     var targetDiagramId = trim(diagramId || state.backendDiagramId);
 
@@ -7547,11 +8091,7 @@ Draw.loadPlugin(function (ui) {
 
     restoreDiagramSnapshot(snapshot);
     syncBackendState(targetDiagramId, snapshot.version, snapshot);
-    showStatus(
-      "已从后端加载图纸，版本：" +
-        String(snapshot.version),
-      false,
-    );
+    showStatus("已从后端加载图纸，版本：" + String(snapshot.version), false);
   }
 
   async function openBackendSaveDialog() {
@@ -7601,7 +8141,8 @@ Draw.loadPlugin(function (ui) {
     note.style.fontSize = "12px";
     note.style.color = "#666";
     note.style.marginBottom = "10px";
-    note.innerText = "首次保存会在后端创建一张新图，后续保存将直接覆盖到同一图纸版本链。";
+    note.innerText =
+      "首次保存会在后端创建一张新图，后续保存将直接覆盖到同一图纸版本链。";
     div.appendChild(note);
 
     var buttons = document.createElement("div");
@@ -7695,11 +8236,14 @@ Draw.loadPlugin(function (ui) {
     var loadButton = createButton("加载", async function () {
       try {
         var diagramId =
-          select.options.length > 0 ? select.options[select.selectedIndex].value : "";
+          select.options.length > 0
+            ? select.options[select.selectedIndex].value
+            : "";
         var titleText =
           select.options.length > 0
-            ? trim(select.options[select.selectedIndex].getAttribute("data-title")) ||
-              select.options[select.selectedIndex].innerText
+            ? trim(
+                select.options[select.selectedIndex].getAttribute("data-title"),
+              ) || select.options[select.selectedIndex].innerText
             : "";
         await loadDiagramFromBackend(diagramId);
         state.backendDiagramTitle = titleText;
@@ -7717,20 +8261,22 @@ Draw.loadPlugin(function (ui) {
       note.innerText = "正在从后端读取图纸列表...";
       listDiagramsFromBackend()
         .then(function (payload) {
-          var diagrams = Array.isArray(payload.diagrams) ? payload.diagrams : [];
+          var diagrams = Array.isArray(payload.diagrams)
+            ? payload.diagrams
+            : [];
 
           diagrams.forEach(function (diagram) {
             var option = document.createElement("option");
             option.value = diagram.diagramId;
             var titleText =
-              trim(diagram.title) ||
-              ("图纸 " + diagram.diagramId.slice(0, 8));
+              trim(diagram.title) || "图纸 " + diagram.diagramId.slice(0, 8);
             option.innerText =
               titleText +
               " | v" +
               diagram.latestVersion +
               (diagram.updatedAt != null
-                ? " | " + String(diagram.updatedAt).replace("T", " ").slice(0, 19)
+                ? " | " +
+                  String(diagram.updatedAt).replace("T", " ").slice(0, 19)
                 : "");
             option.setAttribute("data-title", titleText);
             if (trim(state.backendDiagramId) == trim(diagram.diagramId)) {
@@ -7756,6 +8302,192 @@ Draw.loadPlugin(function (ui) {
 
     wnd.setVisible(true);
     refreshButton.click();
+  }
+
+  async function openBackendRollbackDialog() {
+    var diagramId = trim(state.backendDiagramId);
+
+    if (diagramId.length == 0) {
+      showStatus("请先保存图纸到后端，再执行版本回滚", true);
+      return;
+    }
+
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.boxSizing = "border-box";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+
+    var title = document.createElement("div");
+    title.style.fontWeight = "bold";
+    title.style.marginBottom = "8px";
+    title.innerText = "版本回滚";
+    div.appendChild(title);
+
+    var note = document.createElement("div");
+    note.style.fontSize = "12px";
+    note.style.color = "#666";
+    note.style.marginBottom = "10px";
+    note.innerText = "请选择一个历史版本进行回滚，回滚会生成一个新的版本。";
+    div.appendChild(note);
+
+    var list = document.createElement("div");
+    list.style.flex = "1 1 auto";
+    list.style.overflow = "auto";
+    list.style.border = "1px solid #ddd";
+    list.style.padding = "8px";
+    list.style.background = Editor.isDarkMode() ? "#2b2b2b" : "#fff";
+    div.appendChild(list);
+
+    var wnd = new mxWindow("版本回滚", div, 240, 160, 560, 420, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(true);
+    wnd.setScrollable(true);
+
+    function renderHistory(payload) {
+      list.innerHTML = "";
+
+      var commits =
+        payload != null && Array.isArray(payload.commits)
+          ? payload.commits.slice()
+          : [];
+      var versionItems = [
+        {
+          version: 0,
+          actorId: "",
+          commitType: "initial",
+          createdAt: "",
+          rollbackTargetVersion: null,
+        },
+      ].concat(
+        commits.map(function (commit) {
+          var rollbackTargetVersion = null;
+
+          if (
+            trim(commit.commitType) === "rollback" &&
+            Array.isArray(commit.changes)
+          ) {
+            for (
+              var changeIndex = 0;
+              changeIndex < commit.changes.length;
+              changeIndex++
+            ) {
+              var change = commit.changes[changeIndex];
+
+              if (
+                change != null &&
+                change.objectId === "__rollback__" &&
+                isObject(change.after) &&
+                change.after.version != null
+              ) {
+                rollbackTargetVersion = Math.max(
+                  0,
+                  toInt(change.after.version, 0),
+                );
+                break;
+              }
+            }
+          }
+
+          return {
+            version: Math.max(0, toInt(commit.resultVersion, 0)),
+            actorId: trim(commit.actorId),
+            commitType: trim(commit.commitType) || "normal",
+            createdAt: trim(commit.createdAt),
+            rollbackTargetVersion: rollbackTargetVersion,
+          };
+        }),
+      );
+
+      versionItems.sort(function (a, b) {
+        return b.version - a.version;
+      });
+
+      if (versionItems.length == 0) {
+        var empty = document.createElement("div");
+        empty.style.color = "#666";
+        empty.innerText = "暂无可回滚的版本历史。";
+        list.appendChild(empty);
+        return;
+      }
+
+      versionItems.forEach(function (item) {
+        var row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.alignItems = "center";
+        row.style.justifyContent = "space-between";
+        row.style.gap = "12px";
+        row.style.padding = "8px 0";
+        row.style.borderBottom = "1px solid #eee";
+        list.appendChild(row);
+
+        var meta = document.createElement("div");
+        meta.style.flex = "1 1 auto";
+        row.appendChild(meta);
+
+        var versionText = document.createElement("div");
+        versionText.style.fontWeight = "bold";
+        versionText.innerText =
+          "v" +
+          String(item.version) +
+          (item.version === state.backendDiagramVersion ? "（当前）" : "");
+        meta.appendChild(versionText);
+
+        var detail = document.createElement("div");
+        detail.style.fontSize = "12px";
+        detail.style.color = "#666";
+        detail.innerText =
+          (item.commitType === "rollback"
+            ? "回滚提交" +
+              (item.rollbackTargetVersion != null
+                ? "（回滚到 v" + String(item.rollbackTargetVersion) + "）"
+                : "")
+            : item.commitType === "initial"
+              ? "初始版本"
+              : "普通提交") +
+          (item.actorId.length > 0 ? " | " + item.actorId : "") +
+          (item.createdAt.length > 0
+            ? " | " + item.createdAt.replace("T", " ").slice(0, 19)
+            : "");
+        meta.appendChild(detail);
+
+        var rollbackButton = createButton("回滚到此版本", async function () {
+          if (
+            !mxUtils.confirm(
+              "确定回滚到版本 v" +
+                String(item.version) +
+                " 吗？当前画布内容会被该版本覆盖。",
+            )
+          ) {
+            return;
+          }
+
+          try {
+            await rollbackDiagramToVersion(item.version);
+            wnd.destroy();
+          } catch (e) {
+            showStatus(e.message || String(e), true);
+          }
+        });
+        rollbackButton.style.marginTop = "0";
+        rollbackButton.disabled = item.version === state.backendDiagramVersion;
+        row.appendChild(rollbackButton);
+      });
+    }
+
+    wnd.setVisible(true);
+    list.innerText = "正在读取版本历史...";
+
+    try {
+      renderHistory(await getDiagramHistoryFromBackend(diagramId));
+    } catch (e) {
+      list.innerText = "读取版本历史失败";
+      showStatus(e.message || String(e), true);
+    }
   }
 
   // 接管顶部菜单栏，只保留电气插件自己的几个入口按钮。
@@ -7797,6 +8529,7 @@ Draw.loadPlugin(function (ui) {
     addTopButton("electricalExportSvg", "electricalExportSvg");
     addTopButton("electricalSaveBackend", "electricalSaveBackend");
     addTopButton("electricalLoadBackend", "electricalLoadBackend");
+    addTopButton("electricalRollbackBackend", "electricalRollbackBackend");
 
     ui.menubarContainer.appendChild(bar);
   }
@@ -8678,11 +9411,21 @@ Draw.loadPlugin(function (ui) {
       function () {
         state.previewVariantId = "";
         updateSelectedItem(null, null);
-        if (state.templateWidthInput != null && state.uploadedPrimarySvgSize != null) {
-          state.templateWidthInput.value = String(state.uploadedPrimarySvgSize.width);
+        if (
+          state.templateWidthInput != null &&
+          state.uploadedPrimarySvgSize != null
+        ) {
+          state.templateWidthInput.value = String(
+            state.uploadedPrimarySvgSize.width,
+          );
         }
-        if (state.templateHeightInput != null && state.uploadedPrimarySvgSize != null) {
-          state.templateHeightInput.value = String(state.uploadedPrimarySvgSize.height);
+        if (
+          state.templateHeightInput != null &&
+          state.uploadedPrimarySvgSize != null
+        ) {
+          state.templateHeightInput.value = String(
+            state.uploadedPrimarySvgSize.height,
+          );
         }
       },
     );
@@ -8919,6 +9662,14 @@ Draw.loadPlugin(function (ui) {
     }
   });
 
+  ui.actions.addAction("electricalRollbackBackend", function () {
+    try {
+      openBackendRollbackDialog();
+    } catch (e) {
+      showStatus(e.message || String(e), true);
+    }
+  });
+
   ui.actions.addAction("electricalClearScreen", function () {
     try {
       clearCurrentPage();
@@ -8949,6 +9700,7 @@ Draw.loadPlugin(function (ui) {
         "electricalExportSvg",
         "electricalSaveBackend",
         "electricalLoadBackend",
+        "electricalRollbackBackend",
       ],
       parent,
     );

@@ -1,4 +1,4 @@
-﻿export type DiagramObjectKind = 'frame' | 'cabinet' | 'symbol';
+export type DiagramObjectKind = 'frame' | 'cabinet' | 'symbol' | 'generic';
 
 export interface DiagramGeometry {
   x: number;
@@ -17,8 +17,8 @@ export interface DiagramObjectRecord {
 }
 
 export interface DiagramEdgeTerminal {
-  objectId: string;
-  portId: string;
+  objectId: string | null;
+  portId: string | null;
 }
 
 export interface DiagramEdgeRecord {
@@ -32,7 +32,6 @@ export interface DiagramSnapshotRecord {
   diagramId: string;
   version: number;
   updatedAt: string;
-  rawGraphXml: string;
   objects: DiagramObjectRecord[];
   edges: DiagramEdgeRecord[];
 }
@@ -59,4 +58,3 @@ export interface DiagramCommitRecord {
   touchedObjectIds: string[];
   changes: DiagramChangeRecord[];
 }
-

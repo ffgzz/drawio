@@ -45,7 +45,6 @@ export class DiagramsService {
       diagramId: id,
       version: 0,
       updatedAt: new Date().toISOString(),
-      rawGraphXml: '',
       objects: [],
       edges: [],
     };
@@ -260,7 +259,6 @@ export class DiagramsService {
       diagramId,
       version,
       updatedAt: new Date().toISOString(),
-      rawGraphXml: typeof raw.rawGraphXml === 'string' ? raw.rawGraphXml : '',
       objects: Array.isArray(raw.objects) ? this.clone(raw.objects) : [],
       edges: Array.isArray(raw.edges) ? this.clone(raw.edges) : [],
     };
