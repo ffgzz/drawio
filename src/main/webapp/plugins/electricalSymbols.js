@@ -8,7 +8,6 @@ Draw.loadPlugin(function (ui) {
   const ROOT_TAG = "ElectricalSymbol";
   const BODY_TAG = "ElectricalBody";
   const LABEL_TAG = "ElectricalLabel";
-  const BADGE_TAG = "ElectricalBadge";
   const FRAME_TAG = "DrawingFrame";
   const FRAME_LABEL_TAG = "DrawingFrameLabel";
   const CABINET_TAG = "CabinetSegment";
@@ -20,7 +19,6 @@ Draw.loadPlugin(function (ui) {
   const CABINET_GAP_TYPE = "cabinetGap";
   const BODY_KIND = "body";
   const LABEL_KIND = "label";
-  const BADGE_KIND = "badge";
   const FRAME_LABEL_KIND = "pageLabel";
   const CABINET_BODY_KIND = "cabinetBody";
   const CABINET_GAP_KIND = "cabinetGap";
@@ -40,6 +38,9 @@ Draw.loadPlugin(function (ui) {
   const CABINET_MIN_PORT_FOLLOW_SPACE_RATIO = 0.24;
   const BACKEND_SESSION_STORAGE_KEY = "electrical-symbol-backend-session";
   const BACKEND_DEFAULT_BASE_URL = "/api";
+  const INSTANCE_COMPOSE_ZONE_PADDING = 80;
+  const INSTANCE_COMPOSE_ZONE_MIN_WIDTH = 260;
+  const INSTANCE_COMPOSE_ZONE_MIN_HEIGHT = 200;
   // 保存插件窗口和运行期缓存
   const state = {
     libraryImages: [],
@@ -47,6 +48,9 @@ Draw.loadPlugin(function (ui) {
     window: null,
     templatesWindow: null,
     instanceWindow: null,
+    instanceComposeSession: null,
+    instanceComposeOverlay: null,
+    instanceComposeKeyHandler: null,
     status: null,
     symbolIdInput: null,
     symbolIdTouched: false,
@@ -80,6 +84,10 @@ Draw.loadPlugin(function (ui) {
     backendDiagramTitle: "",
     backendDiagramVersion: 0,
     backendLastSnapshot: null,
+    pendingChangeRecords: [],
+    nextChangeSequence: 1,
+    suspendOperationRecording: false,
+    lastOperationSnapshot: null,
   };
 
   mxResources.parse(
@@ -88,12 +96,14 @@ Draw.loadPlugin(function (ui) {
       "electricalBrowse=已定义图元",
       "electricalCreate=创建电气图元",
       "electricalEditInstance=编辑图元实例",
+      "electricalComposeInstance=组合图元实例",
       "electricalRefresh=刷新电气图元",
       "electricalExportSvg=导出SVG",
       "electricalInsertFrame=插入图框",
       "electricalInsertCabinet=插入配电柜",
       "electricalReassignPort=更换挂点",
       "electricalSaveBackend=保存到后端",
+      "electricalNewBackend=新建后端图纸",
       "electricalLoadBackend=从后端加载",
       "electricalRollbackBackend=版本回滚",
       "electricalPreview=刷新预览",
@@ -118,6 +128,9 @@ Draw.loadPlugin(function (ui) {
       }
 
       const session = JSON.parse(raw);
+      var normalizedLastSnapshot = normalizeSnapshotGenericIds(
+        session.lastSnapshot,
+      );
       state.backendBaseUrl = normalizeBackendBaseUrl(session.baseUrl);
       state.backendActorId = trim(session.actorId) || "local-user";
       state.backendDiagramId = trim(session.diagramId);
@@ -126,8 +139,8 @@ Draw.loadPlugin(function (ui) {
         0,
         toInt(session.diagramVersion, 0),
       );
-      state.backendLastSnapshot = isObject(session.lastSnapshot)
-        ? cloneJson(session.lastSnapshot)
+      state.backendLastSnapshot = isObject(normalizedLastSnapshot)
+        ? cloneJson(normalizedLastSnapshot)
         : null;
     } catch (e) {
       state.backendBaseUrl = BACKEND_DEFAULT_BASE_URL;
@@ -153,12 +166,36 @@ Draw.loadPlugin(function (ui) {
           diagramId: state.backendDiagramId,
           diagramTitle: state.backendDiagramTitle,
           diagramVersion: state.backendDiagramVersion,
-          lastSnapshot: state.backendLastSnapshot,
+          lastSnapshot: normalizeSnapshotGenericIds(state.backendLastSnapshot),
         }),
       );
     } catch (e) {
       // ignore storage failures
     }
+  }
+
+  function uniqueStrings(values) {
+    var result = [];
+    var seen = {};
+    var i;
+
+    for (i = 0; Array.isArray(values) && i < values.length; i++) {
+      var value = trim(values[i]);
+
+      if (value.length > 0 && seen[value] == null) {
+        seen[value] = true;
+        result.push(value);
+      }
+    }
+
+    return result;
+  }
+
+  function resetPendingChangeRecords(baselineSnapshot) {
+    state.pendingChangeRecords = [];
+    state.nextChangeSequence = 1;
+    state.lastOperationSnapshot =
+      baselineSnapshot != null ? cloneJson(baselineSnapshot) : null;
   }
 
   loadBackendSession();
@@ -334,6 +371,10 @@ Draw.loadPlugin(function (ui) {
 
   function findPortHostRoot(cell) {
     while (cell != null) {
+      if (shouldExportGenericObject(cell)) {
+        return null;
+      }
+
       if (isPortHostRoot(cell)) {
         return cell;
       }
@@ -429,6 +470,7 @@ Draw.loadPlugin(function (ui) {
     return base;
   }
 
+  // 规范化配电柜模型配置
   function normalizeCabinetModel(raw) {
     raw = isObject(raw) ? cloneJson(raw) : {};
     var portCount = Math.max(
@@ -2097,21 +2139,6 @@ Draw.loadPlugin(function (ui) {
     );
   }
 
-  // 创建主/备徽标的统一样式，颜色随模式变化。
-  function makeBadgeStyle(mode) {
-    var fillColor = mode == "standby" ? "#ffe9d6" : "#e6f4ea";
-    var strokeColor = mode == "standby" ? "#b06000" : "#1e8e3e";
-
-    return (
-      "rounded=1;arcSize=18;part=1;html=1;whiteSpace=wrap;align=center;" +
-      "verticalAlign=middle;fontStyle=1;strokeColor=" +
-      strokeColor +
-      ";fillColor=" +
-      fillColor +
-      ";connectable=0;rotatable=0;"
-    );
-  }
-
   function defaultPortPosition(index, count) {
     return count <= 0 ? 0.5 : (index + 1) / (count + 1);
   }
@@ -3076,6 +3103,25 @@ Draw.loadPlugin(function (ui) {
     updateCabinetGapHighlight();
   }
 
+  function getStyleConstraintFromEdge(edge, source) {
+    var style = graph.getCellStyle(edge) || {};
+    var prefix = source ? "exit" : "entry";
+    var x = mxUtils.getValue(style, prefix + "X", null);
+    var y = mxUtils.getValue(style, prefix + "Y", null);
+
+    if (trim(x).length == 0 || trim(y).length == 0) {
+      return null;
+    }
+
+    return new mxConnectionConstraint(
+      new mxPoint(toNumber(x, 0), toNumber(y, 0)),
+      mxUtils.getValue(style, prefix + "Perimeter", 1) != "0",
+      null,
+      toNumber(mxUtils.getValue(style, prefix + "Dx", 0), 0),
+      toNumber(mxUtils.getValue(style, prefix + "Dy", 0), 0),
+    );
+  }
+
   function getEdgePortId(edge, root, source) {
     var style = graph.getCellStyle(edge) || {};
     var key = source ? "sourcePortId" : "targetPortId";
@@ -3091,9 +3137,60 @@ Draw.loadPlugin(function (ui) {
       edgeState != null && terminalState != null
         ? graph.getConnectionConstraint(edgeState, terminalState, source)
         : null;
+
+    if (constraint == null) {
+      constraint = getStyleConstraintFromEdge(edge, source);
+    }
+
     var point = constraint != null ? constraint.point : null;
-    var ports = parsePortLayout(getAttr(root, "portsJson"));
+    var isGenericRoot = !isElectricalRoot(root) && !isCabinetSegment(root);
+    var genericBindings = isGenericRoot
+      ? collectGenericPortBindings(root)
+      : null;
+    var ports = isGenericRoot
+      ? genericBindings.map(function (binding) {
+          return binding.port;
+        })
+      : parsePortLayout(getAttr(root, "portsJson"));
     var i;
+
+    if (isGenericRoot && constraint != null) {
+      var absolutePoint =
+        edgeState != null && terminalState != null
+          ? graph.getConnectionPoint(terminalState, constraint)
+          : null;
+
+      for (i = 0; i < genericBindings.length; i++) {
+        var binding = genericBindings[i];
+
+        if (
+          trim(binding.port.name).length > 0 &&
+          trim(binding.port.name) == trim(constraint.name)
+        ) {
+          return trim(binding.port.id);
+        }
+
+        if (
+          binding.constraint != null &&
+          binding.constraint.point != null &&
+          Math.abs(binding.constraint.point.x - constraint.point.x) < 0.0001 &&
+          Math.abs(binding.constraint.point.y - constraint.point.y) < 0.0001 &&
+          toNumber(binding.constraint.dx, 0) == toNumber(constraint.dx, 0) &&
+          toNumber(binding.constraint.dy, 0) == toNumber(constraint.dy, 0) &&
+          binding.constraint.perimeter === constraint.perimeter
+        ) {
+          return trim(binding.port.id);
+        }
+
+        if (
+          absolutePoint != null &&
+          Math.abs(binding.port.x - absolutePoint.x) < 1 &&
+          Math.abs(binding.port.y - absolutePoint.y) < 1
+        ) {
+          return trim(binding.port.id);
+        }
+      }
+    }
 
     if (point != null) {
       for (i = 0; i < ports.length; i++) {
@@ -3511,6 +3608,659 @@ Draw.loadPlugin(function (ui) {
     }
   }
 
+  function isCellDescendantOf(cell, ancestor) {
+    while (cell != null) {
+      if (cell == ancestor) {
+        return true;
+      }
+
+      cell = model.getParent(cell);
+    }
+
+    return false;
+  }
+
+  function getCellViewBounds(cell) {
+    var stateView = graph.view.getState(cell);
+
+    if (stateView == null) {
+      return null;
+    }
+
+    return {
+      x: stateView.x,
+      y: stateView.y,
+      width: stateView.width,
+      height: stateView.height,
+    };
+  }
+
+  function getCellModelBounds(cell) {
+    var stateView = graph.view.getState(cell);
+    var scale = graph.view.scale || 1;
+    var translate = graph.view.translate || { x: 0, y: 0 };
+
+    if (stateView != null) {
+      return {
+        x: stateView.x / scale - translate.x,
+        y: stateView.y / scale - translate.y,
+        width: stateView.width / scale,
+        height: stateView.height / scale,
+      };
+    }
+
+    var geometry = model.getGeometry(cell);
+
+    if (geometry == null) {
+      return null;
+    }
+
+    return {
+      x: geometry.x,
+      y: geometry.y,
+      width: geometry.width,
+      height: geometry.height,
+    };
+  }
+
+  function getUnionViewBounds(cells) {
+    var bounds = null;
+    var i;
+
+    for (i = 0; i < cells.length; i++) {
+      var cellBounds = getCellViewBounds(cells[i]);
+
+      if (cellBounds == null) {
+        continue;
+      }
+
+      if (bounds == null) {
+        bounds = {
+          x: cellBounds.x,
+          y: cellBounds.y,
+          width: cellBounds.width,
+          height: cellBounds.height,
+        };
+      } else {
+        var right = Math.max(bounds.x + bounds.width, cellBounds.x + cellBounds.width);
+        var bottom = Math.max(bounds.y + bounds.height, cellBounds.y + cellBounds.height);
+        bounds.x = Math.min(bounds.x, cellBounds.x);
+        bounds.y = Math.min(bounds.y, cellBounds.y);
+        bounds.width = right - bounds.x;
+        bounds.height = bottom - bounds.y;
+      }
+    }
+
+    return bounds;
+  }
+
+  function getInstanceComposeZoneBounds(root, extraCells) {
+    var candidates = [root];
+    var bounds;
+    var container = graph.container;
+    var scrollLeft = container.scrollLeft;
+    var scrollTop = container.scrollTop;
+    var viewportLeft = scrollLeft + 20;
+    var viewportTop = scrollTop + 20;
+    var viewportRight = scrollLeft + container.clientWidth - 20;
+    var viewportBottom = scrollTop + container.clientHeight - 20;
+    var width;
+    var height;
+    var left;
+    var top;
+    var maxLeft;
+    var maxTop;
+
+    if (Array.isArray(extraCells) && extraCells.length > 0) {
+      candidates = candidates.concat(extraCells);
+    }
+
+    bounds = getUnionViewBounds(candidates);
+
+    if (bounds == null) {
+      return null;
+    }
+
+    width = Math.max(
+      INSTANCE_COMPOSE_ZONE_MIN_WIDTH,
+      bounds.width + INSTANCE_COMPOSE_ZONE_PADDING * 2,
+    );
+    height = Math.max(
+      INSTANCE_COMPOSE_ZONE_MIN_HEIGHT,
+      bounds.height + INSTANCE_COMPOSE_ZONE_PADDING * 2,
+    );
+    left = bounds.x + (bounds.width - width) / 2;
+    top = bounds.y + (bounds.height - height) / 2;
+    maxLeft = Math.max(viewportLeft, viewportRight - width);
+    maxTop = Math.max(viewportTop, viewportBottom - height);
+
+    return {
+      left: clamp(Math.round(left), viewportLeft, maxLeft),
+      top: clamp(Math.round(top), viewportTop, maxTop),
+      width: Math.round(Math.min(width, viewportRight - viewportLeft)),
+      height: Math.round(Math.min(height, viewportBottom - viewportTop)),
+    };
+  }
+
+  function clearInstanceComposeOverlay() {
+    if (
+      state.instanceComposeOverlay != null &&
+      state.instanceComposeOverlay.parentNode != null
+    ) {
+      state.instanceComposeOverlay.parentNode.removeChild(
+        state.instanceComposeOverlay,
+      );
+    }
+
+    state.instanceComposeOverlay = null;
+  }
+
+  function renderInstanceComposeOverlay(session) {
+    var containerRect = graph.container.getBoundingClientRect();
+    var zone = getInstanceComposeZoneBounds(
+      session.root,
+      session.dragging ? session.dragCandidates : null,
+    );
+    var scrollLeft = graph.container.scrollLeft || 0;
+    var scrollTop = graph.container.scrollTop || 0;
+    var container = document.createElement("div");
+    var shade = document.createElement("div");
+    var zoneNode = document.createElement("div");
+    var hint = document.createElement("div");
+    var actions = document.createElement("div");
+    var completeButton = document.createElement("button");
+    var cancelButton = document.createElement("button");
+    var controlsTop;
+
+    clearInstanceComposeOverlay();
+
+    if (zone == null) {
+      return;
+    }
+
+    session.zoneBounds = zone;
+
+    container.style.position = "fixed";
+    container.style.left = Math.round(containerRect.left) + "px";
+    container.style.top = Math.round(containerRect.top) + "px";
+    container.style.width = graph.container.clientWidth + "px";
+    container.style.height = graph.container.clientHeight + "px";
+    container.style.pointerEvents = "none";
+    container.style.zIndex = "3";
+
+    shade.style.position = "absolute";
+    shade.style.left = "0";
+    shade.style.top = "0";
+    shade.style.width = "100%";
+    shade.style.height = "100%";
+    shade.style.background = "rgba(15, 23, 42, 0.18)";
+    container.appendChild(shade);
+
+    zoneNode.style.position = "absolute";
+    zoneNode.style.left = zone.left - scrollLeft + "px";
+    zoneNode.style.top = zone.top - scrollTop + "px";
+    zoneNode.style.width = zone.width + "px";
+    zoneNode.style.height = zone.height + "px";
+    zoneNode.style.border = "3px solid #16a34a";
+    zoneNode.style.borderRadius = "10px";
+    zoneNode.style.background = "rgba(22,163,74,0.06)";
+    zoneNode.style.boxSizing = "border-box";
+    zoneNode.style.backdropFilter = "none";
+    container.appendChild(zoneNode);
+
+    hint.style.position = "absolute";
+    hint.style.left = zone.left - scrollLeft + "px";
+    hint.style.top = Math.max(8, zone.top - 28 - scrollTop) + "px";
+    hint.style.padding = "4px 10px";
+    hint.style.maxWidth = Math.max(120, zone.width - 176) + "px";
+    hint.style.borderRadius = "6px";
+    hint.style.background = "rgba(22,163,74,0.92)";
+    hint.style.color = "#ffffff";
+    hint.style.fontSize = "12px";
+    hint.style.fontWeight = "bold";
+    hint.style.whiteSpace = "nowrap";
+    hint.style.overflow = "hidden";
+    hint.style.textOverflow = "ellipsis";
+    hint.innerText = "拖入绿色区域即可组合到当前图元实例";
+    container.appendChild(hint);
+
+    controlsTop = Math.max(8, zone.top - 30 - scrollTop);
+    actions.style.position = "absolute";
+    actions.style.right = Math.max(
+      8,
+      graph.container.clientWidth - (zone.left + zone.width - scrollLeft),
+    ) + "px";
+    actions.style.top = controlsTop + "px";
+    actions.style.display = "flex";
+    actions.style.gap = "8px";
+    actions.style.pointerEvents = "auto";
+
+    completeButton.type = "button";
+    completeButton.innerText = "完成";
+    completeButton.style.height = "28px";
+    completeButton.style.padding = "0 14px";
+    completeButton.style.border = "1px solid #16a34a";
+    completeButton.style.borderRadius = "6px";
+    completeButton.style.background = "#16a34a";
+    completeButton.style.color = "#ffffff";
+    completeButton.style.cursor = "pointer";
+    mxEvent.addListener(completeButton, "click", function (evt) {
+      mxEvent.consume(evt);
+      completeInstanceComposeMode();
+    });
+    actions.appendChild(completeButton);
+
+    cancelButton.type = "button";
+    cancelButton.innerText = "取消";
+    cancelButton.style.height = "28px";
+    cancelButton.style.padding = "0 14px";
+    cancelButton.style.border = "1px solid #cbd5e1";
+    cancelButton.style.borderRadius = "6px";
+    cancelButton.style.background = "#ffffff";
+    cancelButton.style.color = "#334155";
+    cancelButton.style.cursor = "pointer";
+    mxEvent.addListener(cancelButton, "click", function (evt) {
+      mxEvent.consume(evt);
+      exitInstanceComposeMode();
+    });
+    actions.appendChild(cancelButton);
+
+    container.appendChild(actions);
+
+    document.body.appendChild(container);
+    state.instanceComposeOverlay = container;
+  }
+
+  function refreshInstanceComposeOverlay() {
+    if (state.instanceComposeSession == null) {
+      return;
+    }
+
+    renderInstanceComposeOverlay(state.instanceComposeSession);
+  }
+
+  function exitInstanceComposeMode(clearStatus) {
+    clearInstanceComposeOverlay();
+    state.instanceComposeSession = null;
+
+    if (state.instanceComposeKeyHandler != null) {
+      mxEvent.removeListener(
+        document,
+        "keydown",
+        state.instanceComposeKeyHandler,
+      );
+      state.instanceComposeKeyHandler = null;
+    }
+
+    if (clearStatus !== false) {
+      setCanvasStatus("");
+    }
+  }
+
+  function isBlockedComposeTarget(cell) {
+    var session = state.instanceComposeSession;
+    var ownerRoot;
+
+    if (session == null || session.root == null || cell == null) {
+      return false;
+    }
+
+    if (cell == session.root) {
+      return true;
+    }
+
+    ownerRoot = findOwningElectricalRoot(cell);
+
+    return (
+      ownerRoot == session.root &&
+      isPluginInternalCell(cell)
+    );
+  }
+
+  function findOwningElectricalRoot(cell) {
+    var current = cell;
+
+    while (current != null) {
+      if (isElectricalRoot(current)) {
+        return current;
+      }
+
+      current = model.getParent(current);
+    }
+
+    return null;
+  }
+
+  function isLockedComposedChild(cell) {
+    var composeSession = state.instanceComposeSession;
+
+    if (cell == null || isDrawingFrame(cell) || isCabinetSegment(cell)) {
+      return false;
+    }
+
+    var ownerRoot = findOwningElectricalRoot(model.getParent(cell));
+
+    if (ownerRoot == null) {
+      return false;
+    }
+
+    if (composeSession != null && composeSession.root == ownerRoot) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function isComposableCandidateCell(cell, root) {
+    return (
+      cell != null &&
+      !model.isEdge(cell) &&
+      !isDrawingFrame(cell) &&
+      !isCabinetSegment(cell) &&
+      !isCabinetGap(cell) &&
+      !isPluginInternalCell(cell) &&
+      cell != root &&
+      !isCellDescendantOf(cell, root) &&
+      (isElectricalRoot(cell) || shouldExportGenericObject(cell))
+    );
+  }
+
+  function filterTopLevelSelection(cells) {
+    var result = [];
+    var i;
+    var j;
+    var nested;
+
+    for (i = 0; i < cells.length; i++) {
+      nested = false;
+
+      for (j = 0; j < cells.length; j++) {
+        if (i != j && isCellDescendantOf(cells[i], cells[j])) {
+          nested = true;
+          break;
+        }
+      }
+
+      if (!nested) {
+        result.push(cells[i]);
+      }
+    }
+
+    return result;
+  }
+
+  function collectComposableSelection(root) {
+    var selection = graph.getSelectionCells();
+    var candidates = [];
+    var i;
+
+    for (i = 0; i < selection.length; i++) {
+      if (isComposableCandidateCell(selection[i], root)) {
+        candidates.push(selection[i]);
+      }
+    }
+
+    return filterTopLevelSelection(candidates);
+  }
+
+  function collectComposeDragCandidates(root, eventCell) {
+    var candidates = collectComposableSelection(root);
+
+    if (
+      candidates.length == 0 &&
+      isComposableCandidateCell(eventCell, root)
+    ) {
+      candidates = [eventCell];
+    }
+
+    return filterTopLevelSelection(candidates);
+  }
+
+  function collectComposableCells(root) {
+    var cells = model.cells || {};
+    var result = [];
+    var id;
+    var cell;
+
+    for (id in cells) {
+      if (!Object.prototype.hasOwnProperty.call(cells, id)) {
+        continue;
+      }
+
+      cell = cells[id];
+
+      if (isComposableCandidateCell(cell, root)) {
+        result.push(cell);
+      }
+    }
+
+    return filterTopLevelSelection(result);
+  }
+
+  function collectComposableCellsInZone(root, zone) {
+    var candidates = collectComposableCells(root);
+    var result = [];
+    var i;
+
+    for (i = 0; i < candidates.length; i++) {
+      if (intersectsComposeZone(candidates[i], zone)) {
+        result.push(candidates[i]);
+      }
+    }
+
+    return result;
+  }
+
+  function toCellIdMap(cells) {
+    var map = {};
+    var i;
+
+    for (i = 0; i < cells.length; i++) {
+      if (cells[i] != null && trim(cells[i].id).length > 0) {
+        map[cells[i].id] = true;
+      }
+    }
+
+    return map;
+  }
+
+  function intersectsComposeZone(cell, zone) {
+    var bounds = getCellViewBounds(cell);
+
+    if (bounds == null || zone == null) {
+      return false;
+    }
+
+    return !(
+      bounds.x + bounds.width < zone.left ||
+      bounds.x > zone.left + zone.width ||
+      bounds.y + bounds.height < zone.top ||
+      bounds.y > zone.top + zone.height
+    );
+  }
+
+  function attachCellsToElectricalRoot(root, cells) {
+    var rootBounds = getCellModelBounds(root);
+    var attached = [];
+    var i;
+
+    if (rootBounds == null) {
+      throw new Error("当前目标图元无法计算位置，不能执行组合");
+    }
+
+    state.updatingModel = true;
+    model.beginUpdate();
+
+    try {
+      for (i = 0; i < cells.length; i++) {
+        var cell = cells[i];
+        var geometry = model.getGeometry(cell);
+        var cellBounds = getCellModelBounds(cell);
+
+        if (geometry == null || cellBounds == null || model.getParent(cell) == root) {
+          continue;
+        }
+
+        geometry = geometry.clone();
+        geometry.relative = false;
+        geometry.x = cellBounds.x - rootBounds.x;
+        geometry.y = cellBounds.y - rootBounds.y;
+        model.add(root, cell, model.getChildCount(root));
+        model.setGeometry(cell, geometry);
+        attached.push(cell);
+      }
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+
+    return attached;
+  }
+
+  function handleInstanceComposeDrop(candidates) {
+    var session = state.instanceComposeSession;
+    var root;
+    var matched = [];
+    var i;
+
+    if (session == null) {
+      return;
+    }
+
+    root = session.root;
+
+    if (root == null || root.parent == null) {
+      exitInstanceComposeMode();
+      return;
+    }
+
+    candidates =
+      candidates != null ? filterTopLevelSelection(candidates) : collectComposableSelection(root);
+
+    for (i = 0; i < candidates.length; i++) {
+      if (intersectsComposeZone(candidates[i], session.zoneBounds)) {
+        matched.push(candidates[i]);
+      }
+    }
+
+    if (matched.length == 0) {
+      refreshInstanceComposeOverlay();
+      return;
+    }
+
+    var attached = attachCellsToElectricalRoot(root, matched);
+
+    if (attached.length > 0) {
+      graph.setSelectionCells(attached);
+      showStatus("已组合到当前图元实例", false);
+      setCanvasStatus(
+        "组合模式：继续拖入其他图元，按 Esc 或再次点击按钮退出",
+      );
+    }
+
+    refreshInstanceComposeOverlay();
+  }
+
+  function completeInstanceComposeMode() {
+    var session = state.instanceComposeSession;
+    var root;
+    var candidates;
+    var matched = [];
+    var attached;
+    var i;
+
+    if (session == null) {
+      return;
+    }
+
+    root = session.root;
+
+    if (root == null || root.parent == null) {
+      exitInstanceComposeMode();
+      return;
+    }
+
+    candidates = collectComposableCellsInZone(root, session.zoneBounds);
+
+    for (i = 0; i < candidates.length; i++) {
+      if (!session.initialZoneCellIds[candidates[i].id]) {
+        matched.push(candidates[i]);
+      }
+    }
+
+    if (matched.length == 0) {
+      showStatus("绿色区域内没有新的可组合图元", true);
+      return;
+    }
+
+    attached = attachCellsToElectricalRoot(root, matched);
+
+    if (attached.length == 0) {
+      showStatus("没有检测到可组合的图元", true);
+      return;
+    }
+
+    exitInstanceComposeMode(false);
+    graph.setSelectionCell(root);
+    showStatus("已组合到当前图元实例", false);
+    setCanvasStatus("");
+  }
+
+  function enterInstanceComposeMode() {
+    if (state.instanceComposeSession != null) {
+      exitInstanceComposeMode();
+      return;
+    }
+
+    var root = findElectricalRoot(graph.getSelectionCell());
+
+    if (root == null) {
+      showStatus("请先选中一个自定义图元实例，再执行组合图元实例", true);
+      setCanvasStatus("请先选中一个自定义图元实例，再执行组合图元实例");
+      return;
+    }
+
+    state.instanceComposeSession = {
+      root: root,
+      pointerDown: false,
+      dragging: false,
+      startPoint: null,
+      dragCandidates: [],
+      zoneBounds: null,
+      initialZoneCellIds: {},
+    };
+    closeGapDialogWindow();
+    exitPortSwapMode(false);
+    graph.clearSelection();
+    if (
+      graph.selectionCellsHandler != null &&
+      typeof graph.selectionCellsHandler.clear === "function"
+    ) {
+      graph.selectionCellsHandler.clear();
+    }
+    refreshInstanceComposeOverlay();
+    state.instanceComposeSession.initialZoneCellIds = toCellIdMap(
+      collectComposableCellsInZone(
+        root,
+        state.instanceComposeSession.zoneBounds,
+      ),
+    );
+    setCanvasStatus(
+      "组合模式：把普通图元或自定义图元拖入绿色区域，然后点击完成",
+    );
+
+    state.instanceComposeKeyHandler = function (evt) {
+      if (evt.key == "Escape") {
+        exitInstanceComposeMode();
+      }
+    };
+    mxEvent.addListener(
+      document,
+      "keydown",
+      state.instanceComposeKeyHandler,
+    );
+  }
+
   function buildPortSwapContextFromEdge(edge) {
     var sourceTerminal = model.getTerminal(edge, true);
     var targetTerminal = model.getTerminal(edge, false);
@@ -3862,6 +4612,7 @@ Draw.loadPlugin(function (ui) {
     closeGapDialogWindow();
     setSelectedCabinetGap(null, null);
     exitPortSwapMode(false);
+    exitInstanceComposeMode(false);
 
     state.allowProtectedDelete = true;
 
@@ -3920,6 +4671,7 @@ Draw.loadPlugin(function (ui) {
     return normalizeBackendBaseUrl(state.backendBaseUrl) + path;
   }
 
+  // 用于向后端请求 JSON 数据的工具函数，自动处理错误并返回解析后的数据
   function requestBackendJson(method, url, body) {
     var options = {
       method: method,
@@ -4010,8 +4762,84 @@ Draw.loadPlugin(function (ui) {
     );
   }
 
+  function normalizeGenericStableId(value) {
+    var stableId = trim(value);
+
+    while (stableId.indexOf("generic:") === 0) {
+      stableId = stableId.substring("generic:".length);
+    }
+
+    return stableId;
+  }
+
   function getGenericObjectId(cell) {
-    return "generic:" + getCellStableId(cell);
+    return normalizeGenericStableId(getCellStableId(cell));
+  }
+
+  function normalizeSnapshotGenericIds(snapshot) {
+    if (!isObject(snapshot)) {
+      return snapshot;
+    }
+
+    var normalized = cloneJson(snapshot);
+    var genericIdMap = {};
+    var i;
+
+    if (Array.isArray(normalized.objects)) {
+      for (i = 0; i < normalized.objects.length; i++) {
+        var object = normalized.objects[i];
+
+        if (trim(object.kind) == "generic") {
+          var currentId = trim(object.id);
+          var nextId = normalizeGenericStableId(currentId);
+
+          if (currentId.length > 0 && currentId != nextId) {
+            genericIdMap[currentId] = nextId;
+            object.id = nextId;
+          }
+        }
+      }
+
+      for (i = 0; i < normalized.objects.length; i++) {
+        var parentId = trim(normalized.objects[i].parentId);
+
+        if (genericIdMap[parentId] != null) {
+          normalized.objects[i].parentId = genericIdMap[parentId];
+        }
+      }
+    }
+
+    if (Array.isArray(normalized.edges)) {
+      for (i = 0; i < normalized.edges.length; i++) {
+        var edge = normalized.edges[i];
+        var sourceObjectId = trim(
+          edge.source != null ? edge.source.objectId : "",
+        );
+        var targetObjectId = trim(
+          edge.target != null ? edge.target.objectId : "",
+        );
+
+        if (genericIdMap[sourceObjectId] != null) {
+          edge.source.objectId = genericIdMap[sourceObjectId];
+        }
+
+        if (genericIdMap[targetObjectId] != null) {
+          edge.target.objectId = genericIdMap[targetObjectId];
+        }
+      }
+    }
+
+    if (Array.isArray(normalized.changes)) {
+      for (i = 0; i < normalized.changes.length; i++) {
+        var changeObjectId = trim(normalized.changes[i].objectId);
+
+        if (genericIdMap[changeObjectId] != null) {
+          normalized.changes[i].objectId = genericIdMap[changeObjectId];
+        }
+      }
+    }
+
+    return normalized;
   }
 
   function isPlainXmlNode(value) {
@@ -4098,7 +4926,9 @@ Draw.loadPlugin(function (ui) {
           node.appendChild(elementChild);
         }
       } else if (child.kind == "text") {
-        node.appendChild(node.ownerDocument.createTextNode(String(child.value)));
+        node.appendChild(
+          node.ownerDocument.createTextNode(String(child.value)),
+        );
       }
     }
 
@@ -4246,7 +5076,11 @@ Draw.loadPlugin(function (ui) {
       );
     }
 
-    if (isObject(data) && Array.isArray(data.points) && data.points.length > 0) {
+    if (
+      isObject(data) &&
+      Array.isArray(data.points) &&
+      data.points.length > 0
+    ) {
       geometry.points = data.points.map(function (point) {
         return new mxPoint(toNumber(point.x, 0), toNumber(point.y, 0));
       });
@@ -4271,7 +5105,6 @@ Draw.loadPlugin(function (ui) {
       isCabinetGap(cell) ||
       kind == BODY_KIND ||
       kind == LABEL_KIND ||
-      kind == BADGE_KIND ||
       kind == FRAME_LABEL_KIND ||
       kind == CABINET_BODY_KIND ||
       kind == CABINET_GAP_KIND
@@ -4313,6 +5146,93 @@ Draw.loadPlugin(function (ui) {
     return null;
   }
 
+  // 提取通用对象的端口信息
+  function collectGenericPortBindings(cell) {
+    var seen = {};
+    var result = [];
+
+    function addConstraint(constraint) {
+      if (constraint == null || constraint.point == null) {
+        return;
+      }
+
+      var duplicateKey = JSON.stringify({
+        name: trim(constraint.name),
+        x: toNumber(constraint.point.x, 0),
+        y: toNumber(constraint.point.y, 0),
+        perimeter: constraint.perimeter !== false,
+        dx: toNumber(constraint.dx, 0),
+        dy: toNumber(constraint.dy, 0),
+      });
+
+      if (seen[duplicateKey]) {
+        return;
+      }
+
+      seen[duplicateKey] = true;
+
+      var entry = {
+        id: trim(constraint.name) || "port:" + String(result.length + 1),
+        name: trim(constraint.name),
+        x: toNumber(constraint.point.x, 0),
+        y: toNumber(constraint.point.y, 0),
+        marker: "cross",
+        direction: "any",
+        ioMode: "both",
+        perimeter: constraint.perimeter !== false,
+        dx: toNumber(constraint.dx, 0),
+        dy: toNumber(constraint.dy, 0),
+      };
+      result.push({
+        port: entry,
+        constraint: constraint,
+      });
+    }
+
+    var state = graph.view.getState(cell);
+
+    if (state != null) {
+      var sourceConstraints = graph.getAllConnectionConstraints(state, true);
+      var targetConstraints = graph.getAllConnectionConstraints(state, false);
+      var i;
+
+      if (Array.isArray(sourceConstraints)) {
+        for (i = 0; i < sourceConstraints.length; i++) {
+          addConstraint(sourceConstraints[i]);
+        }
+      }
+
+      if (Array.isArray(targetConstraints)) {
+        for (i = 0; i < targetConstraints.length; i++) {
+          addConstraint(targetConstraints[i]);
+        }
+      }
+    }
+
+    return result;
+  }
+
+  function extractGenericPorts(cell) {
+    return collectGenericPortBindings(cell).map(function (entry) {
+      return entry.port;
+    });
+  }
+
+  function getGenericPortBindingById(cell, portId) {
+    var targetId = trim(portId);
+    var bindings = collectGenericPortBindings(cell);
+    var i;
+
+    for (i = 0; i < bindings.length; i++) {
+      if (trim(bindings[i].port.id) == targetId) {
+        return bindings[i];
+      }
+    }
+
+    return null;
+  }
+
+  // 将通用对象导出为一个包含几何信息和属性的纯数据对象，便于后端存储和处理
   function exportGenericObject(cell) {
     var geometry = model.getGeometry(cell);
     var frame = findDrawingFrame(cell);
@@ -4338,13 +5258,21 @@ Draw.loadPlugin(function (ui) {
             : cell.connectable !== false,
         visible: cell.visible !== false,
         collapsed: !!cell.collapsed,
+        ports: extractGenericPorts(cell),
       },
     };
   }
 
   function getSymbolObjectId(root) {
+    var instanceId = trim(getAttr(root, "instanceId"));
+
+    if (instanceId.length > 0) {
+      return instanceId;
+    }
+
     var spec = extractSpec(root);
-    return trim(spec.instanceId) || trim(spec.symbolId);
+
+    return trim(spec.instanceId) || trim(root != null ? root.id : "");
   }
 
   function exportFrameObject(frame) {
@@ -4403,11 +5331,16 @@ Draw.loadPlugin(function (ui) {
     var spec = extractSpec(root);
     var geometry = model.getGeometry(root);
     var frame = findDrawingFrame(root);
+    var parent = model.getParent(root);
+
+    if (parent == graph.getDefaultParent()) {
+      parent = null;
+    }
 
     return {
       id: getSymbolObjectId(root),
       kind: "symbol",
-      parentId: frame != null ? trim(getAttr(frame, "frameId")) || null : null,
+      parentId: resolveSnapshotObjectId(parent),
       groupId: frame != null ? getFrameGroupId(frame) : null,
       geometry: {
         x: geometry != null ? geometry.x : 0,
@@ -4426,25 +5359,39 @@ Draw.loadPlugin(function (ui) {
     var targetTerminal = model.getTerminal(edge, false);
     var sourceRoot = findPortHostRoot(sourceTerminal);
     var targetRoot = findPortHostRoot(targetTerminal);
+    var sourcePortRoot =
+      sourceRoot != null
+        ? sourceRoot
+        : shouldExportGenericObject(sourceTerminal)
+          ? sourceTerminal
+          : null;
+    var targetPortRoot =
+      targetRoot != null
+        ? targetRoot
+        : shouldExportGenericObject(targetTerminal)
+          ? targetTerminal
+          : null;
     var geometry = model.getGeometry(edge);
     var style = model.getStyle(edge) || "";
     var parent = model.getParent(edge);
     var sourcePortId =
-      sourceRoot != null ? getEdgePortId(edge, sourceRoot, true) : null;
+      sourcePortRoot != null ? getEdgePortId(edge, sourcePortRoot, true) : null;
     var targetPortId =
-      targetRoot != null ? getEdgePortId(edge, targetRoot, false) : null;
+      targetPortRoot != null
+        ? getEdgePortId(edge, targetPortRoot, false)
+        : null;
 
     return {
       id: edge.id || mxObjectIdentity.get(edge),
       source: {
         objectId: resolveSnapshotObjectId(
-          sourceRoot != null ? sourceRoot : sourceTerminal,
+          sourcePortRoot != null ? sourcePortRoot : sourceTerminal,
         ),
         portId: trim(sourcePortId) || null,
       },
       target: {
         objectId: resolveSnapshotObjectId(
-          targetRoot != null ? targetRoot : targetTerminal,
+          targetPortRoot != null ? targetPortRoot : targetTerminal,
         ),
         portId: trim(targetPortId) || null,
       },
@@ -4474,6 +5421,111 @@ Draw.loadPlugin(function (ui) {
     };
   }
 
+  function resolveOperationCell(cell) {
+    if (cell == null) {
+      return null;
+    }
+
+    if (model.isEdge(cell)) {
+      return cell;
+    }
+
+    return (
+      findElectricalRoot(cell) ||
+      findCabinetSegment(cell) ||
+      findDrawingFrame(cell) ||
+      cell
+    );
+  }
+
+  function exportOperationTargetSnapshot(cell) {
+    var target = resolveOperationCell(cell);
+
+    if (target == null) {
+      return null;
+    }
+
+    if (model.isEdge(target)) {
+      return exportEdgeObject(target);
+    }
+
+    if (isDrawingFrame(target)) {
+      return exportFrameObject(target);
+    }
+
+    if (isCabinetSegment(target)) {
+      return exportCabinetObject(target);
+    }
+
+    if (isElectricalRoot(target)) {
+      return exportSymbolObject(target);
+    }
+
+    if (shouldExportGenericObject(target)) {
+      return exportGenericObject(target);
+    }
+
+    return {
+      id: trim(target.id) || mxObjectIdentity.get(target),
+      kind: "unknown",
+      value: serializeCellValue(target.value),
+      geometry: serializeGeometry(model.getGeometry(target)),
+      style: model.getStyle(target) || "",
+    };
+  }
+
+  function collectChangeObjectIds(changes) {
+    var result = [];
+    var i;
+
+    for (i = 0; Array.isArray(changes) && i < changes.length; i++) {
+      if (trim(changes[i].objectId).length > 0) {
+        result.push(changes[i].objectId);
+      }
+    }
+
+    return uniqueStrings(result);
+  }
+
+  function recordCanvasOperation(sender, evt) {
+    if (state.suspendOperationRecording || state.updatingModel) {
+      return;
+    }
+
+    var edit = evt != null ? evt.getProperty("edit") : null;
+    var modelChanges = edit != null ? edit.changes : null;
+    var previousSnapshot = state.lastOperationSnapshot;
+    var currentSnapshot;
+    var diff;
+
+    if (!Array.isArray(modelChanges) || modelChanges.length == 0) {
+      return;
+    }
+
+    currentSnapshot = exportDiagramSnapshot();
+    previousSnapshot = isObject(previousSnapshot)
+      ? previousSnapshot
+      : cloneJson(currentSnapshot);
+    diff = computeSnapshotChanges(previousSnapshot, currentSnapshot);
+    state.lastOperationSnapshot = cloneJson(currentSnapshot);
+
+    if (!Array.isArray(diff.changes) || diff.changes.length == 0) {
+      return;
+    }
+
+    var createdAt = new Date().toISOString();
+    var sequence = state.nextChangeSequence++;
+    var i;
+
+    for (i = 0; i < diff.changes.length; i++) {
+      var change = cloneJson(diff.changes[i]);
+      change.sequence = sequence;
+      change.createdAt = createdAt;
+      state.pendingChangeRecords.push(change);
+    }
+  }
+
+  // 前端生成整图快照
   function exportDiagramSnapshot() {
     var frames = getAllDrawingFrames();
     var frameObjects = [];
@@ -4503,10 +5555,10 @@ Draw.loadPlugin(function (ui) {
         symbolObjects.push(exportSymbolObject(cell));
       } else if (shouldExportGenericObject(cell)) {
         genericObjects.push(exportGenericObject(cell));
-        } else if (model.isEdge(cell)) {
-          edgeObjects.push(exportEdgeObject(cell));
-        }
+      } else if (model.isEdge(cell)) {
+        edgeObjects.push(exportEdgeObject(cell));
       }
+    }
 
     return {
       diagramId: trim(state.backendDiagramId),
@@ -4543,6 +5595,7 @@ Draw.loadPlugin(function (ui) {
     return map;
   }
 
+  // 前端生成两次快照的差异，供后端增量更新使用
   function computeSnapshotChanges(previousSnapshot, nextSnapshot) {
     var previousMap = indexSnapshotEntries(previousSnapshot);
     var nextMap = indexSnapshotEntries(nextSnapshot);
@@ -4611,26 +5664,34 @@ Draw.loadPlugin(function (ui) {
   }
 
   function buildConstraintForPort(root, portId) {
-    var port = getPortMetaById(root, portId);
+    var port = null;
 
-    if (port == null) {
-      return null;
+    if (isElectricalRoot(root) || isCabinetSegment(root)) {
+      port = getPortMetaById(root, portId);
+
+      if (port == null) {
+        return null;
+      }
+
+      return new mxConnectionConstraint(
+        new mxPoint(port.x, port.y),
+        false,
+        port.id,
+      );
     }
 
-    return new mxConnectionConstraint(
-      new mxPoint(port.x, port.y),
-      false,
-      port.id,
-    );
+    var binding = getGenericPortBindingById(root, portId);
+    return binding != null ? binding.constraint : null;
   }
 
   function createGenericCellFromSnapshot(object) {
+    var objectId = trim(object != null ? object.id : "");
     var cell = new mxCell(
       deserializeCellValue(object.props != null ? object.props.value : null),
       deserializeGeometry(object.geometry),
       object.props != null ? object.props.style || "" : "",
     );
-    cell.setId(trim(object.id));
+    cell.setId(normalizeGenericStableId(objectId));
     cell.vertex =
       object.props == null || object.props.vertex == null
         ? true
@@ -4652,7 +5713,12 @@ Draw.loadPlugin(function (ui) {
     return cell;
   }
 
-  function resolveImportedObjectParent(parentId, frameMap, symbolMap, genericMap) {
+  function resolveImportedObjectParent(
+    parentId,
+    frameMap,
+    symbolMap,
+    genericMap,
+  ) {
     var key = trim(parentId);
 
     if (key.length == 0) {
@@ -4685,7 +5751,9 @@ Draw.loadPlugin(function (ui) {
     return null;
   }
 
+  // 前端根据快照数据还原图纸
   function restoreDiagramSnapshot(snapshot) {
+    snapshot = normalizeSnapshotGenericIds(snapshot);
     var frameObjects = [];
     var cabinetObjects = [];
     var symbolObjects = [];
@@ -4695,239 +5763,291 @@ Draw.loadPlugin(function (ui) {
     var symbolMap = {};
     var genericMap = {};
 
+    state.suspendOperationRecording = true;
+    exitInstanceComposeMode(false);
     clearPageForImport();
 
-    if (!isObject(snapshot)) {
-      throw new Error("后端返回的图纸数据无效");
-    }
-
-    if (
-      trim(snapshot.rawGraphXml).length > 0 &&
-      (!Array.isArray(snapshot.objects) || snapshot.objects.length == 0) &&
-      (!Array.isArray(snapshot.edges) || snapshot.edges.length == 0)
-    ) {
-      var legacyDoc = mxUtils.parseXml(snapshot.rawGraphXml);
-      ui.editor.setGraphXml(legacyDoc.documentElement);
-      graph.refresh();
-      return;
-    }
-
-    if (Array.isArray(snapshot.objects)) {
-      for (i = 0; i < snapshot.objects.length; i++) {
-        var item = snapshot.objects[i];
-
-        if (item.kind == "frame") {
-          frameObjects.push(item);
-        } else if (item.kind == "cabinet") {
-          cabinetObjects.push(item);
-        } else if (item.kind == "symbol") {
-          symbolObjects.push(item);
-        } else if (item.kind == "generic") {
-          genericObjects.push(item);
-        }
-      }
-    }
-
-    state.updatingModel = true;
-    model.beginUpdate();
-
     try {
-      for (i = 0; i < frameObjects.length; i++) {
-        var frameObject = frameObjects[i];
-        var frame = createDrawingFrameCell(
-          frameObject.props != null ? frameObject.props.frameConfig : null,
-          frameObject.props != null ? frameObject.props.pageNumber : 1,
-          {
-            frameId: frameObject.id,
-            groupId: frameObject.groupId,
-            originFrameId:
-              frameObject.props != null
-                ? frameObject.props.originFrameId
-                : null,
-            autoFrameOwner:
-              frameObject.props != null
-                ? frameObject.props.autoFrameOwner
-                : null,
-            autoFrameIndex:
-              frameObject.props != null
-                ? frameObject.props.autoFrameIndex
-                : null,
-          },
-        );
-        frame.geometry = new mxGeometry(
-          frameObject.geometry.x,
-          frameObject.geometry.y,
-          frameObject.geometry.width,
-          frameObject.geometry.height,
-        );
-        addTopLevelCell(frame);
-        frameMap[frameObject.id] = frame;
+      if (!isObject(snapshot)) {
+        throw new Error("后端返回的图纸数据无效");
       }
 
-      for (i = 0; i < cabinetObjects.length; i++) {
-        var cabinetObject = cabinetObjects[i];
-        var cabinetModel = cloneJson(
-          cabinetObject.props != null ? cabinetObject.props.cabinetModel : {},
-        );
-        cabinetModel.logicalCabinetId = cabinetObject.id;
-        cabinetModel.originFrameId = cabinetObject.parentId;
-        cabinetModel.cabinetX = cabinetObject.geometry.x;
-        cabinetModel.cabinetWidth = cabinetObject.geometry.width;
-        relayoutCabinetByModel(cabinetModel);
+      if (
+        trim(snapshot.rawGraphXml).length > 0 &&
+        (!Array.isArray(snapshot.objects) || snapshot.objects.length == 0) &&
+        (!Array.isArray(snapshot.edges) || snapshot.edges.length == 0)
+      ) {
+        var legacyDoc = mxUtils.parseXml(snapshot.rawGraphXml);
+        ui.editor.setGraphXml(legacyDoc.documentElement);
+        graph.refresh();
+        return;
       }
 
-      for (i = 0; i < symbolObjects.length; i++) {
-        var symbolObject = symbolObjects[i];
-        var spec = normalizeSpec(
-          cloneJson(symbolObject.props != null ? symbolObject.props.spec : {}),
-        );
-        var root = buildSymbolCell(spec);
-        root.geometry = new mxGeometry(
-          symbolObject.geometry.x,
-          symbolObject.geometry.y,
-          symbolObject.geometry.width,
-          symbolObject.geometry.height,
-        );
+      if (Array.isArray(snapshot.objects)) {
+        for (i = 0; i < snapshot.objects.length; i++) {
+          var item = snapshot.objects[i];
 
-        if (
-          symbolObject.parentId != null &&
-          frameMap[symbolObject.parentId] != null
-        ) {
-          model.add(frameMap[symbolObject.parentId], root);
-        } else {
-          addTopLevelCell(root);
+          if (item.kind == "frame") {
+            frameObjects.push(item);
+          } else if (item.kind == "cabinet") {
+            cabinetObjects.push(item);
+          } else if (item.kind == "symbol") {
+            symbolObjects.push(item);
+          } else if (item.kind == "generic") {
+            genericObjects.push(item);
+          }
+        }
+      }
+
+      state.updatingModel = true;
+      model.beginUpdate();
+
+      try {
+        for (i = 0; i < frameObjects.length; i++) {
+          var frameObject = frameObjects[i];
+          var frame = createDrawingFrameCell(
+            frameObject.props != null ? frameObject.props.frameConfig : null,
+            frameObject.props != null ? frameObject.props.pageNumber : 1,
+            {
+              frameId: frameObject.id,
+              groupId: frameObject.groupId,
+              originFrameId:
+                frameObject.props != null
+                  ? frameObject.props.originFrameId
+                  : null,
+              autoFrameOwner:
+                frameObject.props != null
+                  ? frameObject.props.autoFrameOwner
+                  : null,
+              autoFrameIndex:
+                frameObject.props != null
+                  ? frameObject.props.autoFrameIndex
+                  : null,
+            },
+          );
+          frame.geometry = new mxGeometry(
+            frameObject.geometry.x,
+            frameObject.geometry.y,
+            frameObject.geometry.width,
+            frameObject.geometry.height,
+          );
+          addTopLevelCell(frame);
+          frameMap[frameObject.id] = frame;
         }
 
-        symbolMap[symbolObject.id] = root;
-      }
+        for (i = 0; i < cabinetObjects.length; i++) {
+          var cabinetObject = cabinetObjects[i];
+          var cabinetModel = cloneJson(
+            cabinetObject.props != null ? cabinetObject.props.cabinetModel : {},
+          );
+          cabinetModel.logicalCabinetId = cabinetObject.id;
+          cabinetModel.originFrameId = cabinetObject.parentId;
+          cabinetModel.cabinetX = cabinetObject.geometry.x;
+          cabinetModel.cabinetWidth = cabinetObject.geometry.width;
+          relayoutCabinetByModel(cabinetModel);
+        }
 
-      if (genericObjects.length > 0) {
-        var pendingGenericObjects = genericObjects.slice();
-        var safetyCounter = 0;
+        if (symbolObjects.length > 0) {
+          var pendingSymbolObjects = symbolObjects.slice();
+          var symbolSafetyCounter = 0;
 
-        while (pendingGenericObjects.length > 0 && safetyCounter < 1000) {
-          var nextPending = [];
-          var progressed = false;
+          while (pendingSymbolObjects.length > 0 && symbolSafetyCounter < 1000) {
+            var nextPendingSymbols = [];
+            var symbolProgressed = false;
 
-          for (i = 0; i < pendingGenericObjects.length; i++) {
-            var genericObject = pendingGenericObjects[i];
-            var parent = resolveImportedObjectParent(
-              genericObject.parentId,
-              frameMap,
+            for (i = 0; i < pendingSymbolObjects.length; i++) {
+              var symbolObject = pendingSymbolObjects[i];
+              var symbolParent = resolveImportedObjectParent(
+                symbolObject.parentId,
+                frameMap,
+                symbolMap,
+                genericMap,
+              );
+
+              if (symbolParent == null) {
+                nextPendingSymbols.push(symbolObject);
+                continue;
+              }
+
+              var spec = normalizeSpec(
+                cloneJson(
+                  symbolObject.props != null ? symbolObject.props.spec : {},
+                ),
+              );
+              var root = buildSymbolCell(spec);
+              root.geometry = new mxGeometry(
+                symbolObject.geometry.x,
+                symbolObject.geometry.y,
+                symbolObject.geometry.width,
+                symbolObject.geometry.height,
+              );
+              model.add(symbolParent, root);
+              symbolMap[symbolObject.id] = root;
+              symbolProgressed = true;
+            }
+
+            if (!symbolProgressed) {
+              for (i = 0; i < nextPendingSymbols.length; i++) {
+                var fallbackSpec = normalizeSpec(
+                  cloneJson(
+                    nextPendingSymbols[i].props != null
+                      ? nextPendingSymbols[i].props.spec
+                      : {},
+                  ),
+                );
+                var fallbackRoot = buildSymbolCell(fallbackSpec);
+                fallbackRoot.geometry = new mxGeometry(
+                  nextPendingSymbols[i].geometry.x,
+                  nextPendingSymbols[i].geometry.y,
+                  nextPendingSymbols[i].geometry.width,
+                  nextPendingSymbols[i].geometry.height,
+                );
+                addTopLevelCell(fallbackRoot);
+                symbolMap[nextPendingSymbols[i].id] = fallbackRoot;
+              }
+              break;
+            }
+
+            pendingSymbolObjects = nextPendingSymbols;
+            symbolSafetyCounter += 1;
+          }
+        }
+
+        if (genericObjects.length > 0) {
+          var pendingGenericObjects = genericObjects.slice();
+          var safetyCounter = 0;
+
+          while (pendingGenericObjects.length > 0 && safetyCounter < 1000) {
+            var nextPending = [];
+            var progressed = false;
+
+            for (i = 0; i < pendingGenericObjects.length; i++) {
+              var genericObject = pendingGenericObjects[i];
+              var parent = resolveImportedObjectParent(
+                genericObject.parentId,
+                frameMap,
+                symbolMap,
+                genericMap,
+              );
+
+              if (parent == null) {
+                nextPending.push(genericObject);
+                continue;
+              }
+
+              var genericCell = createGenericCellFromSnapshot(genericObject);
+              model.add(parent, genericCell);
+              genericMap[genericObject.id] = genericCell;
+              progressed = true;
+            }
+
+            if (!progressed) {
+              for (i = 0; i < nextPending.length; i++) {
+                var fallbackCell = createGenericCellFromSnapshot(
+                  nextPending[i],
+                );
+                addTopLevelCell(fallbackCell);
+                genericMap[nextPending[i].id] = fallbackCell;
+              }
+              break;
+            }
+
+            pendingGenericObjects = nextPending;
+            safetyCounter += 1;
+          }
+        }
+
+        if (Array.isArray(snapshot.edges)) {
+          for (i = 0; i < snapshot.edges.length; i++) {
+            var edgeObject = snapshot.edges[i];
+            var sourceRoot = resolveImportedEdgeTerminal(
+              edgeObject.source,
+              symbolMap,
+              genericMap,
+            );
+            var targetRoot = resolveImportedEdgeTerminal(
+              edgeObject.target,
               symbolMap,
               genericMap,
             );
 
-            if (parent == null) {
-              nextPending.push(genericObject);
+            if (
+              sourceRoot == null &&
+              targetRoot == null &&
+              !isObject(
+                edgeObject.props != null ? edgeObject.props.geometry : null,
+              )
+            ) {
               continue;
             }
 
-            var genericCell = createGenericCellFromSnapshot(genericObject);
-            model.add(parent, genericCell);
-            genericMap[genericObject.id] = genericCell;
-            progressed = true;
-          }
-
-          if (!progressed) {
-            for (i = 0; i < nextPending.length; i++) {
-              var fallbackCell = createGenericCellFromSnapshot(nextPending[i]);
-              addTopLevelCell(fallbackCell);
-              genericMap[nextPending[i].id] = fallbackCell;
-            }
-            break;
-          }
-
-          pendingGenericObjects = nextPending;
-          safetyCounter += 1;
-        }
-      }
-
-      if (Array.isArray(snapshot.edges)) {
-        for (i = 0; i < snapshot.edges.length; i++) {
-          var edgeObject = snapshot.edges[i];
-          var sourceRoot = resolveImportedEdgeTerminal(
-            edgeObject.source,
-            symbolMap,
-            genericMap,
-          );
-          var targetRoot = resolveImportedEdgeTerminal(
-            edgeObject.target,
-            symbolMap,
-            genericMap,
-          );
-
-          if (
-            sourceRoot == null &&
-            targetRoot == null &&
-            !isObject(edgeObject.props != null ? edgeObject.props.geometry : null)
-          ) {
-            continue;
-          }
-
-          var style =
-            edgeObject.props != null &&
-            edgeObject.props.style != null &&
-            trim(edgeObject.props.style.raw).length > 0
-              ? edgeObject.props.style.raw
-              : "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;";
-          var edgeParent = resolveImportedObjectParent(
-            edgeObject.props != null ? edgeObject.props.parentId : null,
-            frameMap,
-            symbolMap,
-            genericMap,
-          );
-          var edge = graph.insertEdge(
-            edgeParent != null ? edgeParent : graph.getDefaultParent(),
-            edgeObject.id,
-            deserializeCellValue(
-              edgeObject.props != null ? edgeObject.props.value : null,
-            ),
-            sourceRoot,
-            targetRoot,
-            style,
-          );
-          var sourceConstraint = buildConstraintForPort(
-            sourceRoot,
-            edgeObject.source.portId,
-          );
-          var targetConstraint = buildConstraintForPort(
-            targetRoot,
-            edgeObject.target.portId,
-          );
-
-          if (sourceConstraint != null) {
-            graph.setConnectionConstraint(
-              edge,
+            var style =
+              edgeObject.props != null &&
+              edgeObject.props.style != null &&
+              trim(edgeObject.props.style.raw).length > 0
+                ? edgeObject.props.style.raw
+                : "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;";
+            var edgeParent = resolveImportedObjectParent(
+              edgeObject.props != null ? edgeObject.props.parentId : null,
+              frameMap,
+              symbolMap,
+              genericMap,
+            );
+            var edge = graph.insertEdge(
+              edgeParent != null ? edgeParent : graph.getDefaultParent(),
+              edgeObject.id,
+              deserializeCellValue(
+                edgeObject.props != null ? edgeObject.props.value : null,
+              ),
               sourceRoot,
-              true,
-              sourceConstraint,
-            );
-          }
-
-          if (targetConstraint != null) {
-            graph.setConnectionConstraint(
-              edge,
               targetRoot,
-              false,
-              targetConstraint,
+              style,
+            );
+            var sourceConstraint = buildConstraintForPort(
+              sourceRoot,
+              edgeObject.source.portId,
+            );
+            var targetConstraint = buildConstraintForPort(
+              targetRoot,
+              edgeObject.target.portId,
+            );
+
+            if (sourceConstraint != null) {
+              graph.setConnectionConstraint(
+                edge,
+                sourceRoot,
+                true,
+                sourceConstraint,
+              );
+            }
+
+            if (targetConstraint != null) {
+              graph.setConnectionConstraint(
+                edge,
+                targetRoot,
+                false,
+                targetConstraint,
+              );
+            }
+
+            model.setGeometry(
+              edge,
+              deserializeGeometry(
+                edgeObject.props != null ? edgeObject.props.geometry : null,
+              ),
             );
           }
-
-          model.setGeometry(
-            edge,
-            deserializeGeometry(
-              edgeObject.props != null ? edgeObject.props.geometry : null,
-            ),
-          );
         }
+      } finally {
+        model.endUpdate();
+        state.updatingModel = false;
       }
-    } finally {
-      model.endUpdate();
-      state.updatingModel = false;
-    }
 
-    graph.refresh();
+      graph.refresh();
+    } finally {
+      state.suspendOperationRecording = false;
+      resetPendingChangeRecords(exportDiagramSnapshot());
+    }
   }
 
   function findAutoFramesForCabinet(originFrameId, logicalCabinetId) {
@@ -5134,7 +6254,7 @@ Draw.loadPlugin(function (ui) {
     cell.setConnectable(false);
   }
 
-  // 文本框和主/备标记都实现为 root 的相对子节点。
+  // 文本框实现为 root 的相对子节点。
   function createLabelCell(label) {
     var geometry = new mxGeometry(label.x, label.y, label.width, label.height);
     geometry.relative = true;
@@ -5176,56 +6296,11 @@ Draw.loadPlugin(function (ui) {
     cell.setConnectable(false);
   }
 
-  // 创建“主/备”徽标子节点。
-  function createBadgeCell(mode) {
-    var text = mode == "standby" ? "\u5907" : "\u4e3b";
-    var geometry = new mxGeometry(1, 0, 24, 18);
-    geometry.relative = true;
-    geometry.offset = new mxPoint(-32, 8);
-    var cell = new mxCell(
-      createMetaCell(BADGE_TAG, BADGE_KIND, "mode", text),
-      geometry,
-      makeBadgeStyle(mode),
-    );
-    cell.vertex = true;
-    cell.setConnectable(false);
-
-    return cell;
-  }
-
-  // 更新已有主/备徽标子节点的几何、文案和样式。
-  function applyBadgeCell(cell, mode) {
-    var geometry = model.getGeometry(cell);
-
-    if (geometry == null) {
-      geometry = new mxGeometry();
-    } else {
-      geometry = geometry.clone();
-    }
-
-    geometry.x = 1;
-    geometry.y = 0;
-    geometry.width = 24;
-    geometry.height = 18;
-    geometry.relative = true;
-    geometry.offset = new mxPoint(-32, 8);
-    model.setGeometry(cell, geometry);
-
-    var value = cloneValue(cell.value);
-    value.setAttribute("esKind", BADGE_KIND);
-    value.setAttribute("esKey", "mode");
-    value.setAttribute("label", mode == "standby" ? "\u5907" : "\u4e3b");
-    model.setValue(cell, value);
-    model.setStyle(cell, makeBadgeStyle(mode));
-    cell.setConnectable(false);
-  }
-
   // 把 root 当前已有子节点按 kind/key 建索引，后续同步逻辑依赖它做“增量对账”。
   function mapChildren(root) {
     var children = {
       body: {},
       label: {},
-      badge: {},
     };
 
     for (var i = 0; i < model.getChildCount(root); i++) {
@@ -5297,7 +6372,7 @@ Draw.loadPlugin(function (ui) {
   }
 
   // 同步函数：
-  // 根据 spec 把 root 调整为“背景图 + 文本 + 徽标 + 元数据”一致状态。
+  // 根据 spec 把 root 调整为“背景图 + 文本 + 元数据”一致状态。
   function syncRoot(root, spec, baseLayout) {
     var layout = buildPortLayout(spec, baseLayout);
     var resolvedLabels = buildResolvedLabels(spec.labels, spec.data);
@@ -5306,7 +6381,6 @@ Draw.loadPlugin(function (ui) {
     var mapped = mapChildren(root);
     var keepBodies = {};
     var keepLabels = {};
-    var keepBadges = {};
     var child;
     var i;
 
@@ -5332,26 +6406,9 @@ Draw.loadPlugin(function (ui) {
 
       keepLabels[label.id] = true;
     }
-
-    if (
-      spec.device.mode.length > 0 &&
-      spec.svgVariants[spec.device.mode] == null
-    ) {
-      child = mapped.badge.mode;
-
-      if (child != null) {
-        applyBadgeCell(child, spec.device.mode);
-      } else {
-        addChild(root, createBadgeCell(spec.device.mode));
-      }
-
-      keepBadges.mode = true;
-    }
-
     if (root.parent != null) {
       removeUnused(mapped.body, keepBodies);
       removeUnused(mapped.label, keepLabels);
-      removeUnused(mapped.badge, keepBadges);
     }
 
     root.setConnectable(true);
@@ -5931,6 +6988,7 @@ Draw.loadPlugin(function (ui) {
 
   // 把当前 spec 转成一个新的图库条目并追加到电气图库
   function addToLibrary(spec, onSaved) {
+    // 先读取最新的库数据
     loadStoredLibrary(function (images) {
       var next = images.slice();
       var entry = createLibraryEntry(spec);
@@ -7924,10 +8982,23 @@ Draw.loadPlugin(function (ui) {
   }
 
   function syncBackendState(diagramId, version, snapshot, title) {
+    snapshot = normalizeSnapshotGenericIds(snapshot);
     state.backendDiagramId = trim(diagramId);
     state.backendDiagramTitle = trim(title || state.backendDiagramTitle);
     state.backendDiagramVersion = Math.max(0, toInt(version, 0));
     state.backendLastSnapshot = snapshot != null ? cloneJson(snapshot) : null;
+    resetPendingChangeRecords(
+      snapshot != null ? snapshot : exportDiagramSnapshot(),
+    );
+    saveBackendSession();
+  }
+
+  function resetBackendBinding() {
+    state.backendDiagramId = "";
+    state.backendDiagramTitle = "";
+    state.backendDiagramVersion = 0;
+    state.backendLastSnapshot = null;
+    resetPendingChangeRecords(exportDiagramSnapshot());
     saveBackendSession();
   }
 
@@ -7949,11 +9020,12 @@ Draw.loadPlugin(function (ui) {
     row.appendChild(input);
   }
 
+  // 将当前图纸保存到后端
   async function saveDiagramToBackend(title) {
-    var snapshot = exportDiagramSnapshot();
     var backendUrl = normalizeBackendBaseUrl(state.backendBaseUrl);
     var actorId = trim(state.backendActorId) || "local-user";
     var diagramId = trim(state.backendDiagramId);
+    var pendingChanges = cloneJson(state.pendingChangeRecords || []);
     var response;
 
     if (diagramId.length == 0) {
@@ -7968,8 +9040,69 @@ Draw.loadPlugin(function (ui) {
       state.backendLastSnapshot = response.snapshot || null;
     }
 
+    var latestSnapshot = null;
+
+    if (diagramId.length > 0) {
+      latestSnapshot = await requestBackendJson(
+        "GET",
+        backendUrl + "/diagrams/" + encodeURIComponent(diagramId),
+      );
+
+      state.backendDiagramTitle =
+        trim(latestSnapshot.title) || state.backendDiagramTitle;
+      state.backendDiagramVersion = Math.max(
+        0,
+        toInt(latestSnapshot.version, state.backendDiagramVersion),
+      );
+      state.backendLastSnapshot = normalizeSnapshotGenericIds(latestSnapshot);
+    }
+
+    var snapshot = exportDiagramSnapshot();
+
     snapshot.diagramId = diagramId;
-    var diff = computeSnapshotChanges(state.backendLastSnapshot, snapshot);
+    var snapshotDiff = computeSnapshotChanges(
+      state.backendLastSnapshot,
+      snapshot,
+    );
+
+    if (snapshotDiff.changes.length == 0) {
+      state.backendLastSnapshot =
+        latestSnapshot != null
+          ? cloneJson(state.backendLastSnapshot)
+          : snapshot;
+      resetPendingChangeRecords(
+        latestSnapshot != null ? state.backendLastSnapshot : snapshot,
+      );
+      saveBackendSession();
+      showStatus("没有检测到需要保存的变更", false);
+      return;
+    }
+
+    var diff = {
+      touchedObjectIds: uniqueStrings(
+        (snapshotDiff.touchedObjectIds || []).concat(
+          collectChangeObjectIds(pendingChanges),
+        ),
+      ),
+      changes: pendingChanges,
+    };
+
+    if (diff.changes.length == 0 && snapshotDiff.changes.length > 0) {
+      var createdAt = new Date().toISOString();
+      var sequence = state.nextChangeSequence++;
+      var i;
+
+      for (i = 0; i < snapshotDiff.changes.length; i++) {
+        var fallbackChange = cloneJson(snapshotDiff.changes[i]);
+        fallbackChange.sequence = sequence;
+        fallbackChange.createdAt = createdAt;
+        diff.changes.push(fallbackChange);
+      }
+
+      diff.touchedObjectIds = uniqueStrings(
+        diff.touchedObjectIds.concat(collectChangeObjectIds(diff.changes)),
+      );
+    }
 
     if (
       typeof console !== "undefined" &&
@@ -7988,11 +9121,6 @@ Draw.loadPlugin(function (ui) {
     ) {
       console.log("[electricalSymbols] snapshot", snapshot);
       console.log("[electricalSymbols] diff", diff);
-    }
-
-    if (diff.changes.length == 0) {
-      showStatus("没有检测到需要保存的变更", false);
-      return;
     }
 
     response = await requestBackendJson(
@@ -8076,6 +9204,7 @@ Draw.loadPlugin(function (ui) {
     return response;
   }
 
+  // 从后端加载图纸快照并恢复到当前画布
   async function loadDiagramFromBackend(diagramId) {
     var targetDiagramId = trim(diagramId || state.backendDiagramId);
 
@@ -8522,12 +9651,14 @@ Draw.loadPlugin(function (ui) {
     addTopButton("electricalBrowse", "electricalBrowse");
     addTopButton("electricalCreate", "electricalCreate");
     addTopButton("electricalEditInstance", "electricalEditInstance");
+    addTopButton("electricalComposeInstance", "electricalComposeInstance");
     addTopButton("electricalInsertFrame", "electricalInsertFrame");
     addTopButton("electricalInsertCabinet", "electricalInsertCabinet");
     addTopButton("electricalClearScreen", "electricalClearScreen");
     addTopButton("electricalReassignPort", "electricalReassignPort");
     addTopButton("electricalExportSvg", "electricalExportSvg");
     addTopButton("electricalSaveBackend", "electricalSaveBackend");
+    addTopButton("electricalNewBackend", "electricalNewBackend");
     addTopButton("electricalLoadBackend", "electricalLoadBackend");
     addTopButton("electricalRollbackBackend", "electricalRollbackBackend");
 
@@ -9606,6 +10737,48 @@ Draw.loadPlugin(function (ui) {
     return graphIsCellDeletable.apply(this, arguments);
   };
 
+  const graphIsCellMovable = graph.isCellMovable;
+  graph.isCellMovable = function (cell) {
+    if (isBlockedComposeTarget(cell) || isLockedComposedChild(cell)) {
+      return false;
+    }
+
+    return graphIsCellMovable.apply(this, arguments);
+  };
+
+  const graphIsCellSelectable = graph.isCellSelectable;
+  graph.isCellSelectable = function (cell) {
+    if (isBlockedComposeTarget(cell)) {
+      return false;
+    }
+
+    return graphIsCellSelectable.apply(this, arguments);
+  };
+
+  const graphSelectCellForEvent = graph.selectCellForEvent;
+  graph.selectCellForEvent = function (cell) {
+    if (isBlockedComposeTarget(cell)) {
+      return;
+    }
+
+    return graphSelectCellForEvent.apply(this, arguments);
+  };
+
+  const graphGetMovableCells = graph.getMovableCells;
+  graph.getMovableCells = function (cells) {
+    var result = graphGetMovableCells.apply(this, arguments) || [];
+    var filtered = [];
+    var i;
+
+    for (i = 0; i < result.length; i++) {
+      if (!isBlockedComposeTarget(result[i])) {
+        filtered.push(result[i]);
+      }
+    }
+
+    return filtered;
+  };
+
   ui.actions.addAction("electricalSymbols", function () {
     toggleWindow();
   });
@@ -9620,6 +10793,10 @@ Draw.loadPlugin(function (ui) {
 
   ui.actions.addAction("electricalEditInstance", function () {
     openEditInstanceDialog();
+  });
+
+  ui.actions.addAction("electricalComposeInstance", function () {
+    enterInstanceComposeMode();
   });
 
   ui.actions.addAction("electricalInsertFrame", function () {
@@ -9649,6 +10826,15 @@ Draw.loadPlugin(function (ui) {
   ui.actions.addAction("electricalSaveBackend", function () {
     try {
       openBackendSaveDialog();
+    } catch (e) {
+      showStatus(e.message || String(e), true);
+    }
+  });
+
+  ui.actions.addAction("electricalNewBackend", function () {
+    try {
+      resetBackendBinding();
+      showStatus("已新建后端图纸会话，下一次保存将创建新图纸", false);
     } catch (e) {
       showStatus(e.message || String(e), true);
     }
@@ -9692,6 +10878,7 @@ Draw.loadPlugin(function (ui) {
         "electricalBrowse",
         "electricalCreate",
         "electricalEditInstance",
+        "electricalComposeInstance",
         "electricalInsertFrame",
         "electricalInsertCabinet",
         "electricalClearScreen",
@@ -9699,6 +10886,7 @@ Draw.loadPlugin(function (ui) {
         "electricalRefresh",
         "electricalExportSvg",
         "electricalSaveBackend",
+        "electricalNewBackend",
         "electricalLoadBackend",
         "electricalRollbackBackend",
       ],
@@ -9709,6 +10897,87 @@ Draw.loadPlugin(function (ui) {
   installTopActionBar();
   ui.addListener("languageChanged", installTopActionBar);
   ui.addListener("currentThemeChanged", installTopActionBar);
+  graph.addMouseListener({
+    mouseDown: function (sender, me) {
+      var session = state.instanceComposeSession;
+      var eventCell;
 
+      if (session == null) {
+        return;
+      }
+
+      eventCell = me.getCell();
+      session.pointerDown = false;
+      session.dragging = false;
+      session.startPoint = null;
+      session.dragCandidates = [];
+
+      if (isBlockedComposeTarget(eventCell)) {
+        refreshInstanceComposeOverlay();
+        return;
+      }
+
+      session.dragCandidates = collectComposeDragCandidates(
+        session.root,
+        eventCell,
+      );
+
+      if (session.dragCandidates.length == 0) {
+        refreshInstanceComposeOverlay();
+        return;
+      }
+
+      session.pointerDown = true;
+      session.startPoint = {
+        x: me.getGraphX(),
+        y: me.getGraphY(),
+      };
+    },
+    mouseMove: function (sender, me) {
+      var session = state.instanceComposeSession;
+      var dx;
+      var dy;
+
+      if (
+        session == null ||
+        !session.pointerDown ||
+        session.startPoint == null ||
+        session.dragCandidates.length == 0
+      ) {
+        return;
+      }
+
+      dx = Math.abs(me.getGraphX() - session.startPoint.x);
+      dy = Math.abs(me.getGraphY() - session.startPoint.y);
+
+      if (dx > 2 || dy > 2) {
+        session.dragging = true;
+        refreshInstanceComposeOverlay();
+      }
+    },
+    mouseUp: function () {
+      var session = state.instanceComposeSession;
+
+      if (session == null) {
+        return;
+      }
+
+      session.pointerDown = false;
+      session.dragging = false;
+      session.startPoint = null;
+      session.dragCandidates = [];
+      refreshInstanceComposeOverlay();
+    },
+  });
+  mxEvent.addListener(graph.container, "scroll", refreshInstanceComposeOverlay);
+  graph.view.addListener(mxEvent.SCALE, refreshInstanceComposeOverlay);
+  graph.view.addListener(
+    mxEvent.SCALE_AND_TRANSLATE,
+    refreshInstanceComposeOverlay,
+  );
+  graph.view.addListener(mxEvent.TRANSLATE, refreshInstanceComposeOverlay);
+
+  state.lastOperationSnapshot = exportDiagramSnapshot();
+  model.addListener(mxEvent.CHANGE, recordCanvasOperation);
   model.addListener(mxEvent.CHANGE, handleModelChange);
 });

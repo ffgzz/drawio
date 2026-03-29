@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThan, Repository } from 'typeorm';
+import { Between, MoreThan, Repository } from 'typeorm';
 import { DiagramEntity } from './entities/diagram.entity';
 import { DiagramSnapshotEntity } from './entities/diagram-snapshot.entity';
 import { DiagramCommitEntity } from './entities/diagram-commit.entity';
@@ -55,6 +55,16 @@ export class DiagramsRepository {
     return this.commitsRepo.find({
       where: { diagramId, resultVersion: MoreThan(version) },
       order: { resultVersion: 'ASC' },
+    });
+  }
+
+  findCommitsInVersionRange(diagramId: string, fromVersionExclusive: number, toVersionInclusive: number) {
+    return this.commitsRepo.find({
+      where: {
+        diagramId,
+        resultVersion: Between(fromVersionExclusive + 1, toVersionInclusive),
+      },
+      order: { resultVersion: 'DESC' },
     });
   }
 
