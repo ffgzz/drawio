@@ -3,8 +3,40 @@
  * 负责 root/body/label 三层结构在 mxGraph 中的创建、提取和同步刷新。
  */
 import { createSymbolCore } from "./symbolCore.js";
+import { getApp } from "../core/appRuntime.js";
 
-export function createSymbolDomain(deps) {
+function buildSymbolGraphDeps() {
+  var app = getApp();
+  var graphApi = app.graphApi;
+
+  return {
+    model: graphApi.model,
+    ROOT_TAG: app.constants.ROOT_TAG,
+    ROOT_TYPE: app.constants.ROOT_TYPE,
+    BODY_TAG: app.constants.BODY_TAG,
+    BODY_KIND: app.constants.BODY_KIND,
+    LABEL_TAG: app.constants.LABEL_TAG,
+    LABEL_KIND: app.constants.LABEL_KIND,
+    trim: app.utils.trim,
+    isObject: app.utils.isObject,
+    normalizeMode: app.helpers.normalizeMode,
+    normalizeSpec: app.domains.spec.normalizeSpec,
+    normalizePortLayout: app.domains.spec.normalizePortLayout,
+    normalizeLabels: app.domains.spec.normalizeLabels,
+    parsePortLayout: app.domains.spec.parsePortLayout,
+    getAttr: app.utils.getAttr,
+    createNode: app.utils.createNode,
+    createMetaCell: app.utils.createMetaCell,
+    cloneValue: app.utils.cloneValue,
+    toStyleImageUri: app.domains.spec.toStyleImageUri,
+    serializePortLayout: app.domains.spec.serializePortLayout,
+    buildPortLayout: app.domains.spec.buildPortLayout,
+    buildResolvedLabels: app.domains.spec.buildResolvedLabels,
+  };
+}
+
+export function createSymbolDomain() {
+  var deps = arguments.length > 0 ? arguments[0] : buildSymbolGraphDeps();
   var model = deps.model;
   var core = createSymbolCore(deps);
 

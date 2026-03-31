@@ -2,12 +2,87 @@
  * 配电柜 graph 子模块。
  * 负责分页片段 cell 构建、gap 高亮、附着恢复和重排，是 cabinet 的边缘适配层。
  */
-import { createCabinetCore } from "./cabinetCore.js";
+import {
+  buildCabinetPageDescriptors,
+  makeCabinetBodyStyle,
+  makeCabinetGapStyle,
+  makeCabinetRootStyle,
+  normalizeCabinetModel,
+} from "./cabinetCore.js";
+import { getApp } from "../core/appRuntime.js";
 
-export function createCabinetDomain(deps) {
+function buildCabinetDeps() {
+  var app = getApp();
+  var constants = app.constants;
+  var utils = app.utils;
+  var domains = app.domains;
+  var helpers = app.helpers;
+  var graphApi = app.graphApi;
+
+  return {
+    model: graphApi.model,
+    state: graphApi.state,
+    cabinetTag: constants.CABINET_TAG,
+    cabinetType: constants.CABINET_TYPE,
+    cabinetBodyTag: constants.CABINET_BODY_TAG,
+    cabinetBodyKind: constants.CABINET_BODY_KIND,
+    cabinetGapTag: constants.CABINET_GAP_TAG,
+    cabinetGapType: constants.CABINET_GAP_TYPE,
+    cabinetGapKind: constants.CABINET_GAP_KIND,
+    frameLabelKind: constants.FRAME_LABEL_KIND,
+    frameContentRatio: constants.FRAME_CONTENT_RATIO,
+    frameMarginRatio: constants.FRAME_MARGIN_RATIO,
+    frameHorizontalGap: constants.FRAME_HORIZONTAL_GAP,
+    minPortFollowSpaceRatio: constants.CABINET_MIN_PORT_FOLLOW_SPACE_RATIO,
+    defaultWidth: constants.CABINET_DEFAULT_WIDTH,
+    defaultPortCount: constants.CABINET_DEFAULT_PORT_COUNT,
+    defaultX: constants.CABINET_DEFAULT_X,
+    tailPadding: constants.CABINET_TAIL_PADDING,
+    trim: utils.trim,
+    toInt: utils.toInt,
+    toFloat: utils.toFloat,
+    clamp: utils.clamp,
+    isObject: utils.isObject,
+    cloneJson: utils.cloneJson,
+    normalizePortPoint: domains.spec.normalizePortPoint,
+    generateLogicalCabinetId: helpers.generateLogicalCabinetId,
+    createNode: utils.createNode,
+    createMetaCell: utils.createMetaCell,
+    serializePortLayout: domains.spec.serializePortLayout,
+    getAttr: utils.getAttr,
+    isCabinetSegment: helpers.isCabinetSegment,
+    isCabinetGap: helpers.isCabinetGap,
+    getNormalizedFrameConfig: domains.frame.normalizeFrameConfig,
+    getAllDrawingFrames: domains.frame.getAllDrawingFrames,
+    getFrameConfig: domains.frame.getFrameConfig,
+    getFrameGroupId: domains.frame.getFrameGroupId,
+    getFramePageNumber: domains.frame.getFramePageNumber,
+    getMaxFramePageNumberInGroup:
+      domains.frame.getMaxFramePageNumberInGroup,
+    getRightmostFrameInGroup: domains.frame.getRightmostFrameInGroup,
+    findFrameById: domains.frame.findFrameById,
+    findDrawingFrame: domains.frame.findDrawingFrame,
+    createDrawingFrameCell: domains.frame.createDrawingFrameCell,
+    addTopLevelCell: domains.frame.addTopLevelCell,
+    getEdgePortId: function (edge, root, source) {
+      return domains.snapshot.getEdgePortId(edge, root, source);
+    },
+    getPortMetaById: domains.connectionConstraints.getPortMetaById,
+    parsePortLayout: domains.spec.parsePortLayout,
+    isMovableConnectedTerminal:
+      domains.connectionConstraints.isMovableConnectedTerminal,
+    moveCellToFrameByDelta:
+      domains.connectionConstraints.moveCellToFrameByDelta,
+    setConnectionConstraint: function (edge, root, source, constraint) {
+      graphApi.graph.setConnectionConstraint(edge, root, source, constraint);
+    },
+  };
+}
+
+export function createCabinetDomain() {
+  var deps = arguments.length > 0 ? arguments[0] : buildCabinetDeps();
   var model = deps.model;
   var state = deps.state;
-  var core = createCabinetCore(deps);
 
   function findCabinetSegment(cell) {
     while (cell != null) {
@@ -50,12 +125,12 @@ export function createCabinetDomain(deps) {
     var cell = new mxCell(
       deps.createMetaCell(
         deps.cabinetBodyTag,
-        deps.cabinetBodyKind,
-        "main",
-        "",
+      deps.cabinetBodyKind,
+      "main",
+      "",
       ),
       new mxGeometry(0, 0, descriptor.width, descriptor.height),
-      core.makeCabinetBodyStyle(descriptor),
+      makeCabinetBodyStyle(descriptor),
     );
     cell.vertex = true;
     cell.setConnectable(false);
@@ -89,7 +164,7 @@ export function createCabinetDomain(deps) {
     var cell = new mxCell(
       value,
       geometry,
-      core.makeCabinetGapStyle(
+      makeCabinetGapStyle(
         isSelectedCabinetGap(cabinetModel.logicalCabinetId, gap.gapIndex),
       ),
     );
@@ -146,7 +221,7 @@ export function createCabinetDomain(deps) {
         descriptor.width,
         descriptor.height,
       ),
-      core.makeCabinetRootStyle(),
+      makeCabinetRootStyle(),
     );
     var i;
 
@@ -177,7 +252,7 @@ export function createCabinetDomain(deps) {
       throw new Error("缺少 cabinetModelJson 数据");
     }
 
-    return core.normalizeCabinetModel(JSON.parse(raw));
+    return normalizeCabinetModel(JSON.parse(raw));
   }
 
   function findCabinetSegments(logicalCabinetId) {
@@ -223,7 +298,7 @@ export function createCabinetDomain(deps) {
             var child = model.getChildAt(segment, k);
 
             if (deps.isCabinetGap(child)) {
-              var nextStyle = core.makeCabinetGapStyle(
+              var nextStyle = makeCabinetGapStyle(
                 isSelectedCabinetGap(
                   deps.getAttr(child, "logicalCabinetId"),
                   deps.getAttr(child, "gapIndex"),
@@ -502,7 +577,7 @@ export function createCabinetDomain(deps) {
   }
 
   function relayoutCabinetByModel(cabinetModel) {
-    var normalized = core.normalizeCabinetModel(cabinetModel);
+    var normalized = normalizeCabinetModel(cabinetModel);
     var originFrame = deps.findFrameById(normalized.originFrameId);
 
     if (originFrame == null) {
@@ -510,7 +585,7 @@ export function createCabinetDomain(deps) {
     }
 
     var frameConfig = deps.getFrameConfig(originFrame);
-    var descriptors = core.buildCabinetPageDescriptors(normalized, frameConfig);
+    var descriptors = buildCabinetPageDescriptors(normalized, frameConfig);
     var oldSegments = findCabinetSegments(normalized.logicalCabinetId);
     var attachments = collectCabinetAttachments(oldSegments);
     var frames;
@@ -545,7 +620,7 @@ export function createCabinetDomain(deps) {
   }
 
   return {
-    buildCabinetPageDescriptors: core.buildCabinetPageDescriptors,
+    buildCabinetPageDescriptors,
     buildCabinetPortMap,
     buildCabinetSegmentCell,
     collectCabinetAttachments,
@@ -554,7 +629,7 @@ export function createCabinetDomain(deps) {
     findCabinetSegments,
     getCellAbsoluteGeometry,
     getPortAbsolutePosition,
-    normalizeCabinetModel: core.normalizeCabinetModel,
+    normalizeCabinetModel,
     relayoutCabinetByModel,
     restoreCabinetAttachments,
     setSelectedCabinetGap,

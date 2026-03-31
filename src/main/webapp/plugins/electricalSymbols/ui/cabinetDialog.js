@@ -3,7 +3,35 @@
  * 负责插入配电柜窗口，以及配电柜 gap 比例编辑窗口。
  */
 // 由于 gap 对话框是悬浮在画布附近的小窗，所以这里还负责计算弹窗位置。
-export function createCabinetDialogs(deps) {
+import { getApp } from "../core/appRuntime.js";
+
+function buildCabinetDialogDeps() {
+  var app = getApp();
+
+  return {
+    ctx: app.ctx,
+    trim: app.utils.trim,
+    clamp: app.utils.clamp,
+    toInt: app.utils.toInt,
+    toFloat: app.utils.toFloat,
+    createButton: app.utils.createButton,
+    getActiveFrame: app.domains.frame.getActiveFrame,
+    getAttr: app.utils.getAttr,
+    normalizeCabinetModel: app.domains.cabinet.normalizeCabinetModel,
+    generateLogicalCabinetId: app.helpers.generateLogicalCabinetId,
+    relayoutCabinetByModel: app.domains.cabinet.relayoutCabinetByModel,
+    findCabinetSegments: app.domains.cabinet.findCabinetSegments,
+    insertCabinet: app.commands.insertCabinet,
+    updateCabinetGap: app.commands.updateCabinetGap,
+    showStatus: app.showStatus,
+    setCanvasStatus: app.setCanvasStatus,
+    findCabinetSegment: app.domains.cabinet.findCabinetSegment,
+    extractCabinetModel: app.domains.cabinet.extractCabinetModel,
+  };
+}
+
+export function createCabinetDialogs() {
+  var deps = arguments.length > 0 ? arguments[0] : buildCabinetDialogDeps();
   var ctx = deps.ctx;
   var state = ctx.state;
   var constants = ctx.constants;

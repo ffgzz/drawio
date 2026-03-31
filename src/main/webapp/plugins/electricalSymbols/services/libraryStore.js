@@ -2,14 +2,27 @@
  * 本地图元库服务。
  * 这里作为组合层，连接图库 storage 和 graph 编解码模块，对外暴露统一图库接口。
  */
-import { createLibraryStorage } from "./libraryStorage.js";
-import { createLibraryGraphCodec } from "./libraryGraphCodec.js";
+import { trim } from "../utils/base.js";
+import {
+  createLibraryEntry,
+  findLibraryEntryIndex,
+  getLibraryEntrySpec,
+} from "./libraryGraphCodec.js";
+import { loadStoredLibrary, saveLibraryImages } from "./libraryStorage.js";
 
-export function createLibraryStore(deps) {
+export function createLibraryStore() {
+  var deps = arguments.length > 0 ? arguments[0] : {};
   var state = deps.state;
-  var trim = deps.trim;
-  var storage = createLibraryStorage(deps);
-  var codec = createLibraryGraphCodec(deps);
+
+  function getLibraryEntrySpecCompat(image) {
+    return getLibraryEntrySpec(
+      deps.ui,
+      image,
+      deps.normalizeSpec,
+      deps.isElectricalRoot,
+      deps.extractSpec,
+    );
+  }
 
   function isTemplateNameTaken(name, ignoreSymbolId) {
     var target = trim(name);
@@ -22,7 +35,7 @@ export function createLibraryStore(deps) {
 
     for (i = 0; i < state.libraryImages.length; i++) {
       try {
-        var spec = codec.getLibraryEntrySpec(state.libraryImages[i]);
+        var spec = getLibraryEntrySpecCompat(state.libraryImages[i]);
 
         if (
           trim(spec.templateName || spec.title) == target &&
@@ -39,15 +52,15 @@ export function createLibraryStore(deps) {
   }
 
   function addToLibrary(spec, onSaved) {
-    storage.loadStoredLibrary(function (images) {
+    loadStoredLibrary(deps.ui, deps.state, deps.libraryTitle, function (images) {
       var next = images.slice();
-      var entry = codec.createLibraryEntry(spec);
-      var index = codec.findLibraryEntryIndex(next, spec.symbolId);
+      var entry = createLibraryEntry(deps.graph, deps.buildSymbolCell, spec);
+      var index = findLibraryEntryIndex(next, spec.symbolId, getLibraryEntrySpecCompat);
       var i;
 
       for (i = 0; i < next.length; i++) {
         try {
-          var currentSpec = codec.getLibraryEntrySpec(next[i]);
+          var currentSpec = getLibraryEntrySpecCompat(next[i]);
 
           if (
             trim(currentSpec.templateName || currentSpec.title) ==
@@ -68,7 +81,7 @@ export function createLibraryStore(deps) {
         next.push(entry);
       }
 
-      storage.saveLibraryImages(next, function () {
+      saveLibraryImages(deps.ui, deps.state, deps.libraryTitle, next, function () {
         deps.showStatus(index >= 0 ? "已更新图库模板" : "已加入图库", false);
 
         if (typeof onSaved === "function") {
@@ -79,16 +92,14 @@ export function createLibraryStore(deps) {
   }
 
   function removeTemplateFromLibrary(symbolId, onRemoved) {
-    storage.loadStoredLibrary(function (images) {
+    loadStoredLibrary(deps.ui, deps.state, deps.libraryTitle, function (images) {
       var next = [];
       var removed = false;
       var i;
 
       for (i = 0; i < images.length; i++) {
         try {
-          if (
-            trim(codec.getLibraryEntrySpec(images[i]).symbolId) == trim(symbolId)
-          ) {
+          if (trim(getLibraryEntrySpecCompat(images[i]).symbolId) == trim(symbolId)) {
             removed = true;
             continue;
           }
@@ -104,7 +115,7 @@ export function createLibraryStore(deps) {
         return;
       }
 
-      storage.saveLibraryImages(next, function () {
+      saveLibraryImages(deps.ui, deps.state, deps.libraryTitle, next, function () {
         deps.showStatus("已删除图元模板", false);
 
         if (typeof onRemoved === "function") {
@@ -116,10 +127,26 @@ export function createLibraryStore(deps) {
 
   return {
     addToLibrary,
-    getLibraryEntrySpec: codec.getLibraryEntrySpec,
+    getLibraryEntrySpec: getLibraryEntrySpecCompat,
     isTemplateNameTaken,
-    loadStoredLibrary: storage.loadStoredLibrary,
+    loadStoredLibrary: function (callback, openInSidebar) {
+      return loadStoredLibrary(
+        deps.ui,
+        deps.state,
+        deps.libraryTitle,
+        callback,
+        openInSidebar,
+      );
+    },
     removeTemplateFromLibrary,
-    saveLibraryImages: storage.saveLibraryImages,
+    saveLibraryImages: function (images, callback) {
+      return saveLibraryImages(
+        deps.ui,
+        deps.state,
+        deps.libraryTitle,
+        images,
+        callback,
+      );
+    },
   };
 }

@@ -3,7 +3,35 @@
  * 负责采集图框尺寸，并根据当前选中图框决定插入位置与分页组关系。
  */
 // 图框创建后的具体 cell 结构由 frame domain 负责。
-export function openInsertFrameDialog(deps) {
+import { getApp } from "../core/appRuntime.js";
+
+function buildFrameDialogDeps() {
+  var app = getApp();
+
+  return {
+    ctx: app.ctx,
+    cloneJson: app.utils.cloneJson,
+    normalizeFrameConfig: app.domains.frame.normalizeFrameConfig,
+    findDrawingFrame: app.domains.frame.findDrawingFrame,
+    getAllDrawingFrames: app.domains.frame.getAllDrawingFrames,
+    createButton: app.utils.createButton,
+    getFrameGroupId: app.domains.frame.getFrameGroupId,
+    generateFrameGroupId: app.helpers.generateFrameGroupId,
+    getMaxFramePageNumberInGroup:
+      app.domains.frame.getMaxFramePageNumberInGroup,
+    createDrawingFrameCell: app.domains.frame.createDrawingFrameCell,
+    getRightmostFrameInGroup: app.domains.frame.getRightmostFrameInGroup,
+    addTopLevelCell: app.domains.frame.addTopLevelCell,
+    getLeftmostFrame: app.domains.frame.getLeftmostFrame,
+    getBottommostFrame: app.domains.frame.getBottommostFrame,
+    insertFrame: app.commands.insertFrame,
+    showStatus: app.showStatus,
+    setCanvasStatus: app.setCanvasStatus,
+  };
+}
+
+export function openInsertFrameDialog() {
+  var deps = arguments.length > 0 ? arguments[0] : buildFrameDialogDeps();
   var ctx = deps.ctx;
   var graph = ctx.graph;
   var state = ctx.state;

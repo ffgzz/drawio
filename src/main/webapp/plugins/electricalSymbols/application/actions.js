@@ -2,13 +2,11 @@
  * 应用动作层。
  * 这里定义稳定的用户动作接口，画布 action、顶部按钮和 UI 事件都只调用这里。
  */
-export function createActionApi(app) {
-  var uiBridge = app.uiBridge;
-  var runtimeBridge = app.runtimeBridge;
-  var commands = app.commands;
-  var backend = app.services.backend;
+import { getApp } from "../core/appRuntime.js";
 
+export function createActionApi() {
   function execute(fn, resetDeleteFlag) {
+    var app = getApp();
     try {
       return fn();
     } catch (e) {
@@ -24,78 +22,80 @@ export function createActionApi(app) {
   return {
     electricalBrowse: function () {
       return execute(function () {
-        return uiBridge.openTemplateBrowserDialog();
+        return getApp().ui.openTemplateBrowserDialog();
       });
     },
     electricalClearScreen: function () {
       return execute(function () {
-        return commands.clearCurrentPage();
+        return getApp().commands.clearCurrentPage();
       }, true);
     },
     electricalComposeInstance: function () {
       return execute(function () {
-        return runtimeBridge.enterInstanceComposeMode();
+        return getApp().runtime.enterInstanceComposeMode();
       });
     },
     electricalCreate: function () {
       return execute(function () {
-        return uiBridge.openCreateFromLibraryDialog();
+        return getApp().ui.openCreateFromLibraryDialog();
       });
     },
     electricalEditInstance: function () {
       return execute(function () {
-        return uiBridge.openEditInstanceDialog();
+        return getApp().ui.openEditInstanceDialog();
       });
     },
     electricalExportSvg: function () {
       return execute(function () {
-        return uiBridge.openSvgExportDialog();
+        return getApp().ui.openSvgExportDialog();
       });
     },
     electricalInsertCabinet: function () {
       return execute(function () {
-        return uiBridge.openInsertCabinetDialog();
+        return getApp().ui.openInsertCabinetDialog();
       });
     },
     electricalInsertFrame: function () {
       return execute(function () {
-        return uiBridge.openInsertFrameDialog();
+        return getApp().ui.openInsertFrameDialog();
       });
     },
     electricalLoadBackend: function () {
       return execute(function () {
-        return uiBridge.openBackendLoadDialog();
+        return getApp().ui.openBackendLoadDialog();
       });
     },
     electricalNewBackend: function () {
       return execute(function () {
+        var app = getApp();
+        var backend = app.services.backend;
         backend.resetBackendBinding();
         app.showStatus("已新建后端图纸会话，下一次保存将创建新图纸", false);
       });
     },
     electricalReassignPort: function () {
       return execute(function () {
-        return runtimeBridge.enterPortSwapMode();
+        return getApp().runtime.enterPortSwapMode();
       });
     },
     electricalRefresh: function () {
       return execute(function () {
-        return commands.refreshSelection();
+        return getApp().commands.refreshSelection();
       });
     },
     electricalRollbackBackend: function () {
       return execute(function () {
-        return uiBridge.openBackendRollbackDialog();
+        return getApp().ui.openBackendRollbackDialog();
       });
     },
     electricalSaveBackend: function () {
       return execute(function () {
-        return uiBridge.openBackendSaveDialog();
+        return getApp().ui.openBackendSaveDialog();
       });
     },
     electricalSymbols: function () {
       return execute(function () {
-        return uiBridge.toggleWindow();
+        return getApp().ui.toggleWindow();
       });
     },
   };

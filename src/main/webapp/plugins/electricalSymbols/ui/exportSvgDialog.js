@@ -3,7 +3,21 @@
  * 负责读取当前画布导出边界、生成 SVG 代码并提供复制/下载能力。
  */
 // 导出逻辑和 UI 在这里闭合，避免在入口层散落按钮处理代码。
-export function openSvgExportDialog(deps) {
+import { getApp } from "../core/appRuntime.js";
+
+function buildExportDialogDeps() {
+  var app = getApp();
+
+  return {
+    ctx: app.ctx,
+    toInt: app.utils.toInt,
+    createButton: app.utils.createButton,
+    showStatus: app.showStatus,
+  };
+}
+
+export function openSvgExportDialog() {
+  var deps = arguments.length > 0 ? arguments[0] : buildExportDialogDeps();
   var ui = deps.ctx.ui;
   var graph = deps.ctx.graph;
 

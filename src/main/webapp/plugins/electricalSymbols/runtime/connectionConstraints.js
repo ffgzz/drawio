@@ -3,7 +3,37 @@
  * 负责端口约束生成、连线校验、端口元数据写回和端子切换后的跟随移动。
  */
 // 这个模块是电气端口系统和 mxGraph 原生连线约束的衔接层。
-export function createConnectionConstraints(deps) {
+import { getApp } from "../core/appRuntime.js";
+
+function buildConstraintDeps() {
+  var app = getApp();
+  var ctx = app.ctx;
+
+  return {
+    ctx,
+    trim: app.utils.trim,
+    clamp: app.utils.clamp,
+    parsePortLayout: app.domains.spec.parsePortLayout,
+    getAttr: app.utils.getAttr,
+    buildPortLayout: app.domains.spec.buildPortLayout,
+    findPortHostRoot: app.helpers.findPortHostRoot,
+    normalizePortDirection: app.domains.spec.normalizePortDirection,
+    normalizePortIoMode: app.domains.spec.normalizePortIoMode,
+    isDrawingFrame: app.helpers.isDrawingFrame,
+    isCabinetSegment: app.helpers.isCabinetSegment,
+    isCabinetGap: app.helpers.isCabinetGap,
+    findDrawingFrame: app.domains.frame.findDrawingFrame,
+    getCellAbsoluteGeometry: function (cell) {
+      return app.domains.cabinet.getCellAbsoluteGeometry(cell);
+    },
+    getPortAbsolutePosition: function (root, port) {
+      return app.domains.cabinet.getPortAbsolutePosition(root, port);
+    },
+  };
+}
+
+export function createConnectionConstraints() {
+  var deps = arguments.length > 0 ? arguments[0] : buildConstraintDeps();
   var ctx = deps.ctx;
   var graph = ctx.graph;
   var model = ctx.model;

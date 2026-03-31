@@ -3,7 +3,8 @@
  * 这里收口最底层的 cell 类型判断、ID 生成、状态提示和上下文查找逻辑。
  */
 // 这些 helper 会被多个 domain/runtime/service 复用，所以放在 core 层。
-export function createRuntimeHelpers(deps) {
+export function createRuntimeHelpers() {
+  var deps = arguments.length > 0 ? arguments[0] : {};
   var ctx = deps.ctx;
   var ui = ctx.ui;
   var model = ctx.model;

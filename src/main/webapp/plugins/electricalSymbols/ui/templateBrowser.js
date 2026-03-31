@@ -3,7 +3,36 @@
  * 负责浏览图库模板、打开模板编辑器、从模板创建实例以及删除模板。
  */
 // 这个窗口本质上是“图库首页”，因此聚合了查看和跳转动作。
-export function openTemplateBrowserDialog(deps) {
+import { getApp } from "../core/appRuntime.js";
+
+function buildTemplateBrowserDeps() {
+  var app = getApp();
+
+  return {
+    ctx: app.ctx,
+    library: app.services.libraryStore,
+    getLibraryEntrySpec: app.services.libraryStore.getLibraryEntrySpec,
+    showStatus: app.showStatus,
+    normalizePortLayout: app.domains.spec.normalizePortLayout,
+    normalizeLabels: app.domains.spec.normalizeLabels,
+    trim: app.utils.trim,
+    createButton: app.utils.createButton,
+    openEditorWithTemplate: function (template) {
+      return app.ui != null && typeof app.ui.openEditorWithTemplate === "function"
+        ? app.ui.openEditorWithTemplate(template)
+        : null;
+    },
+    openCreateFromLibraryDialog: function (preferredSymbolId) {
+      return app.ui != null &&
+        typeof app.ui.openCreateFromLibraryDialog === "function"
+        ? app.ui.openCreateFromLibraryDialog(preferredSymbolId)
+        : null;
+    },
+  };
+}
+
+export function openTemplateBrowserDialog() {
+  var deps = arguments.length > 0 ? arguments[0] : buildTemplateBrowserDeps();
   var ctx = deps.ctx;
   var state = ctx.state;
 

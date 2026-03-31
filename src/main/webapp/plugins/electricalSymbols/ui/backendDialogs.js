@@ -3,7 +3,24 @@
  * 负责保存、加载、回滚三个面向用户的窗口，不直接承担后端通信细节。
  */
 // 这里主要做表单与按钮布局，实际请求都走 backend service。
-export function createBackendDialogs(deps) {
+import { getApp } from "../core/appRuntime.js";
+
+function buildBackendDialogDeps() {
+  var app = getApp();
+
+  return {
+    ctx: app.ctx,
+    backend: app.services.backend,
+    trim: app.utils.trim,
+    showStatus: app.showStatus,
+    createButton: app.utils.createButton,
+    isObject: app.utils.isObject,
+    toInt: app.utils.toInt,
+  };
+}
+
+export function createBackendDialogs() {
+  var deps = arguments.length > 0 ? arguments[0] : buildBackendDialogDeps();
   var ctx = deps.ctx;
   var state = ctx.state;
   var trim = deps.trim;

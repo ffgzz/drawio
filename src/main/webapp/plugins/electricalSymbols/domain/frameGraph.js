@@ -2,12 +2,49 @@
  * 图框 graph 子模块。
  * 负责图框在 mxGraph 模型中的查找、定位和 cell 创建，是 frame 的边缘适配层。
  */
-import { createFrameCore } from "./frameCore.js";
+import {
+  applyFrameValueMetadata,
+  createFramePageLabelCell,
+  makeFrameStyle,
+  normalizeFrameConfig,
+} from "./frameCore.js";
+import { getApp } from "../core/appRuntime.js";
 
-export function createFrameDomain(deps) {
+function buildFrameDeps() {
+  var app = getApp();
+  var constants = app.constants;
+  var utils = app.utils;
+  var helpers = app.helpers;
+  var graphApi = app.graphApi;
+
+  return {
+    graph: graphApi.graph,
+    model: graphApi.model,
+    state: graphApi.state,
+    frameTag: constants.FRAME_TAG,
+    frameType: constants.FRAME_TYPE,
+    frameLabelTag: constants.FRAME_LABEL_TAG,
+    frameLabelKind: constants.FRAME_LABEL_KIND,
+    frameMarginRatio: constants.FRAME_MARGIN_RATIO,
+    defaultWidth: constants.FRAME_DEFAULT_WIDTH,
+    defaultHeight: constants.FRAME_DEFAULT_HEIGHT,
+    trim: utils.trim,
+    toInt: utils.toInt,
+    isObject: utils.isObject,
+    getAttr: utils.getAttr,
+    createNode: utils.createNode,
+    createMetaCell: utils.createMetaCell,
+    generateFrameId: helpers.generateFrameId,
+    isDrawingFrame: helpers.isDrawingFrame,
+    showStatus: app.showStatus,
+    setCanvasStatus: app.setCanvasStatus,
+  };
+}
+
+export function createFrameDomain() {
+  var deps = arguments.length > 0 ? arguments[0] : buildFrameDeps();
   var graph = deps.graph;
   var model = deps.model;
-  var core = createFrameCore(deps);
 
   function findDrawingFrame(cell) {
     while (cell != null) {
@@ -27,14 +64,14 @@ export function createFrameDomain(deps) {
 
     if (raw != null && raw.length > 0) {
       try {
-        return core.normalizeFrameConfig(JSON.parse(raw));
+        return normalizeFrameConfig(JSON.parse(raw));
       } catch (e) {
         // ignore malformed config
       }
     }
 
     geometry = model.getGeometry(frame);
-    return core.normalizeFrameConfig({
+    return normalizeFrameConfig({
       width: geometry != null ? geometry.width : deps.defaultWidth,
       height: geometry != null ? geometry.height : deps.defaultHeight,
     });
@@ -248,13 +285,13 @@ export function createFrameDomain(deps) {
   }
 
   function createDrawingFrameCell(frameConfig, pageNumber, extra) {
-    var config = core.normalizeFrameConfig(frameConfig);
+    var config = normalizeFrameConfig(frameConfig);
     var frameId =
       extra != null && deps.trim(extra.frameId).length > 0
         ? deps.trim(extra.frameId)
         : deps.generateFrameId();
     var root = new mxCell(
-      core.applyFrameValueMetadata(
+      applyFrameValueMetadata(
         deps.createNode(deps.frameTag),
         frameId,
         pageNumber,
@@ -262,11 +299,11 @@ export function createFrameDomain(deps) {
         extra,
       ),
       new mxGeometry(0, 0, config.width, config.height),
-      core.makeFrameStyle(),
+      makeFrameStyle(),
     );
     root.vertex = true;
     root.setConnectable(false);
-    root.insert(core.createFramePageLabelCell(pageNumber, config));
+    root.insert(createFramePageLabelCell(pageNumber, config));
     return root;
   }
 
@@ -290,6 +327,6 @@ export function createFrameDomain(deps) {
     getLeftmostFrame,
     getMaxFramePageNumberInGroup,
     getRightmostFrameInGroup,
-    normalizeFrameConfig: core.normalizeFrameConfig,
+    normalizeFrameConfig,
   };
 }

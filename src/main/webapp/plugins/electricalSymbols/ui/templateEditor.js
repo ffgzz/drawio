@@ -7,9 +7,54 @@ import {
   renderInteractivePreviewSurface,
   snapPortPointToEdge,
 } from "./shared/previewSurface.js";
+import { getApp } from "../core/appRuntime.js";
 
 // 这是插件里最复杂的 UI 模块，承载模板定义的完整编辑流程。
-export function createTemplateEditor(deps) {
+function buildTemplateEditorDeps() {
+  var app = getApp();
+
+  return {
+    ctx: app.ctx,
+    trim: app.utils.trim,
+    cloneJson: app.utils.cloneJson,
+    normalizePortLayout: app.domains.spec.normalizePortLayout,
+    normalizeLabels: app.domains.spec.normalizeLabels,
+    toSvgDataUri: app.domains.spec.toSvgDataUri,
+    createButton: app.utils.createButton,
+    normalizePortMarker: app.domains.spec.normalizePortMarker,
+    normalizePortDirection: app.domains.spec.normalizePortDirection,
+    normalizePortIoMode: app.domains.spec.normalizePortIoMode,
+    portEdgeSnapThresholdPx: app.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
+    nextItemId: app.helpers.nextItemId,
+    normalizeLabelItem: app.domains.spec.normalizeLabelItem,
+    validateSvg: app.utils.validateSvg,
+    extractSvgSize: app.utils.extractSvgSize,
+    scheduleEditorDraftSave: app.services.draftStore.scheduleEditorDraftSave,
+    clearDraftSaveTimer: app.services.draftStore.clearDraftSaveTimer,
+    loadEditorDraft: app.services.draftStore.loadEditorDraft,
+    clearEditorDraft: app.services.draftStore.clearEditorDraft,
+    generateSymbolId: app.helpers.generateSymbolId,
+    getDefaultSchemaFields: app.domains.spec.getDefaultSchemaFields,
+    buildSchemaFromFields: app.domains.spec.buildSchemaFromFields,
+    hasSchemaPath: app.domains.spec.hasSchemaPath,
+    normalizeSchemaField: app.domains.spec.normalizeSchemaField,
+    normalizeSchemaType: app.domains.spec.normalizeSchemaType,
+    normalizeEnumOptions: app.domains.spec.normalizeEnumOptions,
+    isValidFieldPath: app.domains.spec.isValidFieldPath,
+    toInt: app.utils.toInt,
+    showStatus: app.showStatus,
+    normalizeSpec: app.domains.spec.normalizeSpec,
+    normalizeVariantLayouts: app.domains.spec.normalizeVariantLayouts,
+    flattenSchemaFields: app.domains.spec.flattenSchemaFields,
+    isObject: app.utils.isObject,
+    addToLibrary: app.services.libraryStore.addToLibrary,
+    isTemplateNameTaken: app.services.libraryStore.isTemplateNameTaken,
+    loadStoredLibrary: app.services.libraryStore.loadStoredLibrary,
+  };
+}
+
+export function createTemplateEditor() {
+  var deps = arguments.length > 0 ? arguments[0] : buildTemplateEditorDeps();
   var ctx = deps.ctx;
   var state = ctx.state;
 

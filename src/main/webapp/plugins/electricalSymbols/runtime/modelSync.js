@@ -3,7 +3,24 @@
  * 负责记录画布变更快照，以及在 root 尺寸变化后自动刷新内部结构。
  */
 // 这里不创建 UI，只监听 model change 事件。
-export function createModelSync(deps) {
+import { getApp } from "../core/appRuntime.js";
+
+function buildModelSyncDeps() {
+  var app = getApp();
+
+  return {
+    ctx: app.ctx,
+    isObject: app.utils.isObject,
+    cloneJson: app.utils.cloneJson,
+    exportDiagramSnapshot: app.domains.snapshot.exportDiagramSnapshot,
+    computeSnapshotChanges: app.domains.snapshot.computeSnapshotChanges,
+    isElectricalRoot: app.helpers.isElectricalRoot,
+    refreshRoot: app.domains.symbol.refreshRoot,
+  };
+}
+
+export function createModelSync() {
+  var deps = arguments.length > 0 ? arguments[0] : buildModelSyncDeps();
   var ctx = deps.ctx;
   var model = ctx.model;
   var state = ctx.state;

@@ -367,7 +367,8 @@
       height: Math.max(20, Math.round(isNaN(height) ? 80 : height))
     };
   }
-  function createXmlUtils(deps) {
+  function createXmlUtils() {
+    var deps = arguments.length > 0 ? arguments[0] : null;
     var trim2 = deps != null ? deps.trim : trim;
     return {
       cloneValue,
@@ -402,6 +403,18 @@
     };
   }
 
+  // core/appRuntime.js
+  var currentApp = null;
+  function setApp(app) {
+    currentApp = app;
+  }
+  function getApp() {
+    if (currentApp == null) {
+      throw new Error("electricalSymbols app \u5C1A\u672A\u521D\u59CB\u5316");
+    }
+    return currentApp;
+  }
+
   // core/graphApi.js
   function createGraphApi(ctx) {
     return {
@@ -420,7 +433,8 @@
   }
 
   // core/runtimeHelpers.js
-  function createRuntimeHelpers(deps) {
+  function createRuntimeHelpers() {
+    var deps = arguments.length > 0 ? arguments[0] : {};
     var ctx = deps.ctx;
     var ui = ctx.ui;
     var model = ctx.model;
@@ -539,455 +553,776 @@
     };
   }
 
-  // domain/specSchema.js
-  function createSpecSchemaModule(deps) {
-    var trim2 = deps.trim;
-    function isSchemaLeafDescriptor(value) {
-      return deps.isObject(value) && typeof value.type === "string" && trim2(value.type).length > 0;
+  // ui/shared/buttonFactory.js
+  function createPluginButton(label, fn) {
+    var button = mxUtils.button(label, fn);
+    button.className = "geBtn";
+    button.style.marginRight = "8px";
+    button.style.marginTop = "8px";
+    return button;
+  }
+
+  // application/selection.js
+  function getSelectedCell() {
+    return getApp().ctx.graph.getSelectionCell();
+  }
+  function getSelectedRoot() {
+    var app = getApp();
+    return app.helpers.findElectricalRoot(getSelectedCell());
+  }
+  function getSelectedFrame() {
+    var app = getApp();
+    return app.domains.frame.findDrawingFrame(getSelectedCell());
+  }
+  function getSelectedCabinetSegment() {
+    var app = getApp();
+    return app.domains.cabinet.findCabinetSegment(getSelectedCell());
+  }
+  function getSelectedCabinetGap() {
+    var app = getApp();
+    var cell = getSelectedCell();
+    return app.helpers.isCabinetGap(cell) ? cell : null;
+  }
+  var selectionApi = {
+    getSelectedCabinetGap,
+    getSelectedCabinetSegment,
+    getSelectedCell,
+    getSelectedFrame,
+    getSelectedRoot
+  };
+
+  // application/commands.js
+  function getDefaultParentChildren() {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var model = app.ctx.model;
+    var parent = graph.getDefaultParent();
+    var cells = [];
+    var i;
+    for (i = 0; i < model.getChildCount(parent); i++) {
+      cells.push(model.getChildAt(parent, i));
     }
-    function normalizeSchemaType(type) {
-      type = trim2(type).toLowerCase();
-      return type == "number" || type == "boolean" || type == "enum" ? type : "string";
+    return cells;
+  }
+  function insertCellIntoFrame(cell, frame) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var insertPoint = app.domains.frame.getFrameChildInsertPoint(
+      frame,
+      cell.geometry != null ? cell.geometry.width : 0,
+      cell.geometry != null ? cell.geometry.height : 0
+    );
+    graph.setSelectionCells(graph.importCells([cell], insertPoint.x, insertPoint.y, frame));
+    graph.scrollCellToVisible(graph.getSelectionCell());
+  }
+  function insertIntoGraph(spec) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var root = app.domains.symbol.buildSymbolCell(spec);
+    var frame = app.domains.frame.getActiveFrame(false);
+    if (frame != null) {
+      insertCellIntoFrame(root, frame);
+    } else {
+      var pt = graph.getFreeInsertPoint();
+      graph.setSelectionCells(graph.importCells([root], pt.x, pt.y));
     }
-    function normalizeEnumOptions(options) {
-      var list = Array.isArray(options) ? options : String(options || "").split(",");
-      var result = [];
-      var seen = {};
-      var i;
-      for (i = 0; i < list.length; i++) {
-        var value = trim2(list[i]);
-        if (value.length > 0 && seen[value] == null) {
-          seen[value] = true;
-          result.push(value);
-        }
+    graph.scrollCellToVisible(graph.getSelectionCell());
+    app.showStatus("\u5DF2\u63D2\u5165\u56FE\u5143", false);
+    app.setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u5143");
+  }
+  function refreshSelection() {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var model = app.ctx.model;
+    var state = app.ctx.state;
+    var root = app.selection.getSelectedRoot();
+    var cabinet = app.selection.getSelectedCabinetSegment();
+    if (cabinet != null) {
+      try {
+        state.updatingModel = true;
+        model.beginUpdate();
+        app.domains.cabinet.relayoutCabinetByModel(
+          app.domains.cabinet.extractCabinetModel(cabinet)
+        );
+        app.showStatus("\u914D\u7535\u67DC\u5DF2\u5237\u65B0", false);
+        app.setCanvasStatus("\u914D\u7535\u67DC\u5DF2\u5237\u65B0");
+      } catch (e) {
+        app.showStatus(e.message || String(e), true);
+        app.setCanvasStatus(e.message || String(e));
+      } finally {
+        model.endUpdate();
+        state.updatingModel = false;
       }
-      return result;
+      return;
     }
-    function normalizeSchemaField(raw) {
-      var field = deps.isObject(raw) ? deps.cloneJson(raw) : {};
-      field.id = trim2(field.id) || (typeof deps.nextItemId === "function" ? deps.nextItemId("field") : "");
-      field.path = trim2(field.path);
-      field.type = normalizeSchemaType(field.type);
-      field.required = !!field.required;
-      field.enumValues = normalizeEnumOptions(field.enumValues);
-      return field;
+    if (root == null) {
+      app.showStatus("\u8BF7\u5148\u9009\u62E9\u4E00\u4E2A\u7535\u6C14\u56FE\u5143", true);
+      return;
     }
-    function getDefaultSchemaFields() {
-      return [
-        normalizeSchemaField({ path: "title", type: "string" }),
-        normalizeSchemaField({ path: "name", type: "string" }),
-        normalizeSchemaField({ path: "code", type: "string" }),
-        normalizeSchemaField({ path: "power", type: "string" })
-      ];
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      app.domains.symbol.refreshRoot(root);
+    } catch (e) {
+      app.showStatus(e.message || String(e), true);
+      return;
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
     }
-    function hasSchemaPath(schema, path) {
-      var parts = trim2(path).split(".");
-      var current = schema;
-      var i;
-      if (!deps.isObject(schema) || trim2(path).length == 0) {
-        return false;
+    app.showStatus("\u7535\u6C14\u56FE\u5143\u5DF2\u5237\u65B0", false);
+  }
+  function insertFrame(config, selectedFrame, existingFrames) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var model = app.ctx.model;
+    var state = app.ctx.state;
+    var constants = app.ctx.constants;
+    var normalizedConfig = app.domains.frame.normalizeFrameConfig(config || {});
+    var frames = Array.isArray(existingFrames) ? existingFrames : app.domains.frame.getAllDrawingFrames();
+    var groupId = selectedFrame != null ? app.domains.frame.getFrameGroupId(selectedFrame) : app.helpers.generateFrameGroupId();
+    var nextPageNumber = selectedFrame != null ? app.domains.frame.getMaxFramePageNumberInGroup(groupId) + 1 : 1;
+    var frame = app.domains.frame.createDrawingFrameCell(normalizedConfig, nextPageNumber, {
+      groupId
+    });
+    state.frameConfig = app.utils.cloneJson(normalizedConfig);
+    if (selectedFrame != null) {
+      var anchorFrame = app.domains.frame.getRightmostFrameInGroup(groupId) || selectedFrame;
+      var anchorGeometry = model.getGeometry(anchorFrame);
+      frame.geometry = frame.geometry.clone();
+      frame.geometry.x = anchorGeometry.x + anchorGeometry.width + constants.FRAME_HORIZONTAL_GAP;
+      frame.geometry.y = anchorGeometry.y;
+      app.domains.frame.addTopLevelCell(frame);
+      graph.setSelectionCell(frame);
+    } else if (frames.length > 0) {
+      var leftmostFrame = app.domains.frame.getLeftmostFrame();
+      var bottommostFrame = app.domains.frame.getBottommostFrame();
+      var leftGeometry = leftmostFrame != null ? model.getGeometry(leftmostFrame) : null;
+      var bottomGeometry = bottommostFrame != null ? model.getGeometry(bottommostFrame) : null;
+      frame.geometry = frame.geometry.clone();
+      frame.geometry.x = leftGeometry != null ? leftGeometry.x : 0;
+      frame.geometry.y = bottomGeometry != null ? bottomGeometry.y + bottomGeometry.height + constants.FRAME_VERTICAL_GAP : 0;
+      app.domains.frame.addTopLevelCell(frame);
+      graph.setSelectionCell(frame);
+    } else {
+      var point = graph.getFreeInsertPoint();
+      graph.setSelectionCells(graph.importCells([frame], point.x, point.y));
+    }
+    graph.scrollCellToVisible(graph.getSelectionCell());
+    app.showStatus("\u5DF2\u63D2\u5165\u56FE\u6846", false);
+    app.setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u6846");
+  }
+  function insertCabinet(cabinetModel) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var model = app.ctx.model;
+    var state = app.ctx.state;
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      app.domains.cabinet.relayoutCabinetByModel(cabinetModel);
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+    var segments = app.domains.cabinet.findCabinetSegments(cabinetModel.logicalCabinetId);
+    if (segments.length > 0) {
+      graph.setSelectionCell(segments[0]);
+      graph.scrollCellToVisible(segments[0]);
+    }
+    app.showStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC", false);
+    app.setCanvasStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC");
+  }
+  function updateCabinetGap(cabinetModel) {
+    var app = getApp();
+    var model = app.ctx.model;
+    var state = app.ctx.state;
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      app.domains.cabinet.relayoutCabinetByModel(cabinetModel);
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+    app.showStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD", false);
+    app.setCanvasStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD");
+  }
+  function applyInstanceSpec(root, spec) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var model = app.ctx.model;
+    var state = app.ctx.state;
+    if (root == null || root.parent == null) {
+      throw new Error("\u5F53\u524D\u56FE\u5143\u5DF2\u4E0D\u5B58\u5728\uFF0C\u65E0\u6CD5\u5E94\u7528\u4FEE\u6539");
+    }
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      app.domains.symbol.syncRoot(root, spec, spec.ports);
+      graph.setSelectionCell(root);
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+    app.showStatus("\u5DF2\u66F4\u65B0\u56FE\u5143\u5B9E\u4F8B", false);
+  }
+  function clearCurrentPage() {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var state = app.ctx.state;
+    var cells = getDefaultParentChildren();
+    if (cells.length == 0) {
+      app.showStatus("\u5F53\u524D\u9875\u9762\u6CA1\u6709\u53EF\u6E05\u9664\u7684\u5185\u5BB9", false);
+      return;
+    }
+    if (!mxUtils.confirm("\u786E\u8BA4\u6E05\u9664\u5F53\u524D\u9875\u9762\u6240\u6709\u5185\u5BB9\uFF1F")) {
+      return;
+    }
+    if (!mxUtils.confirm("\u6B64\u64CD\u4F5C\u4E0D\u53EF\u6062\u590D\uFF0C\u786E\u5B9A\u7EE7\u7EED\u6E05\u9664\u5417\uFF1F")) {
+      return;
+    }
+    if (app.ui != null && typeof app.ui.closeGapDialogWindow === "function") {
+      app.ui.closeGapDialogWindow();
+    }
+    app.domains.cabinet.setSelectedCabinetGap(null, null);
+    if (app.runtime != null && typeof app.runtime.exitPortSwapMode === "function") {
+      app.runtime.exitPortSwapMode(false);
+    }
+    if (app.runtime != null && typeof app.runtime.exitInstanceComposeMode === "function") {
+      app.runtime.exitInstanceComposeMode(false);
+    }
+    state.allowProtectedDelete = true;
+    try {
+      graph.removeCells(cells, true);
+      app.showStatus("\u5DF2\u6E05\u7A7A\u5F53\u524D\u9875\u9762", false);
+    } finally {
+      state.allowProtectedDelete = false;
+    }
+  }
+  var commandApi = {
+    applyInstanceSpec,
+    clearCurrentPage,
+    insertCabinet,
+    insertFrame,
+    insertIntoGraph,
+    refreshSelection,
+    updateCabinetGap
+  };
+
+  // application/actions.js
+  function createActionApi() {
+    function execute(fn, resetDeleteFlag) {
+      var app = getApp();
+      try {
+        return fn();
+      } catch (e) {
+        if (resetDeleteFlag) {
+          app.ctx.state.allowProtectedDelete = false;
+        }
+        app.showStatus(e.message || String(e), true);
+        return null;
       }
-      for (i = 0; i < parts.length; i++) {
-        if (!deps.isObject(current) || !current.hasOwnProperty(parts[i])) {
-          return false;
-        }
-        current = current[parts[i]];
-      }
-      return true;
     }
-    function isValidFieldPath(path) {
-      var parts = trim2(path).split(".");
-      var i;
-      if (trim2(path).length == 0) {
-        return false;
-      }
-      for (i = 0; i < parts.length; i++) {
-        if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(parts[i])) {
-          return false;
-        }
-      }
-      return true;
-    }
-    function setValueByPath(target, path, value) {
-      var parts = trim2(path).split(".");
-      var current = target;
-      var i;
-      for (i = 0; i < parts.length - 1; i++) {
-        if (!deps.isObject(current[parts[i]])) {
-          current[parts[i]] = {};
-        }
-        current = current[parts[i]];
-      }
-      current[parts[parts.length - 1]] = value;
-    }
-    function buildSchemaFromFields(fields) {
-      var schema = {};
-      var seen = {};
-      var i;
-      for (i = 0; i < fields.length; i++) {
-        var field = normalizeSchemaField(fields[i]);
-        var path = trim2(field.path);
-        if (path.length == 0) {
-          continue;
-        }
-        if (!isValidFieldPath(path)) {
-          throw new Error("\u5B57\u6BB5\u8DEF\u5F84\u683C\u5F0F\u4E0D\u6B63\u786E");
-        }
-        if (seen[path]) {
-          throw new Error("\u5B57\u6BB5\u8DEF\u5F84\u4E0D\u80FD\u91CD\u590D");
-        }
-        if (field.type == "enum" && field.enumValues.length == 0) {
-          throw new Error("\u679A\u4E3E\u7C7B\u578B\u5FC5\u987B\u81F3\u5C11\u63D0\u4F9B\u4E00\u4E2A\u53EF\u9009\u503C");
-        }
-        seen[path] = true;
-        setValueByPath(schema, path, {
-          type: field.type,
-          required: !!field.required,
-          enumValues: field.enumValues
+    return {
+      electricalBrowse: function() {
+        return execute(function() {
+          return getApp().ui.openTemplateBrowserDialog();
+        });
+      },
+      electricalClearScreen: function() {
+        return execute(function() {
+          return getApp().commands.clearCurrentPage();
+        }, true);
+      },
+      electricalComposeInstance: function() {
+        return execute(function() {
+          return getApp().runtime.enterInstanceComposeMode();
+        });
+      },
+      electricalCreate: function() {
+        return execute(function() {
+          return getApp().ui.openCreateFromLibraryDialog();
+        });
+      },
+      electricalEditInstance: function() {
+        return execute(function() {
+          return getApp().ui.openEditInstanceDialog();
+        });
+      },
+      electricalExportSvg: function() {
+        return execute(function() {
+          return getApp().ui.openSvgExportDialog();
+        });
+      },
+      electricalInsertCabinet: function() {
+        return execute(function() {
+          return getApp().ui.openInsertCabinetDialog();
+        });
+      },
+      electricalInsertFrame: function() {
+        return execute(function() {
+          return getApp().ui.openInsertFrameDialog();
+        });
+      },
+      electricalLoadBackend: function() {
+        return execute(function() {
+          return getApp().ui.openBackendLoadDialog();
+        });
+      },
+      electricalNewBackend: function() {
+        return execute(function() {
+          var app = getApp();
+          var backend = app.services.backend;
+          backend.resetBackendBinding();
+          app.showStatus("\u5DF2\u65B0\u5EFA\u540E\u7AEF\u56FE\u7EB8\u4F1A\u8BDD\uFF0C\u4E0B\u4E00\u6B21\u4FDD\u5B58\u5C06\u521B\u5EFA\u65B0\u56FE\u7EB8", false);
+        });
+      },
+      electricalReassignPort: function() {
+        return execute(function() {
+          return getApp().runtime.enterPortSwapMode();
+        });
+      },
+      electricalRefresh: function() {
+        return execute(function() {
+          return getApp().commands.refreshSelection();
+        });
+      },
+      electricalRollbackBackend: function() {
+        return execute(function() {
+          return getApp().ui.openBackendRollbackDialog();
+        });
+      },
+      electricalSaveBackend: function() {
+        return execute(function() {
+          return getApp().ui.openBackendSaveDialog();
+        });
+      },
+      electricalSymbols: function() {
+        return execute(function() {
+          return getApp().ui.toggleWindow();
         });
       }
-      return schema;
-    }
-    function flattenSchemaFields(schema, prefix, result) {
-      var nextPrefix = trim2(prefix);
-      var key;
-      if (!deps.isObject(schema)) {
-        return result;
+    };
+  }
+
+  // domain/specSchema.js
+  function isSchemaLeafDescriptor(value) {
+    return isObject(value) && typeof value.type === "string" && trim(value.type).length > 0;
+  }
+  function normalizeSchemaType(type) {
+    type = trim(type).toLowerCase();
+    return type == "number" || type == "boolean" || type == "enum" ? type : "string";
+  }
+  function normalizeEnumOptions(options) {
+    var list = Array.isArray(options) ? options : String(options || "").split(",");
+    var result = [];
+    var seen = {};
+    var i;
+    for (i = 0; i < list.length; i++) {
+      var value = trim(list[i]);
+      if (value.length > 0 && seen[value] == null) {
+        seen[value] = true;
+        result.push(value);
       }
-      for (key in schema) {
-        if (schema.hasOwnProperty(key)) {
-          var path = nextPrefix.length > 0 ? nextPrefix + "." + key : key;
-          var value = schema[key];
-          if (isSchemaLeafDescriptor(value)) {
-            result.push(
-              normalizeSchemaField({
+    }
+    return result;
+  }
+  function normalizeSchemaField(raw, nextItemId) {
+    var field = isObject(raw) ? cloneJson(raw) : {};
+    field.id = trim(field.id) || (typeof nextItemId === "function" ? nextItemId("field") : "");
+    field.path = trim(field.path);
+    field.type = normalizeSchemaType(field.type);
+    field.required = !!field.required;
+    field.enumValues = normalizeEnumOptions(field.enumValues);
+    return field;
+  }
+  function getDefaultSchemaFields(nextItemId) {
+    return [
+      normalizeSchemaField({ path: "title", type: "string" }, nextItemId),
+      normalizeSchemaField({ path: "name", type: "string" }, nextItemId),
+      normalizeSchemaField({ path: "code", type: "string" }, nextItemId),
+      normalizeSchemaField({ path: "power", type: "string" }, nextItemId)
+    ];
+  }
+  function hasSchemaPath(schema, path) {
+    var parts = trim(path).split(".");
+    var current = schema;
+    var i;
+    if (!isObject(schema) || trim(path).length == 0) {
+      return false;
+    }
+    for (i = 0; i < parts.length; i++) {
+      if (!isObject(current) || !current.hasOwnProperty(parts[i])) {
+        return false;
+      }
+      current = current[parts[i]];
+    }
+    return true;
+  }
+  function isValidFieldPath(path) {
+    var parts = trim(path).split(".");
+    var i;
+    if (trim(path).length == 0) {
+      return false;
+    }
+    for (i = 0; i < parts.length; i++) {
+      if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(parts[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function setValueByPath(target, path, value) {
+    var parts = trim(path).split(".");
+    var current = target;
+    var i;
+    for (i = 0; i < parts.length - 1; i++) {
+      if (!isObject(current[parts[i]])) {
+        current[parts[i]] = {};
+      }
+      current = current[parts[i]];
+    }
+    current[parts[parts.length - 1]] = value;
+  }
+  function buildSchemaFromFields(fields, nextItemId) {
+    var schema = {};
+    var seen = {};
+    var i;
+    for (i = 0; i < fields.length; i++) {
+      var field = normalizeSchemaField(fields[i], nextItemId);
+      var path = trim(field.path);
+      if (path.length == 0) {
+        continue;
+      }
+      if (!isValidFieldPath(path)) {
+        throw new Error("\u5B57\u6BB5\u8DEF\u5F84\u683C\u5F0F\u4E0D\u6B63\u786E");
+      }
+      if (seen[path]) {
+        throw new Error("\u5B57\u6BB5\u8DEF\u5F84\u4E0D\u80FD\u91CD\u590D");
+      }
+      if (field.type == "enum" && field.enumValues.length == 0) {
+        throw new Error("\u679A\u4E3E\u7C7B\u578B\u5FC5\u987B\u81F3\u5C11\u63D0\u4F9B\u4E00\u4E2A\u53EF\u9009\u503C");
+      }
+      seen[path] = true;
+      setValueByPath(schema, path, {
+        type: field.type,
+        required: !!field.required,
+        enumValues: field.enumValues
+      });
+    }
+    return schema;
+  }
+  function flattenSchemaFields(schema, prefix, result, nextItemId) {
+    var nextPrefix = trim(prefix);
+    var key;
+    if (!isObject(schema)) {
+      return result;
+    }
+    for (key in schema) {
+      if (schema.hasOwnProperty(key)) {
+        var path = nextPrefix.length > 0 ? nextPrefix + "." + key : key;
+        var value = schema[key];
+        if (isSchemaLeafDescriptor(value)) {
+          result.push(
+            normalizeSchemaField(
+              {
                 path,
                 type: value.type,
                 required: value.required,
                 enumValues: value.enumValues
-              })
-            );
-          } else if (deps.isObject(value)) {
-            flattenSchemaFields(value, path, result);
-          }
+              },
+              nextItemId
+            )
+          );
+        } else if (isObject(value)) {
+          flattenSchemaFields(value, path, result, nextItemId);
+        }
+      }
+    }
+    return result;
+  }
+  function buildEmptyValueFromSchema(schema) {
+    var key;
+    if (Array.isArray(schema)) {
+      return [];
+    }
+    if (isObject(schema)) {
+      if (isSchemaLeafDescriptor(schema)) {
+        switch (normalizeSchemaType(schema.type)) {
+          case "number":
+            return null;
+          case "boolean":
+            return null;
+          case "enum":
+            return "";
+          default:
+            return "";
+        }
+      }
+      var result = {};
+      for (key in schema) {
+        if (schema.hasOwnProperty(key)) {
+          result[key] = buildEmptyValueFromSchema(schema[key]);
         }
       }
       return result;
     }
-    function buildEmptyValueFromSchema(schema) {
-      var key;
-      if (Array.isArray(schema)) {
-        return [];
-      }
-      if (deps.isObject(schema)) {
-        if (isSchemaLeafDescriptor(schema)) {
-          switch (normalizeSchemaType(schema.type)) {
-            case "number":
-              return null;
-            case "boolean":
-              return null;
-            case "enum":
-              return "";
-            default:
-              return "";
-          }
-        }
-        var result = {};
-        for (key in schema) {
-          if (schema.hasOwnProperty(key)) {
-            result[key] = buildEmptyValueFromSchema(schema[key]);
-          }
-        }
-        return result;
-      }
+    return null;
+  }
+  function getValueByPath(obj, path) {
+    var current = obj;
+    var parts = trim(path).split(".");
+    var i;
+    if (trim(path).length == 0) {
       return null;
     }
-    function getValueByPath(obj, path) {
-      var current = obj;
-      var parts = trim2(path).split(".");
-      var i;
-      if (trim2(path).length == 0) {
+    for (i = 0; i < parts.length; i++) {
+      if (current == null) {
         return null;
       }
-      for (i = 0; i < parts.length; i++) {
-        if (current == null) {
-          return null;
-        }
-        current = current[parts[i]];
-      }
-      return current;
+      current = current[parts[i]];
     }
-    return {
-      buildEmptyValueFromSchema,
-      buildSchemaFromFields,
-      flattenSchemaFields,
-      getDefaultSchemaFields,
-      getValueByPath,
-      hasSchemaPath,
-      isSchemaLeafDescriptor,
-      isValidFieldPath,
-      normalizeEnumOptions,
-      normalizeSchemaField,
-      normalizeSchemaType,
-      setValueByPath
-    };
+    return current;
   }
 
   // domain/specPorts.js
-  function createSpecPortsModule(deps) {
-    var trim2 = deps.trim;
-    function normalizePortMarker(marker) {
-      marker = trim2(marker).toLowerCase();
-      return marker == "circle" || marker == "hidden" ? marker : "cross";
+  function normalizePortMarker(marker) {
+    marker = trim(marker).toLowerCase();
+    return marker == "circle" || marker == "hidden" ? marker : "cross";
+  }
+  function normalizePortDirection(direction) {
+    direction = trim(direction).toLowerCase();
+    return direction == "left" || direction == "right" || direction == "up" || direction == "down" ? direction : "any";
+  }
+  function normalizePortIoMode(mode) {
+    mode = trim(mode).toLowerCase();
+    return mode == "in" || mode == "out" ? mode : "both";
+  }
+  function defaultPortPosition(index, count) {
+    return count <= 0 ? 0.5 : (index + 1) / (count + 1);
+  }
+  function normalizePortPoint(raw, fallbackId, fallbackX, fallbackY) {
+    var id = fallbackId;
+    var x = fallbackX;
+    var y = fallbackY;
+    var name = "";
+    var marker = "cross";
+    var direction = "any";
+    var ioMode = "both";
+    if (isObject(raw)) {
+      id = trim(raw.id || raw.key || raw.name) || fallbackId;
+      x = toFloat(raw.x, fallbackX);
+      y = toFloat(raw.y, fallbackY);
+      name = trim(raw.name || raw.label || "");
+      marker = normalizePortMarker(raw.marker || raw.style);
+      direction = normalizePortDirection(raw.direction || raw.side);
+      ioMode = normalizePortIoMode(raw.ioMode || raw.io || raw.mode);
+    } else if (typeof raw == "number") {
+      y = raw;
     }
-    function normalizePortDirection(direction) {
-      direction = trim2(direction).toLowerCase();
-      return direction == "left" || direction == "right" || direction == "up" || direction == "down" ? direction : "any";
-    }
-    function normalizePortIoMode(mode) {
-      mode = trim2(mode).toLowerCase();
-      return mode == "in" || mode == "out" ? mode : "both";
-    }
-    function defaultPortPosition(index, count) {
-      return count <= 0 ? 0.5 : (index + 1) / (count + 1);
-    }
-    function normalizePortPoint(raw, fallbackId, fallbackX, fallbackY) {
-      var id = fallbackId;
-      var x = fallbackX;
-      var y = fallbackY;
-      var name = "";
-      var marker = "cross";
-      var direction = "any";
-      var ioMode = "both";
-      if (deps.isObject(raw)) {
-        id = trim2(raw.id || raw.key || raw.name) || fallbackId;
-        x = deps.toFloat(raw.x, fallbackX);
-        y = deps.toFloat(raw.y, fallbackY);
-        name = trim2(raw.name || raw.label || "");
-        marker = normalizePortMarker(raw.marker || raw.style);
-        direction = normalizePortDirection(raw.direction || raw.side);
-        ioMode = normalizePortIoMode(raw.ioMode || raw.io || raw.mode);
-      } else if (typeof raw == "number") {
-        y = raw;
-      }
-      return {
-        id,
-        x: deps.clamp(x, 0, 1),
-        y: deps.clamp(y, 0, 1),
-        name,
-        marker,
-        direction,
-        ioMode
-      };
-    }
-    function normalizePortLayout(rawPorts) {
-      var points = [];
-      var i;
-      if (Array.isArray(rawPorts)) {
-        for (i = 0; i < rawPorts.length; i++) {
-          points.push(
-            normalizePortPoint(
-              rawPorts[i],
-              "port:" + i,
-              0.5,
-              (i + 1) / (rawPorts.length + 1)
-            )
-          );
-        }
-        return points;
-      }
-      if (!deps.isObject(rawPorts)) {
-        return points;
-      }
-      if (Array.isArray(rawPorts.items)) {
-        for (i = 0; i < rawPorts.items.length; i++) {
-          points.push(
-            normalizePortPoint(
-              rawPorts.items[i],
-              "port:" + i,
-              0.5,
-              (i + 1) / (rawPorts.items.length + 1)
-            )
-          );
-        }
-        return points;
-      }
-      if (Array.isArray(rawPorts.left) || Array.isArray(rawPorts.right)) {
-        var left = Array.isArray(rawPorts.left) ? rawPorts.left : [];
-        var right = Array.isArray(rawPorts.right) ? rawPorts.right : [];
-        for (i = 0; i < left.length; i++) {
-          points.push(
-            normalizePortPoint(
-              { id: "left:" + i, x: 0, y: left[i] },
-              "left:" + i,
-              0,
-              defaultPortPosition(i, left.length)
-            )
-          );
-        }
-        for (i = 0; i < right.length; i++) {
-          points.push(
-            normalizePortPoint(
-              { id: "right:" + i, x: 1, y: right[i] },
-              "right:" + i,
-              1,
-              defaultPortPosition(i, right.length)
-            )
-          );
-        }
-        return points;
-      }
-      var leftCount = Math.max(0, deps.toInt(rawPorts.leftCount, 0));
-      var rightCount = Math.max(0, deps.toInt(rawPorts.rightCount, 0));
-      for (i = 0; i < leftCount; i++) {
-        points.push({
-          id: "left:" + i,
-          x: 0,
-          y: defaultPortPosition(i, leftCount)
-        });
-      }
-      for (i = 0; i < rightCount; i++) {
-        points.push({
-          id: "right:" + i,
-          x: 1,
-          y: defaultPortPosition(i, rightCount)
-        });
+    return {
+      id,
+      x: clamp(x, 0, 1),
+      y: clamp(y, 0, 1),
+      name,
+      marker,
+      direction,
+      ioMode
+    };
+  }
+  function normalizePortLayout(rawPorts) {
+    var points = [];
+    var i;
+    if (Array.isArray(rawPorts)) {
+      for (i = 0; i < rawPorts.length; i++) {
+        points.push(
+          normalizePortPoint(
+            rawPorts[i],
+            "port:" + i,
+            0.5,
+            (i + 1) / (rawPorts.length + 1)
+          )
+        );
       }
       return points;
     }
-    function parsePortLayout(raw) {
-      if (raw == null || raw.length == 0) {
-        return [];
+    if (!isObject(rawPorts)) {
+      return points;
+    }
+    if (Array.isArray(rawPorts.items)) {
+      for (i = 0; i < rawPorts.items.length; i++) {
+        points.push(
+          normalizePortPoint(
+            rawPorts.items[i],
+            "port:" + i,
+            0.5,
+            (i + 1) / (rawPorts.items.length + 1)
+          )
+        );
       }
-      try {
-        return normalizePortLayout(JSON.parse(raw));
-      } catch (e) {
-        return [];
+      return points;
+    }
+    if (Array.isArray(rawPorts.left) || Array.isArray(rawPorts.right)) {
+      var left = Array.isArray(rawPorts.left) ? rawPorts.left : [];
+      var right = Array.isArray(rawPorts.right) ? rawPorts.right : [];
+      for (i = 0; i < left.length; i++) {
+        points.push(
+          normalizePortPoint(
+            { id: "left:" + i, x: 0, y: left[i] },
+            "left:" + i,
+            0,
+            defaultPortPosition(i, left.length)
+          )
+        );
       }
+      for (i = 0; i < right.length; i++) {
+        points.push(
+          normalizePortPoint(
+            { id: "right:" + i, x: 1, y: right[i] },
+            "right:" + i,
+            1,
+            defaultPortPosition(i, right.length)
+          )
+        );
+      }
+      return points;
     }
-    function buildPortLayout(spec, base) {
-      var current = normalizePortLayout(spec.ports);
-      var fallback = normalizePortLayout(base);
-      return current.length > 0 ? current : fallback;
+    var leftCount = Math.max(0, toInt(rawPorts.leftCount, 0));
+    var rightCount = Math.max(0, toInt(rawPorts.rightCount, 0));
+    for (i = 0; i < leftCount; i++) {
+      points.push({
+        id: "left:" + i,
+        x: 0,
+        y: defaultPortPosition(i, leftCount)
+      });
     }
-    function serializePortLayout(layout) {
-      return JSON.stringify(normalizePortLayout(layout));
+    for (i = 0; i < rightCount; i++) {
+      points.push({
+        id: "right:" + i,
+        x: 1,
+        y: defaultPortPosition(i, rightCount)
+      });
     }
-    return {
-      buildPortLayout,
-      defaultPortPosition,
-      normalizePortDirection,
-      normalizePortIoMode,
-      normalizePortLayout,
-      normalizePortMarker,
-      normalizePortPoint,
-      parsePortLayout,
-      serializePortLayout
-    };
+    return points;
+  }
+  function parsePortLayout(raw) {
+    if (raw == null || raw.length == 0) {
+      return [];
+    }
+    try {
+      return normalizePortLayout(JSON.parse(raw));
+    } catch (e) {
+      return [];
+    }
+  }
+  function buildPortLayout(spec, base) {
+    var current = normalizePortLayout(spec.ports);
+    var fallback = normalizePortLayout(base);
+    return current.length > 0 ? current : fallback;
+  }
+  function serializePortLayout(layout) {
+    return JSON.stringify(normalizePortLayout(layout));
   }
 
   // domain/specLabels.js
-  function createSpecLabelsModule(deps) {
-    var trim2 = deps.trim;
-    function normalizeLabelAlign(align) {
-      align = trim2(align).toLowerCase();
-      return align == "left" || align == "right" ? align : "center";
-    }
-    function normalizeLabelItem(raw, fallbackId, fallbackText) {
-      var text = fallbackText;
-      var id = fallbackId;
-      var binding = "";
-      var x = 0.5;
-      var y = -0.18;
-      var width = 120;
-      var height = 26;
-      var align = "center";
-      if (deps.isObject(raw)) {
-        text = trim2(raw.text || raw.label) || fallbackText;
-        id = trim2(raw.id || raw.key || raw.name) || fallbackId;
-        binding = trim2(raw.binding || raw.field || raw.prop);
-        x = deps.toFloat(raw.x, x);
-        y = deps.toFloat(raw.y, y);
-        width = Math.max(40, deps.toInt(raw.width, width));
-        height = Math.max(20, deps.toInt(raw.height, height));
-        align = normalizeLabelAlign(raw.align);
-      } else {
-        text = trim2(raw) || fallbackText;
-      }
-      return {
-        id,
-        text,
-        binding,
-        x: deps.clamp(x, -1.5, 2.5),
-        y: deps.clamp(y, -1.5, 2.5),
-        width,
-        height,
-        align
-      };
-    }
-    function normalizeLabels(rawLabels) {
-      var labels = [];
-      var i;
-      if (!Array.isArray(rawLabels)) {
-        return labels;
-      }
-      for (i = 0; i < rawLabels.length; i++) {
-        labels.push(
-          normalizeLabelItem(rawLabels[i], "label:" + i, "\u6587\u672C" + (i + 1))
-        );
-      }
-      return labels;
-    }
-    function buildResolvedLabels(labels, instance) {
-      var result = [];
-      var i;
-      for (i = 0; i < labels.length; i++) {
-        var item = deps.cloneJson(labels[i]);
-        var value = deps.getValueByPath(instance, item.binding);
-        item.text = trim2(item.binding).length > 0 ? value != null ? String(value) : "" : item.text || "";
-        result.push(item);
-      }
-      return result;
+  function normalizeLabelAlign(align) {
+    align = trim(align).toLowerCase();
+    return align == "left" || align == "right" ? align : "center";
+  }
+  function normalizeLabelItem(raw, fallbackId, fallbackText) {
+    var text = fallbackText;
+    var id = fallbackId;
+    var binding = "";
+    var x = 0.5;
+    var y = -0.18;
+    var width = 120;
+    var height = 26;
+    var align = "center";
+    if (isObject(raw)) {
+      text = trim(raw.text || raw.label) || fallbackText;
+      id = trim(raw.id || raw.key || raw.name) || fallbackId;
+      binding = trim(raw.binding || raw.field || raw.prop);
+      x = toFloat(raw.x, x);
+      y = toFloat(raw.y, y);
+      width = Math.max(40, toInt(raw.width, width));
+      height = Math.max(20, toInt(raw.height, height));
+      align = normalizeLabelAlign(raw.align);
+    } else {
+      text = trim(raw) || fallbackText;
     }
     return {
-      buildResolvedLabels,
-      normalizeLabelAlign,
-      normalizeLabelItem,
-      normalizeLabels
+      id,
+      text,
+      binding,
+      x: clamp(x, -1.5, 2.5),
+      y: clamp(y, -1.5, 2.5),
+      width,
+      height,
+      align
     };
+  }
+  function normalizeLabels(rawLabels) {
+    var labels = [];
+    var i;
+    if (!Array.isArray(rawLabels)) {
+      return labels;
+    }
+    for (i = 0; i < rawLabels.length; i++) {
+      labels.push(normalizeLabelItem(rawLabels[i], "label:" + i, "\u6587\u672C" + (i + 1)));
+    }
+    return labels;
+  }
+  function buildResolvedLabels(labels, instance, getValueByPath2) {
+    var result = [];
+    var i;
+    for (i = 0; i < labels.length; i++) {
+      var item = cloneJson(labels[i]);
+      var value = typeof getValueByPath2 === "function" ? getValueByPath2(instance, item.binding) : null;
+      item.text = trim(item.binding).length > 0 ? value != null ? String(value) : "" : item.text || "";
+      result.push(item);
+    }
+    return result;
   }
 
   // domain/spec.js
-  function createSpecDomain(deps) {
+  function buildSpecDeps() {
+    var app = getApp();
+    return {
+      trim: app.utils.trim,
+      isObject: app.utils.isObject,
+      cloneJson: app.utils.cloneJson,
+      validateSvg: app.utils.validateSvg,
+      generateSymbolId: app.helpers.generateSymbolId,
+      clamp: app.utils.clamp,
+      toInt: app.utils.toInt,
+      toFloat: app.utils.toFloat,
+      nextItemId: app.helpers.nextItemId,
+      normalizeMode: app.helpers.normalizeMode,
+      deepMerge: app.utils.deepMerge,
+      generateInstanceId: app.helpers.generateInstanceId
+    };
+  }
+  function createSpecDomain() {
+    var deps = arguments.length > 0 ? arguments[0] : buildSpecDeps();
     var trim2 = deps.trim;
-    var schemaModule = createSpecSchemaModule(deps);
-    var portsModule = createSpecPortsModule(deps);
-    var labelsModule = createSpecLabelsModule({
-      trim: trim2,
-      clamp: deps.clamp,
-      cloneJson: deps.cloneJson,
-      getValueByPath: schemaModule.getValueByPath,
-      isObject: deps.isObject,
-      toFloat: deps.toFloat,
-      toInt: deps.toInt
-    });
     function getVariantLayout(spec, variantKey) {
       var layouts = normalizeVariantLayouts(spec.variantLayouts);
       var key = trim2(variantKey);
       if (key.length > 0 && layouts[key] != null) {
         return {
-          ports: portsModule.normalizePortLayout(layouts[key].ports),
-          labels: labelsModule.normalizeLabels(layouts[key].labels)
+          ports: normalizePortLayout(layouts[key].ports),
+          labels: normalizeLabels(layouts[key].labels)
         };
       }
       return {
-        ports: portsModule.normalizePortLayout(spec.ports),
-        labels: labelsModule.normalizeLabels(spec.labels)
+        ports: normalizePortLayout(spec.ports),
+        labels: normalizeLabels(spec.labels)
       };
     }
     function getActiveVariantKey(spec) {
       var field = trim2(spec.variantField || "");
-      var value = trim2(schemaModule.getValueByPath(spec.data, field));
+      var value = trim2(getValueByPath(spec.data, field));
       if (value.length == 0 && field == "mode") {
         value = trim2(spec.device.mode);
       }
@@ -1016,8 +1351,8 @@
         if (raw.hasOwnProperty(key) && trim2(key).length > 0) {
           var entry = deps.isObject(raw[key]) ? raw[key] : {};
           result[trim2(key)] = {
-            ports: portsModule.normalizePortLayout(entry.ports),
-            labels: labelsModule.normalizeLabels(entry.labels)
+            ports: normalizePortLayout(entry.ports),
+            labels: normalizeLabels(entry.labels)
           };
         }
       }
@@ -1051,8 +1386,8 @@
           mode: deps.normalizeMode(device.mode),
           params
         },
-        ports: portsModule.normalizePortLayout(ports),
-        labels: labelsModule.normalizeLabels(raw.labels),
+        ports: normalizePortLayout(ports),
+        labels: normalizeLabels(raw.labels),
         schema,
         data,
         variantField,
@@ -1091,15 +1426,15 @@
     function buildInstanceSpec(instanceData, template, sizeOverride) {
       template = template != null ? normalizeSpec(deps.cloneJson(template)) : createEmptyTemplateSpec();
       var mergedData = deps.deepMerge(
-        schemaModule.buildEmptyValueFromSchema(template.schema),
+        buildEmptyValueFromSchema(template.schema),
         instanceData
       );
       var spec = deps.cloneJson(template);
-      var nameValue = schemaModule.getValueByPath(mergedData, "name") || schemaModule.getValueByPath(mergedData, "device.name");
-      var codeValue = schemaModule.getValueByPath(mergedData, "code") || schemaModule.getValueByPath(mergedData, "device.code");
-      var powerValue = schemaModule.getValueByPath(mergedData, "power") || schemaModule.getValueByPath(mergedData, "device.power");
-      var modeValue = schemaModule.getValueByPath(mergedData, "mode") || schemaModule.getValueByPath(mergedData, "device.mode");
-      var titleValue = schemaModule.getValueByPath(mergedData, "title");
+      var nameValue = getValueByPath(mergedData, "name") || getValueByPath(mergedData, "device.name");
+      var codeValue = getValueByPath(mergedData, "code") || getValueByPath(mergedData, "device.code");
+      var powerValue = getValueByPath(mergedData, "power") || getValueByPath(mergedData, "device.power");
+      var modeValue = getValueByPath(mergedData, "mode") || getValueByPath(mergedData, "device.mode");
+      var titleValue = getValueByPath(mergedData, "title");
       var variantKey;
       var layout;
       spec.data = mergedData;
@@ -1129,48 +1464,69 @@
       variantKey = getActiveVariantKey(spec);
       layout = getVariantLayout(template, variantKey);
       spec.ports = layout.ports;
-      spec.labels = labelsModule.buildResolvedLabels(layout.labels, mergedData);
+      spec.labels = buildResolvedLabels(layout.labels, mergedData, getValueByPath);
       return normalizeSpec(spec);
     }
     return {
-      buildEmptyValueFromSchema: schemaModule.buildEmptyValueFromSchema,
+      buildEmptyValueFromSchema,
       buildInstanceSpec,
-      buildPortLayout: portsModule.buildPortLayout,
-      buildResolvedLabels: labelsModule.buildResolvedLabels,
-      buildSchemaFromFields: schemaModule.buildSchemaFromFields,
+      buildPortLayout,
+      buildResolvedLabels: function(labels, instance) {
+        return buildResolvedLabels(labels, instance, getValueByPath);
+      },
+      buildSchemaFromFields: function(fields) {
+        return buildSchemaFromFields(fields, deps.nextItemId);
+      },
       createEmptyTemplateSpec,
-      flattenSchemaFields: schemaModule.flattenSchemaFields,
+      flattenSchemaFields: function(schema, prefix, result) {
+        return flattenSchemaFields(schema, prefix, result, deps.nextItemId);
+      },
       getActiveSvg,
       getActiveVariantKey,
-      getDefaultSchemaFields: schemaModule.getDefaultSchemaFields,
-      getValueByPath: schemaModule.getValueByPath,
+      getDefaultSchemaFields: function() {
+        return getDefaultSchemaFields(deps.nextItemId);
+      },
+      getValueByPath,
       getVariantLayout,
-      hasSchemaPath: schemaModule.hasSchemaPath,
-      isSchemaLeafDescriptor: schemaModule.isSchemaLeafDescriptor,
-      isValidFieldPath: schemaModule.isValidFieldPath,
-      normalizeEnumOptions: schemaModule.normalizeEnumOptions,
-      normalizeLabelAlign: labelsModule.normalizeLabelAlign,
-      normalizeLabelItem: labelsModule.normalizeLabelItem,
-      normalizeLabels: labelsModule.normalizeLabels,
-      normalizePortDirection: portsModule.normalizePortDirection,
-      normalizePortIoMode: portsModule.normalizePortIoMode,
-      normalizePortLayout: portsModule.normalizePortLayout,
-      normalizePortMarker: portsModule.normalizePortMarker,
-      normalizePortPoint: portsModule.normalizePortPoint,
-      normalizeSchemaField: schemaModule.normalizeSchemaField,
-      normalizeSchemaType: schemaModule.normalizeSchemaType,
+      hasSchemaPath,
+      isSchemaLeafDescriptor,
+      isValidFieldPath,
+      normalizeEnumOptions,
+      normalizeLabelAlign,
+      normalizeLabelItem,
+      normalizeLabels,
+      normalizePortDirection,
+      normalizePortIoMode,
+      normalizePortLayout,
+      normalizePortMarker,
+      normalizePortPoint,
+      normalizeSchemaField: function(raw) {
+        return normalizeSchemaField(raw, deps.nextItemId);
+      },
+      normalizeSchemaType,
       normalizeSpec,
       normalizeVariantLayouts,
-      parsePortLayout: portsModule.parsePortLayout,
-      serializePortLayout: portsModule.serializePortLayout,
-      setValueByPath: schemaModule.setValueByPath,
+      parsePortLayout,
+      serializePortLayout,
+      setValueByPath,
       toStyleImageUri,
       toSvgDataUri
     };
   }
 
   // domain/symbolCore.js
-  function createSymbolCore(deps) {
+  function buildSymbolCoreDeps() {
+    var app = getApp();
+    return {
+      toStyleImageUri: app.domains.spec.toStyleImageUri,
+      ROOT_TYPE: app.constants.ROOT_TYPE,
+      trim: app.utils.trim,
+      serializePortLayout: app.domains.spec.serializePortLayout,
+      normalizeLabels: app.domains.spec.normalizeLabels
+    };
+  }
+  function createSymbolCore() {
+    var deps = arguments.length > 0 ? arguments[0] : buildSymbolCoreDeps();
     function makeRootStyle() {
       return "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;";
     }
@@ -1212,7 +1568,36 @@
   }
 
   // domain/symbolGraph.js
-  function createSymbolDomain(deps) {
+  function buildSymbolGraphDeps() {
+    var app = getApp();
+    var graphApi = app.graphApi;
+    return {
+      model: graphApi.model,
+      ROOT_TAG: app.constants.ROOT_TAG,
+      ROOT_TYPE: app.constants.ROOT_TYPE,
+      BODY_TAG: app.constants.BODY_TAG,
+      BODY_KIND: app.constants.BODY_KIND,
+      LABEL_TAG: app.constants.LABEL_TAG,
+      LABEL_KIND: app.constants.LABEL_KIND,
+      trim: app.utils.trim,
+      isObject: app.utils.isObject,
+      normalizeMode: app.helpers.normalizeMode,
+      normalizeSpec: app.domains.spec.normalizeSpec,
+      normalizePortLayout: app.domains.spec.normalizePortLayout,
+      normalizeLabels: app.domains.spec.normalizeLabels,
+      parsePortLayout: app.domains.spec.parsePortLayout,
+      getAttr: app.utils.getAttr,
+      createNode: app.utils.createNode,
+      createMetaCell: app.utils.createMetaCell,
+      cloneValue: app.utils.cloneValue,
+      toStyleImageUri: app.domains.spec.toStyleImageUri,
+      serializePortLayout: app.domains.spec.serializePortLayout,
+      buildPortLayout: app.domains.spec.buildPortLayout,
+      buildResolvedLabels: app.domains.spec.buildResolvedLabels
+    };
+  }
+  function createSymbolDomain() {
+    var deps = arguments.length > 0 ? arguments[0] : buildSymbolGraphDeps();
     var model = deps.model;
     var core = createSymbolCore(deps);
     function addChild(root, child) {
@@ -1474,68 +1859,91 @@
   }
 
   // domain/frameCore.js
-  function createFrameCore(deps) {
-    function makeFrameStyle() {
-      return "shape=rectangle;fillColor=none;strokeColor=#6b7280;strokeWidth=2;rounded=0;html=1;whiteSpace=wrap;connectable=0;container=1;dropTarget=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;deletable=0;";
-    }
-    function makeFrameLabelStyle() {
-      return "text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontStyle=1;fontSize=13;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;deletable=0;pointerEvents=0;";
-    }
-    function normalizeFrameConfig(raw) {
-      raw = deps.isObject(raw) ? raw : {};
-      return {
-        width: Math.max(320, deps.toInt(raw.width, deps.defaultWidth)),
-        height: Math.max(240, deps.toInt(raw.height, deps.defaultHeight))
-      };
-    }
-    function applyFrameValueMetadata(node, frameId, pageNumber, frameConfig, extra) {
-      var config = normalizeFrameConfig(frameConfig);
-      var extras = deps.isObject(extra) ? extra : {};
-      var key;
-      node.setAttribute("pluginType", deps.frameType);
-      node.setAttribute("frameId", frameId);
-      node.setAttribute("pageNumber", String(Math.max(1, deps.toInt(pageNumber, 1))));
-      node.setAttribute("frameConfigJson", JSON.stringify(config));
-      node.setAttribute("frameWidth", String(config.width));
-      node.setAttribute("frameHeight", String(config.height));
-      node.setAttribute("label", "");
-      for (key in extras) {
-        if (extras.hasOwnProperty(key) && extras[key] != null) {
-          node.setAttribute(key, String(extras[key]));
-        }
-      }
-      return node;
-    }
-    function createFramePageLabelCell(pageNumber, frameConfig) {
-      var config = normalizeFrameConfig(frameConfig);
-      var width = 140;
-      var height = 24;
-      var geometry = new mxGeometry(config.width - width - 16, 10, width, height);
-      var value = deps.createMetaCell(
-        deps.frameLabelTag,
-        deps.frameLabelKind,
-        "page",
-        "PAGE " + pageNumber
-      );
-      var cell = new mxCell(value, geometry, makeFrameLabelStyle());
-      cell.vertex = true;
-      cell.setConnectable(false);
-      return cell;
-    }
+  function makeFrameStyle() {
+    return "shape=rectangle;fillColor=none;strokeColor=#6b7280;strokeWidth=2;rounded=0;html=1;whiteSpace=wrap;connectable=0;container=1;dropTarget=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;deletable=0;";
+  }
+  function makeFrameLabelStyle() {
+    return "text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontStyle=1;fontSize=13;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;deletable=0;pointerEvents=0;";
+  }
+  function normalizeFrameConfig(raw) {
+    raw = isObject(raw) ? raw : {};
     return {
-      applyFrameValueMetadata,
-      createFramePageLabelCell,
-      makeFrameLabelStyle,
-      makeFrameStyle,
-      normalizeFrameConfig
+      width: Math.max(320, toInt(raw.width, ELECTRICAL_CONSTANTS.FRAME_DEFAULT_WIDTH)),
+      height: Math.max(
+        240,
+        toInt(raw.height, ELECTRICAL_CONSTANTS.FRAME_DEFAULT_HEIGHT)
+      )
     };
+  }
+  function applyFrameValueMetadata(node, frameId, pageNumber, frameConfig, extra) {
+    var config = normalizeFrameConfig(frameConfig);
+    var extras = isObject(extra) ? extra : {};
+    var key;
+    node.setAttribute("pluginType", ELECTRICAL_CONSTANTS.FRAME_TYPE);
+    node.setAttribute("frameId", trim(frameId));
+    node.setAttribute("pageNumber", String(Math.max(1, toInt(pageNumber, 1))));
+    node.setAttribute("frameConfigJson", JSON.stringify(config));
+    node.setAttribute("frameWidth", String(config.width));
+    node.setAttribute("frameHeight", String(config.height));
+    node.setAttribute("label", "");
+    for (key in extras) {
+      if (extras.hasOwnProperty(key) && extras[key] != null) {
+        node.setAttribute(key, String(extras[key]));
+      }
+    }
+    return node;
+  }
+  function createFramePageLabelCell(pageNumber, frameConfig) {
+    var config = normalizeFrameConfig(frameConfig);
+    var width = 140;
+    var height = 24;
+    var geometry = new mxGeometry(config.width - width - 16, 10, width, height);
+    var value = createMetaCell(
+      ELECTRICAL_CONSTANTS.FRAME_LABEL_TAG,
+      ELECTRICAL_CONSTANTS.FRAME_LABEL_KIND,
+      "page",
+      "PAGE " + pageNumber
+    );
+    var cell = new mxCell(value, geometry, makeFrameLabelStyle());
+    cell.vertex = true;
+    cell.setConnectable(false);
+    return cell;
   }
 
   // domain/frameGraph.js
-  function createFrameDomain(deps) {
+  function buildFrameDeps() {
+    var app = getApp();
+    var constants = app.constants;
+    var utils = app.utils;
+    var helpers = app.helpers;
+    var graphApi = app.graphApi;
+    return {
+      graph: graphApi.graph,
+      model: graphApi.model,
+      state: graphApi.state,
+      frameTag: constants.FRAME_TAG,
+      frameType: constants.FRAME_TYPE,
+      frameLabelTag: constants.FRAME_LABEL_TAG,
+      frameLabelKind: constants.FRAME_LABEL_KIND,
+      frameMarginRatio: constants.FRAME_MARGIN_RATIO,
+      defaultWidth: constants.FRAME_DEFAULT_WIDTH,
+      defaultHeight: constants.FRAME_DEFAULT_HEIGHT,
+      trim: utils.trim,
+      toInt: utils.toInt,
+      isObject: utils.isObject,
+      getAttr: utils.getAttr,
+      createNode: utils.createNode,
+      createMetaCell: utils.createMetaCell,
+      generateFrameId: helpers.generateFrameId,
+      isDrawingFrame: helpers.isDrawingFrame,
+      showStatus: app.showStatus,
+      setCanvasStatus: app.setCanvasStatus
+    };
+  }
+  function createFrameDomain() {
+    var deps = arguments.length > 0 ? arguments[0] : buildFrameDeps();
     var graph = deps.graph;
     var model = deps.model;
-    var core = createFrameCore(deps);
     function findDrawingFrame(cell) {
       while (cell != null) {
         if (deps.isDrawingFrame(cell)) {
@@ -1550,12 +1958,12 @@
       var geometry;
       if (raw != null && raw.length > 0) {
         try {
-          return core.normalizeFrameConfig(JSON.parse(raw));
+          return normalizeFrameConfig(JSON.parse(raw));
         } catch (e) {
         }
       }
       geometry = model.getGeometry(frame);
-      return core.normalizeFrameConfig({
+      return normalizeFrameConfig({
         width: geometry != null ? geometry.width : deps.defaultWidth,
         height: geometry != null ? geometry.height : deps.defaultHeight
       });
@@ -1709,10 +2117,10 @@
       };
     }
     function createDrawingFrameCell(frameConfig, pageNumber, extra) {
-      var config = core.normalizeFrameConfig(frameConfig);
+      var config = normalizeFrameConfig(frameConfig);
       var frameId = extra != null && deps.trim(extra.frameId).length > 0 ? deps.trim(extra.frameId) : deps.generateFrameId();
       var root = new mxCell(
-        core.applyFrameValueMetadata(
+        applyFrameValueMetadata(
           deps.createNode(deps.frameTag),
           frameId,
           pageNumber,
@@ -1720,11 +2128,11 @@
           extra
         ),
         new mxGeometry(0, 0, config.width, config.height),
-        core.makeFrameStyle()
+        makeFrameStyle()
       );
       root.vertex = true;
       root.setConnectable(false);
-      root.insert(core.createFramePageLabelCell(pageNumber, config));
+      root.insert(createFramePageLabelCell(pageNumber, config));
       return root;
     }
     function addTopLevelCell(cell) {
@@ -1746,259 +2154,287 @@
       getLeftmostFrame,
       getMaxFramePageNumberInGroup,
       getRightmostFrameInGroup,
-      normalizeFrameConfig: core.normalizeFrameConfig
+      normalizeFrameConfig
     };
   }
 
   // domain/cabinetCore.js
-  function createCabinetCore(deps) {
-    function makeCabinetRootStyle() {
-      return "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;";
+  function makeCabinetRootStyle() {
+    return "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;";
+  }
+  function createCabinetBodySvg(descriptor) {
+    var width = Math.max(20, Math.round(descriptor.width));
+    var height = Math.max(20, Math.round(descriptor.height));
+    var strokeWidth = 4;
+    var inset = strokeWidth / 2;
+    var notchLeft = Math.max(14, Math.round(width * 0.16));
+    var notchWidth = Math.max(18, Math.round(width * 0.16));
+    var notchDepth = Math.max(8, Math.round(Math.min(height, 80) * 0.12));
+    var path;
+    if (!descriptor.continuesFromPrev && !descriptor.continuesToNext) {
+      path = "M " + inset + " " + inset + " L " + (width - inset) + " " + inset + " L " + (width - inset) + " " + (height - inset) + " L " + inset + " " + (height - inset) + " Z";
+    } else {
+      var topY = descriptor.continuesFromPrev ? inset + notchDepth : inset;
+      var bottomY = descriptor.continuesToNext ? height - inset - notchDepth : height - inset;
+      path = "M " + inset + " " + topY + " L " + notchLeft + " " + topY + " " + (descriptor.continuesFromPrev ? "L " + (notchLeft + notchWidth) + " " + inset + " " : "") + "L " + (width - inset) + " " + inset + " L " + (width - inset) + " " + (height - inset) + " " + (descriptor.continuesToNext ? "L " + (notchLeft + notchWidth) + " " + (height - inset) + " L " + notchLeft + " " + bottomY + " " : "") + "L " + inset + " " + bottomY + " Z";
     }
-    function createCabinetBodySvg(descriptor) {
-      var width = Math.max(20, Math.round(descriptor.width));
-      var height = Math.max(20, Math.round(descriptor.height));
-      var strokeWidth = 4;
-      var inset = strokeWidth / 2;
-      var notchLeft = Math.max(14, Math.round(width * 0.16));
-      var notchWidth = Math.max(18, Math.round(width * 0.16));
-      var notchDepth = Math.max(8, Math.round(Math.min(height, 80) * 0.12));
-      var path;
-      if (!descriptor.continuesFromPrev && !descriptor.continuesToNext) {
-        path = "M " + inset + " " + inset + " L " + (width - inset) + " " + inset + " L " + (width - inset) + " " + (height - inset) + " L " + inset + " " + (height - inset) + " Z";
-      } else {
-        var topY = descriptor.continuesFromPrev ? inset + notchDepth : inset;
-        var bottomY = descriptor.continuesToNext ? height - inset - notchDepth : height - inset;
-        path = "M " + inset + " " + topY + " L " + notchLeft + " " + topY + " " + (descriptor.continuesFromPrev ? "L " + (notchLeft + notchWidth) + " " + inset + " " : "") + "L " + (width - inset) + " " + inset + " L " + (width - inset) + " " + (height - inset) + " " + (descriptor.continuesToNext ? "L " + (notchLeft + notchWidth) + " " + (height - inset) + " L " + notchLeft + " " + bottomY + " " : "") + "L " + inset + " " + bottomY + " Z";
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + " " + height + '"><path d="' + path + '" fill="none" stroke="#111111" stroke-width="' + strokeWidth + '" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+  }
+  function makeCabinetBodyStyle(descriptor) {
+    return "shape=image;image=data:image/svg+xml," + encodeURIComponent(createCabinetBodySvg(descriptor)) + ";imageAspect=0;aspect=fixed;html=1;strokeColor=none;fillColor=none;part=1;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;cloneable=0;deletable=0;pointerEvents=0;";
+  }
+  function makeCabinetGapStyle(selected) {
+    return "shape=rectangle;fillColor=#4dabf7;gradientColor=none;fillOpacity=" + (selected ? "38" : "14") + ";strokeColor=" + (selected ? "#1d4ed8" : "none") + ";strokeWidth=" + (selected ? "2" : "0") + ";connectable=0;editable=0;movable=0;resizable=0;rotatable=0;";
+  }
+  function normalizeGapRatio(value, fallbackValue) {
+    return clamp(toFloat(value, fallbackValue != null ? fallbackValue : 0.12), 0, 1);
+  }
+  function normalizeCabinetPort(raw, index) {
+    var base = normalizePortPoint(
+      raw,
+      trim(raw != null ? raw.id : "") || "cabinet-port:" + index,
+      1,
+      0
+    );
+    base.direction = "right";
+    base.ioMode = "out";
+    base.order = index;
+    return base;
+  }
+  function normalizeCabinetModel(raw) {
+    raw = isObject(raw) ? cloneJson(raw) : {};
+    var portCount = Math.max(
+      2,
+      Array.isArray(raw.ports) ? raw.ports.length : toInt(raw.portCount, ELECTRICAL_CONSTANTS.CABINET_DEFAULT_PORT_COUNT)
+    );
+    var ports = [];
+    var i;
+    var gapRatios = [];
+    if (Array.isArray(raw.ports) && raw.ports.length > 0) {
+      for (i = 0; i < raw.ports.length; i++) {
+        ports.push(normalizeCabinetPort(raw.ports[i], i));
       }
-      return '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + " " + height + '"><path d="' + path + '" fill="none" stroke="#111111" stroke-width="' + strokeWidth + '" stroke-linejoin="round" stroke-linecap="round"/></svg>';
-    }
-    function makeCabinetBodyStyle(descriptor) {
-      return "shape=image;image=data:image/svg+xml," + encodeURIComponent(createCabinetBodySvg(descriptor)) + ";imageAspect=0;aspect=fixed;html=1;strokeColor=none;fillColor=none;part=1;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;cloneable=0;deletable=0;pointerEvents=0;";
-    }
-    function makeCabinetGapStyle(selected) {
-      return "shape=rectangle;fillColor=#4dabf7;gradientColor=none;fillOpacity=" + (selected ? "38" : "14") + ";strokeColor=" + (selected ? "#1d4ed8" : "none") + ";strokeWidth=" + (selected ? "2" : "0") + ";connectable=0;editable=0;movable=0;resizable=0;rotatable=0;";
-    }
-    function normalizeGapRatio(value, fallbackValue) {
-      return deps.clamp(
-        deps.toFloat(value, fallbackValue != null ? fallbackValue : 0.12),
-        0,
-        1
-      );
-    }
-    function normalizeCabinetPort(raw, index) {
-      var base = deps.normalizePortPoint(
-        raw,
-        deps.trim(raw != null ? raw.id : "") || "cabinet-port:" + index,
-        1,
-        0
-      );
-      base.direction = "right";
-      base.ioMode = "out";
-      base.order = index;
-      return base;
-    }
-    function normalizeCabinetModel(raw) {
-      raw = deps.isObject(raw) ? deps.cloneJson(raw) : {};
-      var portCount = Math.max(
-        2,
-        Array.isArray(raw.ports) ? raw.ports.length : deps.toInt(raw.portCount, deps.defaultPortCount)
-      );
-      var ports = [];
-      var i;
-      var gapRatios = [];
-      if (Array.isArray(raw.ports) && raw.ports.length > 0) {
-        for (i = 0; i < raw.ports.length; i++) {
-          ports.push(normalizeCabinetPort(raw.ports[i], i));
-        }
-      } else {
-        for (i = 0; i < portCount; i++) {
-          ports.push(
-            normalizeCabinetPort(
-              {
-                id: "cabinet-port:" + i,
-                x: 1,
-                y: 0,
-                marker: "cross",
-                direction: "right",
-                ioMode: "out"
-              },
-              i
-            )
-          );
-        }
-      }
-      for (i = 0; i < Math.max(0, ports.length - 1); i++) {
-        gapRatios.push(
-          normalizeGapRatio(
-            Array.isArray(raw.gapRatios) ? raw.gapRatios[i] : null,
-            0.12
+    } else {
+      for (i = 0; i < portCount; i++) {
+        ports.push(
+          normalizeCabinetPort(
+            {
+              id: "cabinet-port:" + i,
+              x: 1,
+              y: 0,
+              marker: "cross",
+              direction: "right",
+              ioMode: "out"
+            },
+            i
           )
         );
       }
-      return {
-        logicalCabinetId: deps.trim(raw.logicalCabinetId) || deps.generateLogicalCabinetId(),
-        originFrameId: deps.trim(raw.originFrameId),
-        title: deps.trim(raw.title) || "\u914D\u7535\u67DC",
-        cabinetWidth: Math.max(
-          30,
-          deps.toInt(raw.cabinetWidth, deps.defaultWidth)
-        ),
-        cabinetX: Math.max(20, deps.toInt(raw.cabinetX, deps.defaultX)),
-        tailPadding: Math.max(8, deps.toInt(raw.tailPadding, deps.tailPadding)),
-        ports,
-        gapRatios
-      };
     }
-    function buildCabinetOffsets(cabinetModel, frameConfig) {
-      var config = deps.getNormalizedFrameConfig(frameConfig);
-      var modelData = normalizeCabinetModel(cabinetModel);
-      var usableHeight = config.height * deps.frameContentRatio;
-      var topMargin = config.height * deps.frameMarginRatio;
-      var offsets = [];
-      var minFollowSpace = Math.max(
-        modelData.tailPadding * 2,
-        usableHeight * deps.minPortFollowSpaceRatio
+    for (i = 0; i < Math.max(0, ports.length - 1); i++) {
+      gapRatios.push(
+        normalizeGapRatio(Array.isArray(raw.gapRatios) ? raw.gapRatios[i] : null, 0.12)
       );
-      var currentOffset = modelData.tailPadding;
-      var i;
-      if (modelData.ports.length == 0) {
-        modelData.ports = normalizeCabinetModel({ portCount: 2 }).ports;
-        modelData.gapRatios = [0.12];
-      }
-      for (i = 0; i < modelData.ports.length; i++) {
-        if (i > 0) {
-          var previousGap = modelData.gapRatios[i - 1] * usableHeight;
-          var nextGap = i < modelData.gapRatios.length ? modelData.gapRatios[i] * usableHeight : 0;
-          var candidateOffset = currentOffset + previousGap;
-          var candidatePage = Math.floor(
-            Math.max(0, candidateOffset - 1e-4) / usableHeight
-          );
-          var candidateLocalOffset = candidateOffset - candidatePage * usableHeight;
-          var remainingLocalSpace = usableHeight - candidateLocalOffset;
-          if (i < modelData.gapRatios.length && previousGap + nextGap > usableHeight && candidateLocalOffset > modelData.tailPadding) {
-            currentOffset = (candidatePage + 1) * usableHeight + modelData.tailPadding;
-          } else if (remainingLocalSpace < minFollowSpace && candidateLocalOffset > modelData.tailPadding) {
-            currentOffset = (candidatePage + 1) * usableHeight + modelData.tailPadding;
-          } else {
-            currentOffset = candidateOffset;
-          }
-        }
-        offsets.push(currentOffset);
-      }
-      return {
-        frameConfig: config,
-        cabinetModel: modelData,
-        usableHeight,
-        topMargin,
-        offsets,
-        totalLogicalHeight: (offsets.length > 0 ? offsets[offsets.length - 1] : modelData.tailPadding) + modelData.tailPadding
-      };
-    }
-    function getPageIndexForOffset(offset, usableHeight, pageCount) {
-      if (pageCount <= 1 || offset <= 0) {
-        return 0;
-      }
-      return deps.clamp(
-        Math.floor((offset - 1e-4) / usableHeight),
-        0,
-        pageCount - 1
-      );
-    }
-    function buildCabinetPageDescriptors(cabinetModel, frameConfig) {
-      var layout = buildCabinetOffsets(cabinetModel, frameConfig);
-      var pageCount = Math.max(
-        1,
-        Math.ceil(layout.totalLogicalHeight / layout.usableHeight)
-      );
-      var descriptors = [];
-      var pageIndex;
-      var i;
-      for (pageIndex = 0; pageIndex < pageCount; pageIndex++) {
-        var pageStart = pageIndex * layout.usableHeight;
-        var remaining = Math.max(0, layout.totalLogicalHeight - pageStart);
-        var segmentHeight = pageCount > 1 ? layout.usableHeight : Math.max(
-          layout.cabinetModel.tailPadding,
-          Math.min(layout.usableHeight, remaining)
-        );
-        var ports = [];
-        var gaps = [];
-        for (i = 0; i < layout.cabinetModel.ports.length; i++) {
-          if (getPageIndexForOffset(
-            layout.offsets[i],
-            layout.usableHeight,
-            pageCount
-          ) == pageIndex) {
-            var localOffset = layout.offsets[i] - pageStart;
-            var port = deps.cloneJson(layout.cabinetModel.ports[i]);
-            port.x = 1;
-            port.y = segmentHeight > 0 ? deps.clamp(localOffset / segmentHeight, 0, 1) : 0;
-            port.order = i;
-            port.logicalOffset = layout.offsets[i];
-            ports.push(port);
-          }
-        }
-        for (i = 0; i < layout.cabinetModel.gapRatios.length; i++) {
-          var gapAbsoluteStart = layout.offsets[i];
-          var gapAbsoluteEnd = i + 1 < layout.offsets.length ? layout.offsets[i + 1] : gapAbsoluteStart;
-          var visibleStart = Math.max(gapAbsoluteStart, pageStart);
-          var visibleEnd = Math.min(gapAbsoluteEnd, pageStart + segmentHeight);
-          if (visibleEnd > visibleStart) {
-            var gapStart = deps.clamp(visibleStart - pageStart, 0, segmentHeight);
-            var gapEnd = deps.clamp(
-              visibleEnd - pageStart,
-              gapStart,
-              segmentHeight
-            );
-            if (gapEnd - gapStart < 12) {
-              gapEnd = Math.min(segmentHeight, gapStart + 12);
-            }
-            gaps.push({
-              id: "cabinet-gap:" + i + ":" + pageIndex,
-              gapIndex: i,
-              y: segmentHeight > 0 ? deps.clamp(gapStart / segmentHeight, 0, 1) : 0,
-              height: Math.max(12, gapEnd - gapStart)
-            });
-          }
-        }
-        descriptors.push({
-          segmentIndex: pageIndex,
-          pageCount,
-          continuesFromPrev: pageIndex > 0,
-          continuesToNext: pageIndex < pageCount - 1,
-          x: layout.cabinetModel.cabinetX,
-          y: layout.topMargin,
-          width: layout.cabinetModel.cabinetWidth,
-          height: segmentHeight,
-          segmentStartOffset: pageStart,
-          segmentEndOffset: pageStart + segmentHeight,
-          ports,
-          gaps,
-          frameConfig: layout.frameConfig,
-          cabinetModel: layout.cabinetModel
-        });
-      }
-      return descriptors;
     }
     return {
-      buildCabinetOffsets,
-      buildCabinetPageDescriptors,
-      createCabinetBodySvg,
-      getPageIndexForOffset,
-      makeCabinetBodyStyle,
-      makeCabinetGapStyle,
-      makeCabinetRootStyle,
-      normalizeCabinetModel,
-      normalizeCabinetPort,
-      normalizeGapRatio
+      logicalCabinetId: trim(raw.logicalCabinetId) || generateUuid(),
+      originFrameId: trim(raw.originFrameId),
+      title: trim(raw.title) || "\u914D\u7535\u67DC",
+      cabinetWidth: Math.max(
+        30,
+        toInt(raw.cabinetWidth, ELECTRICAL_CONSTANTS.CABINET_DEFAULT_WIDTH)
+      ),
+      cabinetX: Math.max(20, toInt(raw.cabinetX, ELECTRICAL_CONSTANTS.CABINET_DEFAULT_X)),
+      tailPadding: Math.max(
+        8,
+        toInt(raw.tailPadding, ELECTRICAL_CONSTANTS.CABINET_TAIL_PADDING)
+      ),
+      ports,
+      gapRatios
     };
+  }
+  function buildCabinetOffsets(cabinetModel, frameConfig) {
+    var config = normalizeFrameConfig(frameConfig);
+    var modelData = normalizeCabinetModel(cabinetModel);
+    var usableHeight = config.height * ELECTRICAL_CONSTANTS.FRAME_CONTENT_RATIO;
+    var topMargin = config.height * ELECTRICAL_CONSTANTS.FRAME_MARGIN_RATIO;
+    var offsets = [];
+    var minFollowSpace = Math.max(
+      modelData.tailPadding * 2,
+      usableHeight * ELECTRICAL_CONSTANTS.CABINET_MIN_PORT_FOLLOW_SPACE_RATIO
+    );
+    var currentOffset = modelData.tailPadding;
+    var i;
+    if (modelData.ports.length == 0) {
+      modelData.ports = normalizeCabinetModel({ portCount: 2 }).ports;
+      modelData.gapRatios = [0.12];
+    }
+    for (i = 0; i < modelData.ports.length; i++) {
+      if (i > 0) {
+        var previousGap = modelData.gapRatios[i - 1] * usableHeight;
+        var nextGap = i < modelData.gapRatios.length ? modelData.gapRatios[i] * usableHeight : 0;
+        var candidateOffset = currentOffset + previousGap;
+        var candidatePage = Math.floor(Math.max(0, candidateOffset - 1e-4) / usableHeight);
+        var candidateLocalOffset = candidateOffset - candidatePage * usableHeight;
+        var remainingLocalSpace = usableHeight - candidateLocalOffset;
+        if (i < modelData.gapRatios.length && previousGap + nextGap > usableHeight && candidateLocalOffset > modelData.tailPadding) {
+          currentOffset = (candidatePage + 1) * usableHeight + modelData.tailPadding;
+        } else if (remainingLocalSpace < minFollowSpace && candidateLocalOffset > modelData.tailPadding) {
+          currentOffset = (candidatePage + 1) * usableHeight + modelData.tailPadding;
+        } else {
+          currentOffset = candidateOffset;
+        }
+      }
+      offsets.push(currentOffset);
+    }
+    return {
+      frameConfig: config,
+      cabinetModel: modelData,
+      usableHeight,
+      topMargin,
+      offsets,
+      totalLogicalHeight: (offsets.length > 0 ? offsets[offsets.length - 1] : modelData.tailPadding) + modelData.tailPadding
+    };
+  }
+  function getPageIndexForOffset(offset, usableHeight, pageCount) {
+    if (pageCount <= 1 || offset <= 0) {
+      return 0;
+    }
+    return clamp(Math.floor((offset - 1e-4) / usableHeight), 0, pageCount - 1);
+  }
+  function buildCabinetPageDescriptors(cabinetModel, frameConfig) {
+    var layout = buildCabinetOffsets(cabinetModel, frameConfig);
+    var pageCount = Math.max(1, Math.ceil(layout.totalLogicalHeight / layout.usableHeight));
+    var descriptors = [];
+    var pageIndex;
+    var i;
+    for (pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+      var pageStart = pageIndex * layout.usableHeight;
+      var remaining = Math.max(0, layout.totalLogicalHeight - pageStart);
+      var segmentHeight = pageCount > 1 ? layout.usableHeight : Math.max(
+        layout.cabinetModel.tailPadding,
+        Math.min(layout.usableHeight, remaining)
+      );
+      var ports = [];
+      var gaps = [];
+      for (i = 0; i < layout.cabinetModel.ports.length; i++) {
+        if (getPageIndexForOffset(layout.offsets[i], layout.usableHeight, pageCount) == pageIndex) {
+          var localOffset = layout.offsets[i] - pageStart;
+          var port = cloneJson(layout.cabinetModel.ports[i]);
+          port.x = 1;
+          port.y = segmentHeight > 0 ? clamp(localOffset / segmentHeight, 0, 1) : 0;
+          port.order = i;
+          port.logicalOffset = layout.offsets[i];
+          ports.push(port);
+        }
+      }
+      for (i = 0; i < layout.cabinetModel.gapRatios.length; i++) {
+        var gapAbsoluteStart = layout.offsets[i];
+        var gapAbsoluteEnd = i + 1 < layout.offsets.length ? layout.offsets[i + 1] : gapAbsoluteStart;
+        var visibleStart = Math.max(gapAbsoluteStart, pageStart);
+        var visibleEnd = Math.min(gapAbsoluteEnd, pageStart + segmentHeight);
+        if (visibleEnd > visibleStart) {
+          var gapStart = clamp(visibleStart - pageStart, 0, segmentHeight);
+          var gapEnd = clamp(visibleEnd - pageStart, gapStart, segmentHeight);
+          if (gapEnd - gapStart < 12) {
+            gapEnd = Math.min(segmentHeight, gapStart + 12);
+          }
+          gaps.push({
+            id: "cabinet-gap:" + i + ":" + pageIndex,
+            gapIndex: i,
+            y: segmentHeight > 0 ? clamp(gapStart / segmentHeight, 0, 1) : 0,
+            height: Math.max(12, gapEnd - gapStart)
+          });
+        }
+      }
+      descriptors.push({
+        segmentIndex: pageIndex,
+        pageCount,
+        continuesFromPrev: pageIndex > 0,
+        continuesToNext: pageIndex < pageCount - 1,
+        x: layout.cabinetModel.cabinetX,
+        y: layout.topMargin,
+        width: layout.cabinetModel.cabinetWidth,
+        height: segmentHeight,
+        segmentStartOffset: pageStart,
+        segmentEndOffset: pageStart + segmentHeight,
+        ports,
+        gaps,
+        frameConfig: layout.frameConfig,
+        cabinetModel: layout.cabinetModel
+      });
+    }
+    return descriptors;
   }
 
   // domain/cabinetGraph.js
-  function createCabinetDomain(deps) {
+  function buildCabinetDeps() {
+    var app = getApp();
+    var constants = app.constants;
+    var utils = app.utils;
+    var domains = app.domains;
+    var helpers = app.helpers;
+    var graphApi = app.graphApi;
+    return {
+      model: graphApi.model,
+      state: graphApi.state,
+      cabinetTag: constants.CABINET_TAG,
+      cabinetType: constants.CABINET_TYPE,
+      cabinetBodyTag: constants.CABINET_BODY_TAG,
+      cabinetBodyKind: constants.CABINET_BODY_KIND,
+      cabinetGapTag: constants.CABINET_GAP_TAG,
+      cabinetGapType: constants.CABINET_GAP_TYPE,
+      cabinetGapKind: constants.CABINET_GAP_KIND,
+      frameLabelKind: constants.FRAME_LABEL_KIND,
+      frameContentRatio: constants.FRAME_CONTENT_RATIO,
+      frameMarginRatio: constants.FRAME_MARGIN_RATIO,
+      frameHorizontalGap: constants.FRAME_HORIZONTAL_GAP,
+      minPortFollowSpaceRatio: constants.CABINET_MIN_PORT_FOLLOW_SPACE_RATIO,
+      defaultWidth: constants.CABINET_DEFAULT_WIDTH,
+      defaultPortCount: constants.CABINET_DEFAULT_PORT_COUNT,
+      defaultX: constants.CABINET_DEFAULT_X,
+      tailPadding: constants.CABINET_TAIL_PADDING,
+      trim: utils.trim,
+      toInt: utils.toInt,
+      toFloat: utils.toFloat,
+      clamp: utils.clamp,
+      isObject: utils.isObject,
+      cloneJson: utils.cloneJson,
+      normalizePortPoint: domains.spec.normalizePortPoint,
+      generateLogicalCabinetId: helpers.generateLogicalCabinetId,
+      createNode: utils.createNode,
+      createMetaCell: utils.createMetaCell,
+      serializePortLayout: domains.spec.serializePortLayout,
+      getAttr: utils.getAttr,
+      isCabinetSegment: helpers.isCabinetSegment,
+      isCabinetGap: helpers.isCabinetGap,
+      getNormalizedFrameConfig: domains.frame.normalizeFrameConfig,
+      getAllDrawingFrames: domains.frame.getAllDrawingFrames,
+      getFrameConfig: domains.frame.getFrameConfig,
+      getFrameGroupId: domains.frame.getFrameGroupId,
+      getFramePageNumber: domains.frame.getFramePageNumber,
+      getMaxFramePageNumberInGroup: domains.frame.getMaxFramePageNumberInGroup,
+      getRightmostFrameInGroup: domains.frame.getRightmostFrameInGroup,
+      findFrameById: domains.frame.findFrameById,
+      findDrawingFrame: domains.frame.findDrawingFrame,
+      createDrawingFrameCell: domains.frame.createDrawingFrameCell,
+      addTopLevelCell: domains.frame.addTopLevelCell,
+      getEdgePortId: function(edge, root, source) {
+        return domains.snapshot.getEdgePortId(edge, root, source);
+      },
+      getPortMetaById: domains.connectionConstraints.getPortMetaById,
+      parsePortLayout: domains.spec.parsePortLayout,
+      isMovableConnectedTerminal: domains.connectionConstraints.isMovableConnectedTerminal,
+      moveCellToFrameByDelta: domains.connectionConstraints.moveCellToFrameByDelta,
+      setConnectionConstraint: function(edge, root, source, constraint) {
+        graphApi.graph.setConnectionConstraint(edge, root, source, constraint);
+      }
+    };
+  }
+  function createCabinetDomain() {
+    var deps = arguments.length > 0 ? arguments[0] : buildCabinetDeps();
     var model = deps.model;
     var state = deps.state;
-    var core = createCabinetCore(deps);
     function findCabinetSegment(cell) {
       while (cell != null) {
         if (deps.isCabinetSegment(cell)) {
@@ -2041,7 +2477,7 @@
           ""
         ),
         new mxGeometry(0, 0, descriptor.width, descriptor.height),
-        core.makeCabinetBodyStyle(descriptor)
+        makeCabinetBodyStyle(descriptor)
       );
       cell.vertex = true;
       cell.setConnectable(false);
@@ -2067,7 +2503,7 @@
       var cell = new mxCell(
         value,
         geometry,
-        core.makeCabinetGapStyle(
+        makeCabinetGapStyle(
           isSelectedCabinetGap(cabinetModel.logicalCabinetId, gap.gapIndex)
         )
       );
@@ -2116,7 +2552,7 @@
           descriptor.width,
           descriptor.height
         ),
-        core.makeCabinetRootStyle()
+        makeCabinetRootStyle()
       );
       var i;
       root.vertex = true;
@@ -2139,7 +2575,7 @@
       if (raw == null || raw.length == 0) {
         throw new Error("\u7F3A\u5C11 cabinetModelJson \u6570\u636E");
       }
-      return core.normalizeCabinetModel(JSON.parse(raw));
+      return normalizeCabinetModel(JSON.parse(raw));
     }
     function findCabinetSegments(logicalCabinetId) {
       var target = deps.trim(logicalCabinetId);
@@ -2173,7 +2609,7 @@
             for (k = 0; k < model.getChildCount(segment); k++) {
               var child = model.getChildAt(segment, k);
               if (deps.isCabinetGap(child)) {
-                var nextStyle = core.makeCabinetGapStyle(
+                var nextStyle = makeCabinetGapStyle(
                   isSelectedCabinetGap(
                     deps.getAttr(child, "logicalCabinetId"),
                     deps.getAttr(child, "gapIndex")
@@ -2376,13 +2812,13 @@
       return frames;
     }
     function relayoutCabinetByModel(cabinetModel) {
-      var normalized = core.normalizeCabinetModel(cabinetModel);
+      var normalized = normalizeCabinetModel(cabinetModel);
       var originFrame = deps.findFrameById(normalized.originFrameId);
       if (originFrame == null) {
         throw new Error("\u672A\u627E\u5230\u914D\u7535\u67DC\u6240\u5C5E\u7684\u8D77\u59CB\u56FE\u6846");
       }
       var frameConfig = deps.getFrameConfig(originFrame);
-      var descriptors = core.buildCabinetPageDescriptors(normalized, frameConfig);
+      var descriptors = buildCabinetPageDescriptors(normalized, frameConfig);
       var oldSegments = findCabinetSegments(normalized.logicalCabinetId);
       var attachments = collectCabinetAttachments(oldSegments);
       var frames;
@@ -2411,7 +2847,7 @@
       return newSegments;
     }
     return {
-      buildCabinetPageDescriptors: core.buildCabinetPageDescriptors,
+      buildCabinetPageDescriptors,
       buildCabinetPortMap,
       buildCabinetSegmentCell,
       collectCabinetAttachments,
@@ -2420,7 +2856,7 @@
       findCabinetSegments,
       getCellAbsoluteGeometry,
       getPortAbsolutePosition,
-      normalizeCabinetModel: core.normalizeCabinetModel,
+      normalizeCabinetModel,
       relayoutCabinetByModel,
       restoreCabinetAttachments,
       setSelectedCabinetGap
@@ -2428,354 +2864,373 @@
   }
 
   // domain/snapshotCore.js
-  function createSnapshotCore(deps) {
-    function getCellStableId(cell) {
-      return deps.trim(
-        cell != null ? cell.id != null ? cell.id : mxObjectIdentity.get(cell) : ""
-      );
+  function getCellStableId(cell) {
+    return trim(
+      cell != null ? cell.id != null ? cell.id : mxObjectIdentity.get(cell) : ""
+    );
+  }
+  function normalizeGenericStableId(value) {
+    var stableId = trim(value);
+    while (stableId.indexOf("generic:") === 0) {
+      stableId = stableId.substring("generic:".length);
     }
-    function normalizeGenericStableId(value) {
-      var stableId = deps.trim(value);
-      while (stableId.indexOf("generic:") === 0) {
-        stableId = stableId.substring("generic:".length);
-      }
-      return stableId;
+    return stableId;
+  }
+  function getGenericObjectId(cell) {
+    return normalizeGenericStableId(getCellStableId(cell));
+  }
+  function normalizeSnapshotGenericIds(snapshot) {
+    if (!isObject(snapshot)) {
+      return snapshot;
     }
-    function getGenericObjectId(cell) {
-      return normalizeGenericStableId(getCellStableId(cell));
-    }
-    function normalizeSnapshotGenericIds(snapshot) {
-      if (!deps.isObject(snapshot)) {
-        return snapshot;
-      }
-      var normalized = deps.cloneJson(snapshot);
-      var genericIdMap = {};
-      var i;
-      if (Array.isArray(normalized.objects)) {
-        for (i = 0; i < normalized.objects.length; i++) {
-          var object = normalized.objects[i];
-          if (deps.trim(object.kind) == "generic") {
-            var currentId = deps.trim(object.id);
-            var nextId = normalizeGenericStableId(currentId);
-            if (currentId.length > 0 && currentId != nextId) {
-              genericIdMap[currentId] = nextId;
-              object.id = nextId;
-            }
-          }
-        }
-        for (i = 0; i < normalized.objects.length; i++) {
-          var parentId = deps.trim(normalized.objects[i].parentId);
-          if (genericIdMap[parentId] != null) {
-            normalized.objects[i].parentId = genericIdMap[parentId];
+    var normalized = cloneJson(snapshot);
+    var genericIdMap = {};
+    var i;
+    if (Array.isArray(normalized.objects)) {
+      for (i = 0; i < normalized.objects.length; i++) {
+        var object = normalized.objects[i];
+        if (trim(object.kind) == "generic") {
+          var currentId = trim(object.id);
+          var nextId = normalizeGenericStableId(currentId);
+          if (currentId.length > 0 && currentId != nextId) {
+            genericIdMap[currentId] = nextId;
+            object.id = nextId;
           }
         }
       }
-      if (Array.isArray(normalized.edges)) {
-        for (i = 0; i < normalized.edges.length; i++) {
-          var edge = normalized.edges[i];
-          var sourceObjectId = deps.trim(
-            edge.source != null ? edge.source.objectId : ""
-          );
-          var targetObjectId = deps.trim(
-            edge.target != null ? edge.target.objectId : ""
-          );
-          if (genericIdMap[sourceObjectId] != null) {
-            edge.source.objectId = genericIdMap[sourceObjectId];
-          }
-          if (genericIdMap[targetObjectId] != null) {
-            edge.target.objectId = genericIdMap[targetObjectId];
-          }
+      for (i = 0; i < normalized.objects.length; i++) {
+        var parentId = trim(normalized.objects[i].parentId);
+        if (genericIdMap[parentId] != null) {
+          normalized.objects[i].parentId = genericIdMap[parentId];
         }
       }
-      if (Array.isArray(normalized.changes)) {
-        for (i = 0; i < normalized.changes.length; i++) {
-          var changeObjectId = deps.trim(normalized.changes[i].objectId);
-          if (genericIdMap[changeObjectId] != null) {
-            normalized.changes[i].objectId = genericIdMap[changeObjectId];
-          }
-        }
-      }
-      return normalized;
     }
-    function isPlainXmlNode(value) {
-      return value != null && typeof value === "object" && typeof value.nodeType === "number" && typeof value.nodeName === "string";
+    if (Array.isArray(normalized.edges)) {
+      for (i = 0; i < normalized.edges.length; i++) {
+        var edge = normalized.edges[i];
+        var sourceObjectId = trim(edge.source != null ? edge.source.objectId : "");
+        var targetObjectId = trim(edge.target != null ? edge.target.objectId : "");
+        if (genericIdMap[sourceObjectId] != null) {
+          edge.source.objectId = genericIdMap[sourceObjectId];
+        }
+        if (genericIdMap[targetObjectId] != null) {
+          edge.target.objectId = genericIdMap[targetObjectId];
+        }
+      }
     }
-    function serializeXmlNode(node) {
-      var attrs = {};
-      var children = [];
-      var i;
-      if (!isPlainXmlNode(node)) {
-        return null;
-      }
-      if (node.attributes != null) {
-        for (i = 0; i < node.attributes.length; i++) {
-          attrs[node.attributes[i].name] = node.attributes[i].value;
+    if (Array.isArray(normalized.changes)) {
+      for (i = 0; i < normalized.changes.length; i++) {
+        var changeObjectId = trim(normalized.changes[i].objectId);
+        if (genericIdMap[changeObjectId] != null) {
+          normalized.changes[i].objectId = genericIdMap[changeObjectId];
         }
       }
-      if (node.childNodes != null) {
-        for (i = 0; i < node.childNodes.length; i++) {
-          var child = node.childNodes[i];
-          if (child.nodeType == 1) {
-            children.push({
-              kind: "element",
-              value: serializeXmlNode(child)
-            });
-          } else if (child.nodeType == 3 || child.nodeType == 4) {
-            children.push({
-              kind: "text",
-              value: child.nodeValue || ""
-            });
-          }
-        }
-      }
-      return {
-        tagName: node.nodeName,
-        attributes: attrs,
-        children
-      };
     }
-    function deserializeXmlNode(data) {
-      var node;
-      var attrs;
-      var children;
-      var i;
-      if (!deps.isObject(data) || deps.trim(data.tagName).length == 0) {
-        return null;
-      }
-      node = deps.createNode(data.tagName);
-      attrs = deps.isObject(data.attributes) ? data.attributes : {};
-      for (var key in attrs) {
-        if (attrs.hasOwnProperty(key)) {
-          node.setAttribute(key, attrs[key]);
-        }
-      }
-      children = Array.isArray(data.children) ? data.children : [];
-      for (i = 0; i < children.length; i++) {
-        var child = children[i];
-        if (!deps.isObject(child)) {
-          continue;
-        }
-        if (child.kind == "element") {
-          var elementChild = deserializeXmlNode(child.value);
-          if (elementChild != null) {
-            node.appendChild(elementChild);
-          }
-        } else if (child.kind == "text") {
-          node.appendChild(
-            node.ownerDocument.createTextNode(String(child.value))
-          );
-        }
-      }
-      return node;
-    }
-    function serializeCellValue(value) {
-      if (value == null) {
-        return { kind: "null", value: null };
-      }
-      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-        return { kind: "primitive", value };
-      }
-      if (isPlainXmlNode(value)) {
-        return { kind: "xml", value: serializeXmlNode(value) };
-      }
-      return { kind: "json", value: deps.cloneJson(value) };
-    }
-    function deserializeCellValue(data) {
-      if (!deps.isObject(data)) {
-        return data;
-      }
-      if (data.kind == "null") {
-        return null;
-      }
-      if (data.kind == "primitive") {
-        return data.value;
-      }
-      if (data.kind == "xml") {
-        return deserializeXmlNode(data.value);
-      }
-      if (data.kind == "json") {
-        return deps.cloneJson(data.value);
-      }
+    return normalized;
+  }
+  function isPlainXmlNode(value) {
+    return value != null && typeof value === "object" && typeof value.nodeType === "number" && typeof value.nodeName === "string";
+  }
+  function serializeXmlNode(node) {
+    var attrs = {};
+    var children = [];
+    var i;
+    if (!isPlainXmlNode(node)) {
       return null;
     }
-    function toNumber(value, fallback) {
-      var parsed = Number(value);
-      return isFinite(parsed) ? parsed : fallback;
+    if (node.attributes != null) {
+      for (i = 0; i < node.attributes.length; i++) {
+        attrs[node.attributes[i].name] = node.attributes[i].value;
+      }
     }
-    function serializeGeometry(geometry) {
-      return {
-        x: geometry != null ? toNumber(geometry.x, 0) : 0,
-        y: geometry != null ? toNumber(geometry.y, 0) : 0,
-        width: geometry != null ? toNumber(geometry.width, 0) : 0,
-        height: geometry != null ? toNumber(geometry.height, 0) : 0,
-        relative: geometry != null ? !!geometry.relative : false,
-        offset: geometry != null && geometry.offset != null ? {
-          x: toNumber(geometry.offset.x, 0),
-          y: toNumber(geometry.offset.y, 0)
-        } : null,
-        sourcePoint: geometry != null && geometry.sourcePoint != null ? {
-          x: toNumber(geometry.sourcePoint.x, 0),
-          y: toNumber(geometry.sourcePoint.y, 0)
-        } : null,
-        targetPoint: geometry != null && geometry.targetPoint != null ? {
-          x: toNumber(geometry.targetPoint.x, 0),
-          y: toNumber(geometry.targetPoint.y, 0)
-        } : null,
-        points: geometry != null && Array.isArray(geometry.points) ? geometry.points.map(function(point) {
-          return {
-            x: toNumber(point.x, 0),
-            y: toNumber(point.y, 0)
-          };
-        }) : [],
-        alternateBounds: geometry != null && geometry.alternateBounds != null ? {
-          x: toNumber(geometry.alternateBounds.x, 0),
-          y: toNumber(geometry.alternateBounds.y, 0),
-          width: toNumber(geometry.alternateBounds.width, 0),
-          height: toNumber(geometry.alternateBounds.height, 0)
-        } : null
-      };
-    }
-    function deserializeGeometry(data) {
-      var geometry = new mxGeometry(
-        deps.isObject(data) ? toNumber(data.x, 0) : 0,
-        deps.isObject(data) ? toNumber(data.y, 0) : 0,
-        deps.isObject(data) ? toNumber(data.width, 0) : 0,
-        deps.isObject(data) ? toNumber(data.height, 0) : 0
-      );
-      geometry.relative = deps.isObject(data) ? !!data.relative : false;
-      if (deps.isObject(data) && deps.isObject(data.offset)) {
-        geometry.offset = new mxPoint(
-          toNumber(data.offset.x, 0),
-          toNumber(data.offset.y, 0)
-        );
-      }
-      if (deps.isObject(data) && deps.isObject(data.sourcePoint)) {
-        geometry.sourcePoint = new mxPoint(
-          toNumber(data.sourcePoint.x, 0),
-          toNumber(data.sourcePoint.y, 0)
-        );
-      }
-      if (deps.isObject(data) && deps.isObject(data.targetPoint)) {
-        geometry.targetPoint = new mxPoint(
-          toNumber(data.targetPoint.x, 0),
-          toNumber(data.targetPoint.y, 0)
-        );
-      }
-      if (deps.isObject(data) && Array.isArray(data.points) && data.points.length > 0) {
-        geometry.points = data.points.map(function(point) {
-          return new mxPoint(toNumber(point.x, 0), toNumber(point.y, 0));
-        });
-      }
-      if (deps.isObject(data) && deps.isObject(data.alternateBounds)) {
-        geometry.alternateBounds = new mxRectangle(
-          toNumber(data.alternateBounds.x, 0),
-          toNumber(data.alternateBounds.y, 0),
-          toNumber(data.alternateBounds.width, 0),
-          toNumber(data.alternateBounds.height, 0)
-        );
-      }
-      return geometry;
-    }
-    function indexSnapshotEntries(snapshot) {
-      var map = {};
-      var i;
-      if (!deps.isObject(snapshot)) {
-        return map;
-      }
-      if (Array.isArray(snapshot.objects)) {
-        for (i = 0; i < snapshot.objects.length; i++) {
-          map["object:" + snapshot.objects[i].id] = snapshot.objects[i];
-        }
-      }
-      if (Array.isArray(snapshot.edges)) {
-        for (i = 0; i < snapshot.edges.length; i++) {
-          map["edge:" + snapshot.edges[i].id] = snapshot.edges[i];
-        }
-      }
-      return map;
-    }
-    function computeSnapshotChanges(previousSnapshot, nextSnapshot) {
-      var previousMap = indexSnapshotEntries(previousSnapshot);
-      var nextMap = indexSnapshotEntries(nextSnapshot);
-      var keys = {};
-      var changes = [];
-      var touchedObjectIds = [];
-      var key;
-      for (key in previousMap) {
-        keys[key] = true;
-      }
-      for (key in nextMap) {
-        keys[key] = true;
-      }
-      for (key in keys) {
-        if (!keys.hasOwnProperty(key)) {
-          continue;
-        }
-        var previousValue = previousMap[key];
-        var nextValue = nextMap[key];
-        var parts = key.split(":");
-        var objectType = parts[0] == "edge" ? "edge" : "object";
-        var objectId = key.substring(key.indexOf(":") + 1);
-        var op = null;
-        if (previousValue == null && nextValue != null) {
-          op = "create";
-        } else if (previousValue != null && nextValue == null) {
-          op = "delete";
-        } else if (JSON.stringify(previousValue) != JSON.stringify(nextValue)) {
-          op = "update";
-        }
-        if (op != null) {
-          changes.push({
-            objectType,
-            objectId,
-            op,
-            before: previousValue != null ? deps.cloneJson(previousValue) : null,
-            after: nextValue != null ? deps.cloneJson(nextValue) : null
+    if (node.childNodes != null) {
+      for (i = 0; i < node.childNodes.length; i++) {
+        var child = node.childNodes[i];
+        if (child.nodeType == 1) {
+          children.push({
+            kind: "element",
+            value: serializeXmlNode(child)
           });
-          touchedObjectIds.push(objectId);
+        } else if (child.nodeType == 3 || child.nodeType == 4) {
+          children.push({
+            kind: "text",
+            value: child.nodeValue || ""
+          });
         }
       }
-      return {
-        touchedObjectIds,
-        changes
-      };
     }
     return {
-      computeSnapshotChanges,
-      deserializeCellValue,
-      deserializeGeometry,
-      getCellStableId,
-      getGenericObjectId,
-      normalizeGenericStableId,
-      normalizeSnapshotGenericIds,
-      serializeCellValue,
-      serializeGeometry,
-      toNumber
+      tagName: node.nodeName,
+      attributes: attrs,
+      children
+    };
+  }
+  function deserializeXmlNode(data) {
+    var node;
+    var attrs;
+    var children;
+    var i;
+    if (!isObject(data) || trim(data.tagName).length == 0) {
+      return null;
+    }
+    node = createNode(data.tagName);
+    attrs = isObject(data.attributes) ? data.attributes : {};
+    for (var key in attrs) {
+      if (attrs.hasOwnProperty(key)) {
+        node.setAttribute(key, attrs[key]);
+      }
+    }
+    children = Array.isArray(data.children) ? data.children : [];
+    for (i = 0; i < children.length; i++) {
+      var child = children[i];
+      if (!isObject(child)) {
+        continue;
+      }
+      if (child.kind == "element") {
+        var elementChild = deserializeXmlNode(child.value);
+        if (elementChild != null) {
+          node.appendChild(elementChild);
+        }
+      } else if (child.kind == "text") {
+        node.appendChild(node.ownerDocument.createTextNode(String(child.value)));
+      }
+    }
+    return node;
+  }
+  function serializeCellValue(value) {
+    if (value == null) {
+      return { kind: "null", value: null };
+    }
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return { kind: "primitive", value };
+    }
+    if (isPlainXmlNode(value)) {
+      return { kind: "xml", value: serializeXmlNode(value) };
+    }
+    return { kind: "json", value: cloneJson(value) };
+  }
+  function deserializeCellValue(data) {
+    if (!isObject(data)) {
+      return data;
+    }
+    if (data.kind == "null") {
+      return null;
+    }
+    if (data.kind == "primitive") {
+      return data.value;
+    }
+    if (data.kind == "xml") {
+      return deserializeXmlNode(data.value);
+    }
+    if (data.kind == "json") {
+      return cloneJson(data.value);
+    }
+    return null;
+  }
+  function toNumber(value, fallback) {
+    var parsed = Number(value);
+    return isFinite(parsed) ? parsed : fallback;
+  }
+  function serializeGeometry(geometry) {
+    return {
+      x: geometry != null ? toNumber(geometry.x, 0) : 0,
+      y: geometry != null ? toNumber(geometry.y, 0) : 0,
+      width: geometry != null ? toNumber(geometry.width, 0) : 0,
+      height: geometry != null ? toNumber(geometry.height, 0) : 0,
+      relative: geometry != null ? !!geometry.relative : false,
+      offset: geometry != null && geometry.offset != null ? {
+        x: toNumber(geometry.offset.x, 0),
+        y: toNumber(geometry.offset.y, 0)
+      } : null,
+      sourcePoint: geometry != null && geometry.sourcePoint != null ? {
+        x: toNumber(geometry.sourcePoint.x, 0),
+        y: toNumber(geometry.sourcePoint.y, 0)
+      } : null,
+      targetPoint: geometry != null && geometry.targetPoint != null ? {
+        x: toNumber(geometry.targetPoint.x, 0),
+        y: toNumber(geometry.targetPoint.y, 0)
+      } : null,
+      points: geometry != null && Array.isArray(geometry.points) ? geometry.points.map(function(point) {
+        return {
+          x: toNumber(point.x, 0),
+          y: toNumber(point.y, 0)
+        };
+      }) : [],
+      alternateBounds: geometry != null && geometry.alternateBounds != null ? {
+        x: toNumber(geometry.alternateBounds.x, 0),
+        y: toNumber(geometry.alternateBounds.y, 0),
+        width: toNumber(geometry.alternateBounds.width, 0),
+        height: toNumber(geometry.alternateBounds.height, 0)
+      } : null
+    };
+  }
+  function deserializeGeometry(data) {
+    var geometry = new mxGeometry(
+      isObject(data) ? toNumber(data.x, 0) : 0,
+      isObject(data) ? toNumber(data.y, 0) : 0,
+      isObject(data) ? toNumber(data.width, 0) : 0,
+      isObject(data) ? toNumber(data.height, 0) : 0
+    );
+    geometry.relative = isObject(data) ? !!data.relative : false;
+    if (isObject(data) && isObject(data.offset)) {
+      geometry.offset = new mxPoint(toNumber(data.offset.x, 0), toNumber(data.offset.y, 0));
+    }
+    if (isObject(data) && isObject(data.sourcePoint)) {
+      geometry.sourcePoint = new mxPoint(
+        toNumber(data.sourcePoint.x, 0),
+        toNumber(data.sourcePoint.y, 0)
+      );
+    }
+    if (isObject(data) && isObject(data.targetPoint)) {
+      geometry.targetPoint = new mxPoint(
+        toNumber(data.targetPoint.x, 0),
+        toNumber(data.targetPoint.y, 0)
+      );
+    }
+    if (isObject(data) && Array.isArray(data.points) && data.points.length > 0) {
+      geometry.points = data.points.map(function(point) {
+        return new mxPoint(toNumber(point.x, 0), toNumber(point.y, 0));
+      });
+    }
+    if (isObject(data) && isObject(data.alternateBounds)) {
+      geometry.alternateBounds = new mxRectangle(
+        toNumber(data.alternateBounds.x, 0),
+        toNumber(data.alternateBounds.y, 0),
+        toNumber(data.alternateBounds.width, 0),
+        toNumber(data.alternateBounds.height, 0)
+      );
+    }
+    return geometry;
+  }
+  function indexSnapshotEntries(snapshot) {
+    var map = {};
+    var i;
+    if (!isObject(snapshot)) {
+      return map;
+    }
+    if (Array.isArray(snapshot.objects)) {
+      for (i = 0; i < snapshot.objects.length; i++) {
+        map["object:" + snapshot.objects[i].id] = snapshot.objects[i];
+      }
+    }
+    if (Array.isArray(snapshot.edges)) {
+      for (i = 0; i < snapshot.edges.length; i++) {
+        map["edge:" + snapshot.edges[i].id] = snapshot.edges[i];
+      }
+    }
+    return map;
+  }
+  function computeSnapshotChanges(previousSnapshot, nextSnapshot) {
+    var previousMap = indexSnapshotEntries(previousSnapshot);
+    var nextMap = indexSnapshotEntries(nextSnapshot);
+    var keys = {};
+    var changes = [];
+    var touchedObjectIds = [];
+    var key;
+    for (key in previousMap) {
+      keys[key] = true;
+    }
+    for (key in nextMap) {
+      keys[key] = true;
+    }
+    for (key in keys) {
+      if (!keys.hasOwnProperty(key)) {
+        continue;
+      }
+      var previousValue = previousMap[key];
+      var nextValue = nextMap[key];
+      var parts = key.split(":");
+      var objectType = parts[0] == "edge" ? "edge" : "object";
+      var objectId = key.substring(key.indexOf(":") + 1);
+      var op = null;
+      if (previousValue == null && nextValue != null) {
+        op = "create";
+      } else if (previousValue != null && nextValue == null) {
+        op = "delete";
+      } else if (JSON.stringify(previousValue) != JSON.stringify(nextValue)) {
+        op = "update";
+      }
+      if (op != null) {
+        changes.push({
+          objectType,
+          objectId,
+          op,
+          before: previousValue != null ? cloneJson(previousValue) : null,
+          after: nextValue != null ? cloneJson(nextValue) : null
+        });
+        touchedObjectIds.push(objectId);
+      }
+    }
+    return {
+      touchedObjectIds,
+      changes
     };
   }
 
   // domain/snapshotGraph.js
-  function createSnapshotDomain(deps) {
+  function buildSnapshotDeps() {
+    var app = getApp();
+    var graphApi = app.graphApi;
+    return {
+      graph: graphApi.graph,
+      model: graphApi.model,
+      state: graphApi.state,
+      ui: graphApi.ui,
+      BODY_KIND: app.constants.BODY_KIND,
+      LABEL_KIND: app.constants.LABEL_KIND,
+      FRAME_LABEL_KIND: app.constants.FRAME_LABEL_KIND,
+      CABINET_BODY_KIND: app.constants.CABINET_BODY_KIND,
+      CABINET_GAP_KIND: app.constants.CABINET_GAP_KIND,
+      FRAME_MARGIN_RATIO: app.constants.FRAME_MARGIN_RATIO,
+      trim: app.utils.trim,
+      toInt: app.utils.toInt,
+      isObject: app.utils.isObject,
+      cloneJson: app.utils.cloneJson,
+      createNode: app.utils.createNode,
+      getAttr: app.utils.getAttr,
+      uniqueStrings: app.utils.uniqueStrings,
+      isCabinetGap: app.helpers.isCabinetGap,
+      isDrawingFrame: app.helpers.isDrawingFrame,
+      isCabinetSegment: app.helpers.isCabinetSegment,
+      isElectricalRoot: app.helpers.isElectricalRoot,
+      extractSpec: app.domains.symbol.extractSpec,
+      getFrameConfig: app.domains.frame.getFrameConfig,
+      getFramePageNumber: app.domains.frame.getFramePageNumber,
+      getFrameGroupId: app.domains.frame.getFrameGroupId,
+      findFrameById: app.domains.frame.findFrameById,
+      extractCabinetModel: app.domains.cabinet.extractCabinetModel,
+      findCabinetSegments: app.domains.cabinet.findCabinetSegments,
+      getPortMetaById: app.domains.connectionConstraints.getPortMetaById,
+      findDrawingFrame: app.domains.frame.findDrawingFrame,
+      findPortHostRoot: app.helpers.findPortHostRoot,
+      parsePortLayout: app.domains.spec.parsePortLayout,
+      getAllDrawingFrames: app.domains.frame.getAllDrawingFrames,
+      exitInstanceComposeMode: function(clearStatus) {
+        return app.runtime != null && typeof app.runtime.exitInstanceComposeMode === "function" ? app.runtime.exitInstanceComposeMode(clearStatus) : null;
+      },
+      closeGapDialogWindow: function() {
+        return app.ui != null && typeof app.ui.closeGapDialogWindow === "function" ? app.ui.closeGapDialogWindow() : null;
+      },
+      setSelectedCabinetGap: function(logicalCabinetId, gapIndex) {
+        return app.domains.cabinet.setSelectedCabinetGap(logicalCabinetId, gapIndex);
+      },
+      exitPortSwapMode: function(clearStatus) {
+        return app.runtime != null && typeof app.runtime.exitPortSwapMode === "function" ? app.runtime.exitPortSwapMode(clearStatus) : null;
+      },
+      createDrawingFrameCell: app.domains.frame.createDrawingFrameCell,
+      addTopLevelCell: app.domains.frame.addTopLevelCell,
+      relayoutCabinetByModel: app.domains.cabinet.relayoutCabinetByModel,
+      normalizeSpec: app.domains.spec.normalizeSpec,
+      buildSymbolCell: app.domains.symbol.buildSymbolCell,
+      resetPendingChangeRecords: app.helpers.resetPendingChangeRecords
+    };
+  }
+  function createSnapshotDomain() {
+    var deps = arguments.length > 0 ? arguments[0] : buildSnapshotDeps();
     var graph = deps.graph;
     var model = deps.model;
     var state = deps.state;
     var ui = deps.ui;
-    var core = createSnapshotCore({
-      trim: deps.trim,
-      isObject: deps.isObject,
-      cloneJson: deps.cloneJson,
-      createNode: deps.createNode
-    });
-    var getCellStableId = core.getCellStableId;
-    var normalizeGenericStableId = core.normalizeGenericStableId;
-    var getGenericObjectId = core.getGenericObjectId;
-    var normalizeSnapshotGenericIds = core.normalizeSnapshotGenericIds;
-    var serializeCellValue = core.serializeCellValue;
-    var deserializeCellValue = core.deserializeCellValue;
-    var toNumber = core.toNumber;
-    var serializeGeometry = core.serializeGeometry;
-    var deserializeGeometry = core.deserializeGeometry;
-    var computeSnapshotChanges = core.computeSnapshotChanges;
     function belongsToCurrentDefaultParent(cell) {
       var parent = cell != null ? model.getParent(cell) : null;
       var defaultParent = graph.getDefaultParent();
@@ -3506,7 +3961,33 @@
   }
 
   // runtime/connectionConstraints.js
-  function createConnectionConstraints(deps) {
+  function buildConstraintDeps() {
+    var app = getApp();
+    var ctx = app.ctx;
+    return {
+      ctx,
+      trim: app.utils.trim,
+      clamp: app.utils.clamp,
+      parsePortLayout: app.domains.spec.parsePortLayout,
+      getAttr: app.utils.getAttr,
+      buildPortLayout: app.domains.spec.buildPortLayout,
+      findPortHostRoot: app.helpers.findPortHostRoot,
+      normalizePortDirection: app.domains.spec.normalizePortDirection,
+      normalizePortIoMode: app.domains.spec.normalizePortIoMode,
+      isDrawingFrame: app.helpers.isDrawingFrame,
+      isCabinetSegment: app.helpers.isCabinetSegment,
+      isCabinetGap: app.helpers.isCabinetGap,
+      findDrawingFrame: app.domains.frame.findDrawingFrame,
+      getCellAbsoluteGeometry: function(cell) {
+        return app.domains.cabinet.getCellAbsoluteGeometry(cell);
+      },
+      getPortAbsolutePosition: function(root, port) {
+        return app.domains.cabinet.getPortAbsolutePosition(root, port);
+      }
+    };
+  }
+  function createConnectionConstraints() {
+    var deps = arguments.length > 0 ? arguments[0] : buildConstraintDeps();
     var ctx = deps.ctx;
     var graph = ctx.graph;
     var model = ctx.model;
@@ -3896,207 +4377,9 @@
     };
   }
 
-  // bootstrap/createDomains.js
-  function createDomainRegistry(app) {
-    var ctx = app.ctx;
-    var constants = app.constants;
-    var utils = app.utils;
-    var helpers = app.helpers;
-    var domains = {};
-    domains.spec = createSpecDomain({
-      trim: utils.trim,
-      isObject: utils.isObject,
-      cloneJson: utils.cloneJson,
-      validateSvg: app.utils.validateSvg,
-      generateSymbolId: helpers.generateSymbolId,
-      clamp: utils.clamp,
-      toInt: utils.toInt,
-      toFloat: utils.toFloat,
-      nextItemId: helpers.nextItemId,
-      normalizeMode: helpers.normalizeMode,
-      deepMerge: utils.deepMerge,
-      generateInstanceId: helpers.generateInstanceId
-    });
-    domains.symbol = createSymbolDomain({
-      model: ctx.model,
-      ROOT_TAG: constants.ROOT_TAG,
-      ROOT_TYPE: constants.ROOT_TYPE,
-      BODY_TAG: constants.BODY_TAG,
-      BODY_KIND: constants.BODY_KIND,
-      LABEL_TAG: constants.LABEL_TAG,
-      LABEL_KIND: constants.LABEL_KIND,
-      trim: utils.trim,
-      isObject: utils.isObject,
-      normalizeMode: helpers.normalizeMode,
-      normalizeSpec: domains.spec.normalizeSpec,
-      normalizePortLayout: domains.spec.normalizePortLayout,
-      normalizeLabels: domains.spec.normalizeLabels,
-      parsePortLayout: domains.spec.parsePortLayout,
-      getAttr: utils.getAttr,
-      createNode: utils.createNode,
-      createMetaCell: utils.createMetaCell,
-      cloneValue: utils.cloneValue,
-      toStyleImageUri: domains.spec.toStyleImageUri,
-      serializePortLayout: domains.spec.serializePortLayout,
-      buildPortLayout: domains.spec.buildPortLayout,
-      buildResolvedLabels: domains.spec.buildResolvedLabels
-    });
-    domains.frame = createFrameDomain({
-      graph: ctx.graph,
-      model: ctx.model,
-      state: ctx.state,
-      frameTag: constants.FRAME_TAG,
-      frameType: constants.FRAME_TYPE,
-      frameLabelTag: constants.FRAME_LABEL_TAG,
-      frameLabelKind: constants.FRAME_LABEL_KIND,
-      frameMarginRatio: constants.FRAME_MARGIN_RATIO,
-      defaultWidth: constants.FRAME_DEFAULT_WIDTH,
-      defaultHeight: constants.FRAME_DEFAULT_HEIGHT,
-      trim: utils.trim,
-      toInt: utils.toInt,
-      isObject: utils.isObject,
-      getAttr: utils.getAttr,
-      createNode: utils.createNode,
-      createMetaCell: utils.createMetaCell,
-      generateFrameId: helpers.generateFrameId,
-      isDrawingFrame: helpers.isDrawingFrame,
-      showStatus: app.showStatus,
-      setCanvasStatus: app.setCanvasStatus
-    });
-    domains.connectionConstraints = createConnectionConstraints({
-      ctx,
-      trim: utils.trim,
-      clamp: utils.clamp,
-      parsePortLayout: domains.spec.parsePortLayout,
-      getAttr: utils.getAttr,
-      buildPortLayout: domains.spec.buildPortLayout,
-      findPortHostRoot: helpers.findPortHostRoot,
-      normalizePortDirection: domains.spec.normalizePortDirection,
-      normalizePortIoMode: domains.spec.normalizePortIoMode,
-      isDrawingFrame: helpers.isDrawingFrame,
-      isCabinetSegment: helpers.isCabinetSegment,
-      isCabinetGap: helpers.isCabinetGap,
-      findDrawingFrame: domains.frame.findDrawingFrame,
-      getCellAbsoluteGeometry: function(cell) {
-        return domains.cabinet.getCellAbsoluteGeometry(cell);
-      },
-      getPortAbsolutePosition: function(root, port) {
-        return domains.cabinet.getPortAbsolutePosition(root, port);
-      }
-    });
-    domains.cabinet = createCabinetDomain({
-      model: ctx.model,
-      state: ctx.state,
-      cabinetTag: constants.CABINET_TAG,
-      cabinetType: constants.CABINET_TYPE,
-      cabinetBodyTag: constants.CABINET_BODY_TAG,
-      cabinetBodyKind: constants.CABINET_BODY_KIND,
-      cabinetGapTag: constants.CABINET_GAP_TAG,
-      cabinetGapType: constants.CABINET_GAP_TYPE,
-      cabinetGapKind: constants.CABINET_GAP_KIND,
-      frameLabelKind: constants.FRAME_LABEL_KIND,
-      frameContentRatio: constants.FRAME_CONTENT_RATIO,
-      frameMarginRatio: constants.FRAME_MARGIN_RATIO,
-      frameHorizontalGap: constants.FRAME_HORIZONTAL_GAP,
-      minPortFollowSpaceRatio: constants.CABINET_MIN_PORT_FOLLOW_SPACE_RATIO,
-      defaultWidth: constants.CABINET_DEFAULT_WIDTH,
-      defaultPortCount: constants.CABINET_DEFAULT_PORT_COUNT,
-      defaultX: constants.CABINET_DEFAULT_X,
-      tailPadding: constants.CABINET_TAIL_PADDING,
-      trim: utils.trim,
-      toInt: utils.toInt,
-      toFloat: utils.toFloat,
-      clamp: utils.clamp,
-      isObject: utils.isObject,
-      cloneJson: utils.cloneJson,
-      normalizePortPoint: domains.spec.normalizePortPoint,
-      generateLogicalCabinetId: helpers.generateLogicalCabinetId,
-      createNode: utils.createNode,
-      createMetaCell: utils.createMetaCell,
-      serializePortLayout: domains.spec.serializePortLayout,
-      getAttr: utils.getAttr,
-      isCabinetSegment: helpers.isCabinetSegment,
-      isCabinetGap: helpers.isCabinetGap,
-      getNormalizedFrameConfig: domains.frame.normalizeFrameConfig,
-      getAllDrawingFrames: domains.frame.getAllDrawingFrames,
-      getFrameConfig: domains.frame.getFrameConfig,
-      getFrameGroupId: domains.frame.getFrameGroupId,
-      getFramePageNumber: domains.frame.getFramePageNumber,
-      getMaxFramePageNumberInGroup: domains.frame.getMaxFramePageNumberInGroup,
-      getRightmostFrameInGroup: domains.frame.getRightmostFrameInGroup,
-      findFrameById: domains.frame.findFrameById,
-      findDrawingFrame: domains.frame.findDrawingFrame,
-      createDrawingFrameCell: domains.frame.createDrawingFrameCell,
-      addTopLevelCell: domains.frame.addTopLevelCell,
-      getEdgePortId: function(edge, root, source) {
-        return domains.snapshot.getEdgePortId(edge, root, source);
-      },
-      getPortMetaById: domains.connectionConstraints.getPortMetaById,
-      parsePortLayout: domains.spec.parsePortLayout,
-      isMovableConnectedTerminal: domains.connectionConstraints.isMovableConnectedTerminal,
-      moveCellToFrameByDelta: domains.connectionConstraints.moveCellToFrameByDelta,
-      setConnectionConstraint: function(edge, root, source, constraint) {
-        ctx.graph.setConnectionConstraint(edge, root, source, constraint);
-      }
-    });
-    domains.snapshot = createSnapshotDomain({
-      graph: ctx.graph,
-      model: ctx.model,
-      state: ctx.state,
-      ui: ctx.ui,
-      BODY_KIND: constants.BODY_KIND,
-      LABEL_KIND: constants.LABEL_KIND,
-      FRAME_LABEL_KIND: constants.FRAME_LABEL_KIND,
-      CABINET_BODY_KIND: constants.CABINET_BODY_KIND,
-      CABINET_GAP_KIND: constants.CABINET_GAP_KIND,
-      FRAME_MARGIN_RATIO: constants.FRAME_MARGIN_RATIO,
-      trim: utils.trim,
-      toInt: utils.toInt,
-      isObject: utils.isObject,
-      cloneJson: utils.cloneJson,
-      createNode: utils.createNode,
-      getAttr: utils.getAttr,
-      uniqueStrings: utils.uniqueStrings,
-      isCabinetGap: helpers.isCabinetGap,
-      isDrawingFrame: helpers.isDrawingFrame,
-      isCabinetSegment: helpers.isCabinetSegment,
-      isElectricalRoot: helpers.isElectricalRoot,
-      extractSpec: domains.symbol.extractSpec,
-      getFrameConfig: domains.frame.getFrameConfig,
-      getFramePageNumber: domains.frame.getFramePageNumber,
-      getFrameGroupId: domains.frame.getFrameGroupId,
-      findFrameById: domains.frame.findFrameById,
-      extractCabinetModel: domains.cabinet.extractCabinetModel,
-      findCabinetSegments: domains.cabinet.findCabinetSegments,
-      getPortMetaById: domains.connectionConstraints.getPortMetaById,
-      findDrawingFrame: domains.frame.findDrawingFrame,
-      findPortHostRoot: helpers.findPortHostRoot,
-      parsePortLayout: domains.spec.parsePortLayout,
-      getAllDrawingFrames: domains.frame.getAllDrawingFrames,
-      exitInstanceComposeMode: function(clearStatus) {
-        return app.callRuntime("exitInstanceComposeMode", clearStatus);
-      },
-      closeGapDialogWindow: function() {
-        return app.callUi("closeGapDialogWindow");
-      },
-      setSelectedCabinetGap: function(logicalCabinetId, gapIndex) {
-        return domains.cabinet.setSelectedCabinetGap(logicalCabinetId, gapIndex);
-      },
-      exitPortSwapMode: function(clearStatus) {
-        return app.callRuntime("exitPortSwapMode", clearStatus);
-      },
-      createDrawingFrameCell: domains.frame.createDrawingFrameCell,
-      addTopLevelCell: domains.frame.addTopLevelCell,
-      relayoutCabinetByModel: domains.cabinet.relayoutCabinetByModel,
-      normalizeSpec: domains.spec.normalizeSpec,
-      buildSymbolCell: domains.symbol.buildSymbolCell,
-      resetPendingChangeRecords: helpers.resetPendingChangeRecords
-    });
-    return domains;
-  }
-
   // services/draftStore.js
-  function createDraftStore(deps) {
+  function createDraftStore() {
+    var deps = arguments.length > 0 ? arguments[0] : {};
     var state = deps.state;
     var storageKey = deps.storageKey;
     var trim2 = deps.trim;
@@ -4188,156 +4471,139 @@
     };
   }
 
-  // services/libraryStorage.js
-  function createLibraryStorage(deps) {
-    var ui = deps.ui;
-    var state = deps.state;
-    var libraryTitle = deps.libraryTitle;
-    function loadStoredLibrary(callback, openInSidebar) {
-      StorageFile.getFileContent(
-        ui,
-        libraryTitle,
-        function(data) {
-          var images = [];
-          if (data != null && data.length > 0) {
-            try {
-              var doc = mxUtils.parseXml(data);
-              if (doc.documentElement != null && doc.documentElement.nodeName == "mxlibrary") {
-                images = JSON.parse(mxUtils.getTextContent(doc.documentElement));
-              }
-            } catch (e) {
-              images = [];
-            }
-          }
-          state.libraryImages = images;
-          if (openInSidebar && data != null && data.length > 0) {
-            ui.libraryLoaded(
-              new StorageLibrary(ui, data, libraryTitle),
-              images,
-              libraryTitle,
-              true
-            );
-          }
-          if (callback != null) {
-            callback(images);
-          }
-        },
-        function() {
-          state.libraryImages = [];
-          if (callback != null) {
-            callback([]);
-          }
-        }
-      );
+  // services/libraryGraphCodec.js
+  function createLibraryEntry(graph, buildSymbolCell, spec) {
+    var root = buildSymbolCell(spec);
+    var bounds = graph.getBoundingBoxFromGeometry([root]);
+    var xml;
+    if (bounds != null) {
+      root.geometry = root.geometry.clone();
+      root.geometry.x = -bounds.x;
+      root.geometry.y = -bounds.y;
     }
-    function saveLibraryImages(images, callback) {
-      var xml = ui.createLibraryDataFromImages(images);
-      var file = new StorageLibrary(ui, xml, libraryTitle);
-      ui.libraryLoaded(file, images, libraryTitle, true);
-      file.save(
-        false,
-        function() {
-          state.libraryImages = images;
-          if (callback != null) {
-            callback(file, images, xml);
-          }
-        },
-        function(err) {
-          ui.handleError(err || { message: "\u4FDD\u5B58\u7535\u6C14\u56FE\u5E93\u5931\u8D25" });
-        }
-      );
+    xml = mxUtils.getXml(graph.encodeCells([root]));
+    if (Editor.defaultCompressed) {
+      xml = Graph.compress(xml);
     }
     return {
-      loadStoredLibrary,
-      saveLibraryImages
+      xml,
+      w: bounds != null ? Math.round(bounds.width) : spec.size.width,
+      h: bounds != null ? Math.round(bounds.height) : spec.size.height,
+      title: spec.templateName || spec.title,
+      spec: cloneJson(spec)
     };
   }
+  function getLibraryEntrySpec(ui, image, normalizeSpec, isElectricalRoot, extractSpec) {
+    var xml;
+    var cells;
+    var i;
+    if (image != null && isObject(image.spec)) {
+      return normalizeSpec(cloneJson(image.spec));
+    }
+    if (image == null || image.xml == null) {
+      throw new Error("\u6A21\u677F\u6761\u76EE\u7F3A\u5C11 xml");
+    }
+    xml = image.xml;
+    if ("<" != xml.charAt(0)) {
+      xml = Graph.decompress(xml);
+    }
+    cells = ui.stringToCells(xml);
+    for (i = 0; i < cells.length; i++) {
+      if (isElectricalRoot(cells[i])) {
+        return extractSpec(cells[i]);
+      }
+    }
+    throw new Error("\u5E93\u6761\u76EE\u4E2D\u672A\u627E\u5230\u7535\u6C14\u56FE\u5143");
+  }
+  function findLibraryEntryIndex(images, symbolId, getLibraryEntrySpecFn) {
+    var id = trim(symbolId);
+    var i;
+    for (i = 0; i < images.length; i++) {
+      try {
+        if (trim(getLibraryEntrySpecFn(images[i]).symbolId) == id) {
+          return i;
+        }
+      } catch (e) {
+      }
+    }
+    return -1;
+  }
 
-  // services/libraryGraphCodec.js
-  function createLibraryGraphCodec(deps) {
-    var graph = deps.graph;
-    var ui = deps.ui;
-    var trim2 = deps.trim;
-    function createLibraryEntry(spec) {
-      var root = deps.buildSymbolCell(spec);
-      var bounds = graph.getBoundingBoxFromGeometry([root]);
-      var xml;
-      if (bounds != null) {
-        root.geometry = root.geometry.clone();
-        root.geometry.x = -bounds.x;
-        root.geometry.y = -bounds.y;
-      }
-      xml = mxUtils.getXml(graph.encodeCells([root]));
-      if (Editor.defaultCompressed) {
-        xml = Graph.compress(xml);
-      }
-      return {
-        xml,
-        w: bounds != null ? Math.round(bounds.width) : spec.size.width,
-        h: bounds != null ? Math.round(bounds.height) : spec.size.height,
-        title: spec.templateName || spec.title,
-        spec: deps.cloneJson(spec)
-      };
-    }
-    function getLibraryEntrySpec(image) {
-      var xml;
-      var cells;
-      var i;
-      if (image != null && deps.isObject(image.spec)) {
-        return deps.normalizeSpec(deps.cloneJson(image.spec));
-      }
-      if (image == null || image.xml == null) {
-        throw new Error("\u6A21\u677F\u6761\u76EE\u7F3A\u5C11 xml");
-      }
-      xml = image.xml;
-      if ("<" != xml.charAt(0)) {
-        xml = Graph.decompress(xml);
-      }
-      cells = ui.stringToCells(xml);
-      for (i = 0; i < cells.length; i++) {
-        if (deps.isElectricalRoot(cells[i])) {
-          return deps.extractSpec(cells[i]);
-        }
-      }
-      throw new Error("\u5E93\u6761\u76EE\u4E2D\u672A\u627E\u5230\u7535\u6C14\u56FE\u5143");
-    }
-    function findLibraryEntryIndex(images, symbolId) {
-      var id = trim2(symbolId);
-      var i;
-      for (i = 0; i < images.length; i++) {
-        try {
-          if (trim2(getLibraryEntrySpec(images[i]).symbolId) == id) {
-            return i;
+  // services/libraryStorage.js
+  function loadStoredLibrary(ui, state, libraryTitle, callback, openInSidebar) {
+    StorageFile.getFileContent(
+      ui,
+      libraryTitle,
+      function(data) {
+        var images = [];
+        if (data != null && data.length > 0) {
+          try {
+            var doc = mxUtils.parseXml(data);
+            if (doc.documentElement != null && doc.documentElement.nodeName == "mxlibrary") {
+              images = JSON.parse(mxUtils.getTextContent(doc.documentElement));
+            }
+          } catch (e) {
+            images = [];
           }
-        } catch (e) {
+        }
+        state.libraryImages = images;
+        if (openInSidebar && data != null && data.length > 0) {
+          ui.libraryLoaded(new StorageLibrary(ui, data, libraryTitle), images, libraryTitle, true);
+        }
+        if (callback != null) {
+          callback(images);
+        }
+      },
+      function() {
+        state.libraryImages = [];
+        if (callback != null) {
+          callback([]);
         }
       }
-      return -1;
-    }
-    return {
-      createLibraryEntry,
-      findLibraryEntryIndex,
-      getLibraryEntrySpec
-    };
+    );
+  }
+  function saveLibraryImages(ui, state, libraryTitle, images, callback) {
+    var xml = ui.createLibraryDataFromImages(images);
+    var file = new StorageLibrary(ui, xml, libraryTitle);
+    ui.libraryLoaded(file, images, libraryTitle, true);
+    file.save(
+      false,
+      function() {
+        state.libraryImages = images;
+        if (callback != null) {
+          callback(file, images, xml);
+        }
+      },
+      function(err) {
+        ui.handleError(err || { message: "\u4FDD\u5B58\u7535\u6C14\u56FE\u5E93\u5931\u8D25" });
+      }
+    );
   }
 
   // services/libraryStore.js
-  function createLibraryStore(deps) {
+  function createLibraryStore() {
+    var deps = arguments.length > 0 ? arguments[0] : {};
     var state = deps.state;
-    var trim2 = deps.trim;
-    var storage = createLibraryStorage(deps);
-    var codec = createLibraryGraphCodec(deps);
+    function getLibraryEntrySpecCompat(image) {
+      return getLibraryEntrySpec(
+        deps.ui,
+        image,
+        deps.normalizeSpec,
+        deps.isElectricalRoot,
+        deps.extractSpec
+      );
+    }
     function isTemplateNameTaken(name, ignoreSymbolId) {
-      var target = trim2(name);
-      var ignoreId = trim2(ignoreSymbolId);
+      var target = trim(name);
+      var ignoreId = trim(ignoreSymbolId);
       var i;
       if (target.length == 0) {
         return false;
       }
       for (i = 0; i < state.libraryImages.length; i++) {
         try {
-          var spec = codec.getLibraryEntrySpec(state.libraryImages[i]);
-          if (trim2(spec.templateName || spec.title) == target && trim2(spec.symbolId) != ignoreId) {
+          var spec = getLibraryEntrySpecCompat(state.libraryImages[i]);
+          if (trim(spec.templateName || spec.title) == target && trim(spec.symbolId) != ignoreId) {
             return true;
           }
         } catch (e) {
@@ -4346,15 +4612,15 @@
       return false;
     }
     function addToLibrary(spec, onSaved) {
-      storage.loadStoredLibrary(function(images) {
+      loadStoredLibrary(deps.ui, deps.state, deps.libraryTitle, function(images) {
         var next = images.slice();
-        var entry = codec.createLibraryEntry(spec);
-        var index = codec.findLibraryEntryIndex(next, spec.symbolId);
+        var entry = createLibraryEntry(deps.graph, deps.buildSymbolCell, spec);
+        var index = findLibraryEntryIndex(next, spec.symbolId, getLibraryEntrySpecCompat);
         var i;
         for (i = 0; i < next.length; i++) {
           try {
-            var currentSpec = codec.getLibraryEntrySpec(next[i]);
-            if (trim2(currentSpec.templateName || currentSpec.title) == trim2(spec.templateName || spec.title) && trim2(currentSpec.symbolId) != trim2(spec.symbolId)) {
+            var currentSpec = getLibraryEntrySpecCompat(next[i]);
+            if (trim(currentSpec.templateName || currentSpec.title) == trim(spec.templateName || spec.title) && trim(currentSpec.symbolId) != trim(spec.symbolId)) {
               deps.showStatus("\u56FE\u5143\u7C7B\u578B\u540D\u79F0\u4E0D\u80FD\u91CD\u590D", true);
               return;
             }
@@ -4366,7 +4632,7 @@
         } else {
           next.push(entry);
         }
-        storage.saveLibraryImages(next, function() {
+        saveLibraryImages(deps.ui, deps.state, deps.libraryTitle, next, function() {
           deps.showStatus(index >= 0 ? "\u5DF2\u66F4\u65B0\u56FE\u5E93\u6A21\u677F" : "\u5DF2\u52A0\u5165\u56FE\u5E93", false);
           if (typeof onSaved === "function") {
             onSaved();
@@ -4375,13 +4641,13 @@
       });
     }
     function removeTemplateFromLibrary(symbolId, onRemoved) {
-      storage.loadStoredLibrary(function(images) {
+      loadStoredLibrary(deps.ui, deps.state, deps.libraryTitle, function(images) {
         var next = [];
         var removed = false;
         var i;
         for (i = 0; i < images.length; i++) {
           try {
-            if (trim2(codec.getLibraryEntrySpec(images[i]).symbolId) == trim2(symbolId)) {
+            if (trim(getLibraryEntrySpecCompat(images[i]).symbolId) == trim(symbolId)) {
               removed = true;
               continue;
             }
@@ -4393,7 +4659,7 @@
           deps.showStatus("\u672A\u627E\u5230\u8981\u5220\u9664\u7684\u56FE\u5143\u6A21\u677F", true);
           return;
         }
-        storage.saveLibraryImages(next, function() {
+        saveLibraryImages(deps.ui, deps.state, deps.libraryTitle, next, function() {
           deps.showStatus("\u5DF2\u5220\u9664\u56FE\u5143\u6A21\u677F", false);
           if (typeof onRemoved === "function") {
             onRemoved(next);
@@ -4403,880 +4669,420 @@
     }
     return {
       addToLibrary,
-      getLibraryEntrySpec: codec.getLibraryEntrySpec,
+      getLibraryEntrySpec: getLibraryEntrySpecCompat,
       isTemplateNameTaken,
-      loadStoredLibrary: storage.loadStoredLibrary,
+      loadStoredLibrary: function(callback, openInSidebar) {
+        return loadStoredLibrary(
+          deps.ui,
+          deps.state,
+          deps.libraryTitle,
+          callback,
+          openInSidebar
+        );
+      },
       removeTemplateFromLibrary,
-      saveLibraryImages: storage.saveLibraryImages
+      saveLibraryImages: function(images, callback) {
+        return saveLibraryImages(
+          deps.ui,
+          deps.state,
+          deps.libraryTitle,
+          images,
+          callback
+        );
+      }
     };
   }
 
   // services/backendSession.js
-  function createBackendSessionStore(deps) {
-    var state = deps.state;
-    var constants = deps.constants;
-    var trim2 = deps.trim;
-    var toInt2 = deps.toInt;
-    var cloneJson2 = deps.cloneJson;
-    var isObject2 = deps.isObject;
-    function normalizeBackendBaseUrl(url) {
-      var normalized = trim2(url).replace(/\/+$/, "");
-      if (normalized.length == 0) {
-        return constants.BACKEND_DEFAULT_BASE_URL;
-      }
-      if (/^https?:\/\/localhost(?::\d+)?\/api$/i.test(normalized) || /^https?:\/\/127\.0\.0\.1(?::\d+)?\/api$/i.test(normalized)) {
-        return constants.BACKEND_DEFAULT_BASE_URL;
-      }
-      return normalized;
+  function normalizeBackendBaseUrl(url, constants) {
+    var normalized = trim(url).replace(/\/+$/, "");
+    if (normalized.length == 0) {
+      return constants.BACKEND_DEFAULT_BASE_URL;
     }
-    function loadBackendSession() {
-      if (typeof localStorage === "undefined") {
+    if (/^https?:\/\/localhost(?::\d+)?\/api$/i.test(normalized) || /^https?:\/\/127\.0\.0\.1(?::\d+)?\/api$/i.test(normalized)) {
+      return constants.BACKEND_DEFAULT_BASE_URL;
+    }
+    return normalized;
+  }
+  function loadBackendSession(state, constants, normalizeSnapshotGenericIds2) {
+    if (typeof localStorage === "undefined") {
+      return;
+    }
+    try {
+      var raw = localStorage.getItem(constants.BACKEND_SESSION_STORAGE_KEY);
+      if (!raw) {
         return;
       }
-      try {
-        var raw = localStorage.getItem(constants.BACKEND_SESSION_STORAGE_KEY);
-        if (!raw) {
-          return;
-        }
-        var session = JSON.parse(raw);
-        var normalizedLastSnapshot = deps.normalizeSnapshotGenericIds(
-          session.lastSnapshot
-        );
-        state.backendBaseUrl = normalizeBackendBaseUrl(session.baseUrl);
-        state.backendActorId = trim2(session.actorId) || "local-user";
-        state.backendDiagramId = trim2(session.diagramId);
-        state.backendDiagramTitle = trim2(session.diagramTitle);
-        state.backendDiagramVersion = Math.max(
-          0,
-          toInt2(session.diagramVersion, 0)
-        );
-        state.backendLastSnapshot = isObject2(normalizedLastSnapshot) ? cloneJson2(normalizedLastSnapshot) : null;
-      } catch (e) {
-        state.backendBaseUrl = constants.BACKEND_DEFAULT_BASE_URL;
-        state.backendActorId = "local-user";
-        state.backendDiagramId = "";
-        state.backendDiagramTitle = "";
-        state.backendDiagramVersion = 0;
-        state.backendLastSnapshot = null;
-      }
-    }
-    function saveBackendSession() {
-      if (typeof localStorage === "undefined") {
-        return;
-      }
-      try {
-        localStorage.setItem(
-          constants.BACKEND_SESSION_STORAGE_KEY,
-          JSON.stringify({
-            baseUrl: state.backendBaseUrl,
-            actorId: state.backendActorId,
-            diagramId: state.backendDiagramId,
-            diagramTitle: state.backendDiagramTitle,
-            diagramVersion: state.backendDiagramVersion,
-            lastSnapshot: deps.normalizeSnapshotGenericIds(
-              state.backendLastSnapshot
-            )
-          })
-        );
-      } catch (e) {
-      }
-    }
-    function syncBackendState(diagramId, version, snapshot, title) {
-      snapshot = deps.normalizeSnapshotGenericIds(snapshot);
-      state.backendDiagramId = trim2(diagramId);
-      state.backendDiagramTitle = trim2(title || state.backendDiagramTitle);
-      state.backendDiagramVersion = Math.max(0, toInt2(version, 0));
-      state.backendLastSnapshot = snapshot != null ? cloneJson2(snapshot) : null;
-      deps.resetPendingChangeRecords(
-        snapshot != null ? snapshot : deps.exportDiagramSnapshot()
-      );
-      saveBackendSession();
-    }
-    function resetBackendBinding() {
+      var session = JSON.parse(raw);
+      var normalizedLastSnapshot = normalizeSnapshotGenericIds2(session.lastSnapshot);
+      state.backendBaseUrl = normalizeBackendBaseUrl(session.baseUrl, constants);
+      state.backendActorId = trim(session.actorId) || "local-user";
+      state.backendDiagramId = trim(session.diagramId);
+      state.backendDiagramTitle = trim(session.diagramTitle);
+      state.backendDiagramVersion = Math.max(0, toInt(session.diagramVersion, 0));
+      state.backendLastSnapshot = isObject(normalizedLastSnapshot) ? cloneJson(normalizedLastSnapshot) : null;
+    } catch (e) {
+      state.backendBaseUrl = constants.BACKEND_DEFAULT_BASE_URL;
+      state.backendActorId = "local-user";
       state.backendDiagramId = "";
       state.backendDiagramTitle = "";
       state.backendDiagramVersion = 0;
       state.backendLastSnapshot = null;
-      deps.resetPendingChangeRecords(deps.exportDiagramSnapshot());
-      saveBackendSession();
     }
-    return {
-      loadBackendSession,
-      normalizeBackendBaseUrl,
-      resetBackendBinding,
-      saveBackendSession,
-      syncBackendState
-    };
+  }
+  function saveBackendSession(state, constants, normalizeSnapshotGenericIds2) {
+    if (typeof localStorage === "undefined") {
+      return;
+    }
+    try {
+      localStorage.setItem(
+        constants.BACKEND_SESSION_STORAGE_KEY,
+        JSON.stringify({
+          baseUrl: state.backendBaseUrl,
+          actorId: state.backendActorId,
+          diagramId: state.backendDiagramId,
+          diagramTitle: state.backendDiagramTitle,
+          diagramVersion: state.backendDiagramVersion,
+          lastSnapshot: normalizeSnapshotGenericIds2(state.backendLastSnapshot)
+        })
+      );
+    } catch (e) {
+    }
+  }
+  function syncBackendState(state, constants, diagramId, version, snapshot, title, normalizeSnapshotGenericIds2, resetPendingChangeRecords, exportDiagramSnapshot) {
+    snapshot = normalizeSnapshotGenericIds2(snapshot);
+    state.backendDiagramId = trim(diagramId);
+    state.backendDiagramTitle = trim(title || state.backendDiagramTitle);
+    state.backendDiagramVersion = Math.max(0, toInt(version, 0));
+    state.backendLastSnapshot = snapshot != null ? cloneJson(snapshot) : null;
+    resetPendingChangeRecords(snapshot != null ? snapshot : exportDiagramSnapshot());
+    saveBackendSession(state, constants, normalizeSnapshotGenericIds2);
+  }
+  function resetBackendBinding(state, constants, normalizeSnapshotGenericIds2, resetPendingChangeRecords, exportDiagramSnapshot) {
+    state.backendDiagramId = "";
+    state.backendDiagramTitle = "";
+    state.backendDiagramVersion = 0;
+    state.backendLastSnapshot = null;
+    resetPendingChangeRecords(exportDiagramSnapshot());
+    saveBackendSession(state, constants, normalizeSnapshotGenericIds2);
   }
 
   // services/backendRemoteApi.js
-  function createBackendRemoteApi(deps) {
-    var state = deps.state;
-    var trim2 = deps.trim;
-    var toInt2 = deps.toInt;
-    var cloneJson2 = deps.cloneJson;
-    function requestBackendJson(method, url, body) {
-      var options = {
-        method,
-        headers: {
-          Accept: "application/json"
-        }
-      };
-      if (body != null) {
-        options.headers["Content-Type"] = "application/json";
-        options.body = JSON.stringify(body);
+  function requestBackendJson(method, url, body) {
+    var options = {
+      method,
+      headers: {
+        Accept: "application/json"
       }
-      return fetch(url, options).then(function(response) {
-        return response.text().then(function(text) {
-          var payload = text.length > 0 ? JSON.parse(text) : null;
-          if (!response.ok) {
-            var error = new Error(
-              payload != null && payload.message != null ? payload.message : "\u540E\u7AEF\u8BF7\u6C42\u5931\u8D25"
-            );
-            error.payload = payload;
-            throw error;
-          }
-          return payload;
-        });
-      });
-    }
-    async function saveDiagramToBackend(title) {
-      var backendUrl = deps.normalizeBackendBaseUrl(state.backendBaseUrl);
-      var actorId = trim2(state.backendActorId) || "local-user";
-      var diagramId = trim2(state.backendDiagramId);
-      var pendingChanges = cloneJson2(state.pendingChangeRecords || []);
-      var response;
-      if (diagramId.length == 0) {
-        response = await requestBackendJson("POST", backendUrl + "/diagrams", {
-          title: trim2(title) || "\u672A\u547D\u540D\u56FE\u7EB8"
-        });
-        diagramId = trim2(response.diagramId);
-        state.backendDiagramId = diagramId;
-        state.backendDiagramTitle = trim2(response.title) || trim2(title) || "\u672A\u547D\u540D\u56FE\u7EB8";
-        state.backendDiagramVersion = 0;
-        state.backendLastSnapshot = response.snapshot || null;
-      }
-      var latestSnapshot = null;
-      if (diagramId.length > 0) {
-        latestSnapshot = await requestBackendJson(
-          "GET",
-          backendUrl + "/diagrams/" + encodeURIComponent(diagramId)
-        );
-        state.backendDiagramTitle = trim2(latestSnapshot.title) || state.backendDiagramTitle;
-        state.backendDiagramVersion = Math.max(
-          0,
-          toInt2(latestSnapshot.version, state.backendDiagramVersion)
-        );
-        state.backendLastSnapshot = deps.normalizeSnapshotGenericIds(latestSnapshot);
-      }
-      var snapshot = deps.exportDiagramSnapshot();
-      snapshot.diagramId = diagramId;
-      var snapshotDiff = deps.computeSnapshotChanges(
-        state.backendLastSnapshot,
-        snapshot
-      );
-      if (snapshotDiff.changes.length == 0) {
-        state.backendLastSnapshot = latestSnapshot != null ? cloneJson2(state.backendLastSnapshot) : snapshot;
-        deps.resetPendingChangeRecords(
-          latestSnapshot != null ? state.backendLastSnapshot : snapshot
-        );
-        deps.saveBackendSession();
-        deps.showStatus("\u6CA1\u6709\u68C0\u6D4B\u5230\u9700\u8981\u4FDD\u5B58\u7684\u53D8\u66F4", false);
-        return;
-      }
-      var diff = {
-        touchedObjectIds: deps.uniqueStrings(
-          (snapshotDiff.touchedObjectIds || []).concat(
-            deps.collectChangeObjectIds(pendingChanges)
-          )
-        ),
-        changes: pendingChanges
-      };
-      if (diff.changes.length == 0 && snapshotDiff.changes.length > 0) {
-        var createdAt = (/* @__PURE__ */ new Date()).toISOString();
-        var sequence = state.nextChangeSequence++;
-        var i;
-        for (i = 0; i < snapshotDiff.changes.length; i++) {
-          var fallbackChange = cloneJson2(snapshotDiff.changes[i]);
-          fallbackChange.sequence = sequence;
-          fallbackChange.createdAt = createdAt;
-          diff.changes.push(fallbackChange);
-        }
-        diff.touchedObjectIds = deps.uniqueStrings(
-          diff.touchedObjectIds.concat(deps.collectChangeObjectIds(diff.changes))
-        );
-      }
-      if (typeof console !== "undefined" && typeof console.groupCollapsed === "function") {
-        console.groupCollapsed(
-          "[electricalSymbols] saveDiagramToBackend",
-          diagramId || "(new)"
-        );
-        console.log("snapshot", snapshot);
-        console.log("diff", diff);
-        console.groupEnd();
-      } else if (typeof console !== "undefined" && typeof console.log === "function") {
-        console.log("[electricalSymbols] snapshot", snapshot);
-        console.log("[electricalSymbols] diff", diff);
-      }
-      response = await requestBackendJson(
-        "POST",
-        backendUrl + "/diagrams/" + encodeURIComponent(diagramId) + "/commits",
-        {
-          baseVersion: Math.max(0, state.backendDiagramVersion),
-          actorId,
-          touchedObjectIds: diff.touchedObjectIds,
-          changes: diff.changes,
-          snapshot
-        }
-      );
-      deps.syncBackendState(
-        diagramId,
-        response.version,
-        response.snapshot,
-        trim2(title) || state.backendDiagramTitle
-      );
-      deps.showStatus(
-        "\u5DF2\u4FDD\u5B58\u5230\u540E\u7AEF\uFF1A" + (state.backendDiagramTitle || diagramId) + "\uFF0C\u7248\u672C\uFF1A" + String(response.version),
-        false
-      );
-    }
-    function listDiagramsFromBackend() {
-      return requestBackendJson(
-        "GET",
-        deps.normalizeBackendBaseUrl(state.backendBaseUrl) + "/diagrams"
-      );
-    }
-    function getDiagramHistoryFromBackend(diagramId) {
-      return requestBackendJson(
-        "GET",
-        deps.normalizeBackendBaseUrl(state.backendBaseUrl) + "/diagrams/" + encodeURIComponent(diagramId) + "/history"
-      );
-    }
-    async function rollbackDiagramToVersion(targetVersion) {
-      var diagramId = trim2(state.backendDiagramId);
-      if (diagramId.length == 0) {
-        throw new Error("\u8BF7\u5148\u4FDD\u5B58\u56FE\u7EB8\u5230\u540E\u7AEF\uFF0C\u518D\u6267\u884C\u7248\u672C\u56DE\u6EDA");
-      }
-      var response = await requestBackendJson(
-        "POST",
-        deps.normalizeBackendBaseUrl(state.backendBaseUrl) + "/diagrams/" + encodeURIComponent(diagramId) + "/rollback",
-        {
-          targetVersion: Math.max(0, toInt2(targetVersion, 0)),
-          actorId: trim2(state.backendActorId) || "local-user"
-        }
-      );
-      deps.restoreDiagramSnapshot(response.snapshot);
-      deps.syncBackendState(
-        diagramId,
-        response.version,
-        response.snapshot,
-        state.backendDiagramTitle
-      );
-      deps.showStatus(
-        "\u5DF2\u56DE\u6EDA\u5230\u7248\u672C v" + String(targetVersion) + "\uFF0C\u5F53\u524D\u6700\u65B0\u7248\u672C\u4E3A v" + String(response.version),
-        false
-      );
-      return response;
-    }
-    async function loadDiagramFromBackend(diagramId) {
-      var targetDiagramId = trim2(diagramId || state.backendDiagramId);
-      if (targetDiagramId.length == 0) {
-        throw new Error("\u8BF7\u5148\u9009\u62E9\u4E00\u5F20\u56FE\u7EB8");
-      }
-      var backendUrl = deps.normalizeBackendBaseUrl(state.backendBaseUrl);
-      var snapshot = await requestBackendJson(
-        "GET",
-        backendUrl + "/diagrams/" + encodeURIComponent(targetDiagramId)
-      );
-      deps.restoreDiagramSnapshot(snapshot);
-      deps.syncBackendState(targetDiagramId, snapshot.version, snapshot);
-      deps.showStatus("\u5DF2\u4ECE\u540E\u7AEF\u52A0\u8F7D\u56FE\u7EB8\uFF0C\u7248\u672C\uFF1A" + String(snapshot.version), false);
-    }
-    return {
-      getDiagramHistoryFromBackend,
-      listDiagramsFromBackend,
-      loadDiagramFromBackend,
-      requestBackendJson,
-      rollbackDiagramToVersion,
-      saveDiagramToBackend
     };
+    if (body != null) {
+      options.headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(body);
+    }
+    return fetch(url, options).then(function(response) {
+      return response.text().then(function(text) {
+        var payload = text.length > 0 ? JSON.parse(text) : null;
+        if (!response.ok) {
+          var error = new Error(
+            payload != null && payload.message != null ? payload.message : "\u540E\u7AEF\u8BF7\u6C42\u5931\u8D25"
+          );
+          error.payload = payload;
+          throw error;
+        }
+        return payload;
+      });
+    });
+  }
+  async function saveDiagramToBackend(state, deps, title) {
+    var backendUrl = deps.normalizeBackendBaseUrl(state.backendBaseUrl);
+    var actorId = trim(state.backendActorId) || "local-user";
+    var diagramId = trim(state.backendDiagramId);
+    var pendingChanges = cloneJson(state.pendingChangeRecords || []);
+    var response;
+    if (diagramId.length == 0) {
+      response = await requestBackendJson("POST", backendUrl + "/diagrams", {
+        title: trim(title) || "\u672A\u547D\u540D\u56FE\u7EB8"
+      });
+      diagramId = trim(response.diagramId);
+      state.backendDiagramId = diagramId;
+      state.backendDiagramTitle = trim(response.title) || trim(title) || "\u672A\u547D\u540D\u56FE\u7EB8";
+      state.backendDiagramVersion = 0;
+      state.backendLastSnapshot = response.snapshot || null;
+    }
+    var latestSnapshot = null;
+    if (diagramId.length > 0) {
+      latestSnapshot = await requestBackendJson(
+        "GET",
+        backendUrl + "/diagrams/" + encodeURIComponent(diagramId)
+      );
+      state.backendDiagramTitle = trim(latestSnapshot.title) || state.backendDiagramTitle;
+      state.backendDiagramVersion = Math.max(
+        0,
+        toInt(latestSnapshot.version, state.backendDiagramVersion)
+      );
+      state.backendLastSnapshot = deps.normalizeSnapshotGenericIds(latestSnapshot);
+    }
+    var snapshot = deps.exportDiagramSnapshot();
+    snapshot.diagramId = diagramId;
+    var snapshotDiff = deps.computeSnapshotChanges(state.backendLastSnapshot, snapshot);
+    if (snapshotDiff.changes.length == 0) {
+      state.backendLastSnapshot = latestSnapshot != null ? cloneJson(state.backendLastSnapshot) : snapshot;
+      deps.resetPendingChangeRecords(
+        latestSnapshot != null ? state.backendLastSnapshot : snapshot
+      );
+      deps.saveBackendSession();
+      deps.showStatus("\u6CA1\u6709\u68C0\u6D4B\u5230\u9700\u8981\u4FDD\u5B58\u7684\u53D8\u66F4", false);
+      return;
+    }
+    var diff = {
+      touchedObjectIds: uniqueStrings(
+        (snapshotDiff.touchedObjectIds || []).concat(
+          deps.collectChangeObjectIds(pendingChanges)
+        )
+      ),
+      changes: pendingChanges
+    };
+    if (diff.changes.length == 0 && snapshotDiff.changes.length > 0) {
+      var createdAt = (/* @__PURE__ */ new Date()).toISOString();
+      var sequence = state.nextChangeSequence++;
+      var i;
+      for (i = 0; i < snapshotDiff.changes.length; i++) {
+        var fallbackChange = cloneJson(snapshotDiff.changes[i]);
+        fallbackChange.sequence = sequence;
+        fallbackChange.createdAt = createdAt;
+        diff.changes.push(fallbackChange);
+      }
+      diff.touchedObjectIds = uniqueStrings(
+        diff.touchedObjectIds.concat(deps.collectChangeObjectIds(diff.changes))
+      );
+    }
+    if (typeof console !== "undefined" && typeof console.groupCollapsed === "function") {
+      console.groupCollapsed("[electricalSymbols] saveDiagramToBackend", diagramId || "(new)");
+      console.log("snapshot", snapshot);
+      console.log("diff", diff);
+      console.groupEnd();
+    } else if (typeof console !== "undefined" && typeof console.log === "function") {
+      console.log("[electricalSymbols] snapshot", snapshot);
+      console.log("[electricalSymbols] diff", diff);
+    }
+    response = await requestBackendJson(
+      "POST",
+      backendUrl + "/diagrams/" + encodeURIComponent(diagramId) + "/commits",
+      {
+        baseVersion: Math.max(0, state.backendDiagramVersion),
+        actorId,
+        touchedObjectIds: diff.touchedObjectIds,
+        changes: diff.changes,
+        snapshot
+      }
+    );
+    deps.syncBackendState(
+      diagramId,
+      response.version,
+      response.snapshot,
+      trim(title) || state.backendDiagramTitle
+    );
+    deps.showStatus(
+      "\u5DF2\u4FDD\u5B58\u5230\u540E\u7AEF\uFF1A" + (state.backendDiagramTitle || diagramId) + "\uFF0C\u7248\u672C\uFF1A" + String(response.version),
+      false
+    );
+  }
+  function listDiagramsFromBackend(state, normalizeBackendBaseUrl2) {
+    return requestBackendJson("GET", normalizeBackendBaseUrl2(state.backendBaseUrl) + "/diagrams");
+  }
+  function getDiagramHistoryFromBackend(state, normalizeBackendBaseUrl2, diagramId) {
+    return requestBackendJson(
+      "GET",
+      normalizeBackendBaseUrl2(state.backendBaseUrl) + "/diagrams/" + encodeURIComponent(diagramId) + "/history"
+    );
+  }
+  async function rollbackDiagramToVersion(state, deps, targetVersion) {
+    var diagramId = trim(state.backendDiagramId);
+    if (diagramId.length == 0) {
+      throw new Error("\u8BF7\u5148\u4FDD\u5B58\u56FE\u7EB8\u5230\u540E\u7AEF\uFF0C\u518D\u6267\u884C\u7248\u672C\u56DE\u6EDA");
+    }
+    var response = await requestBackendJson(
+      "POST",
+      deps.normalizeBackendBaseUrl(state.backendBaseUrl) + "/diagrams/" + encodeURIComponent(diagramId) + "/rollback",
+      {
+        targetVersion: Math.max(0, toInt(targetVersion, 0)),
+        actorId: trim(state.backendActorId) || "local-user"
+      }
+    );
+    deps.restoreDiagramSnapshot(response.snapshot);
+    deps.syncBackendState(diagramId, response.version, response.snapshot, state.backendDiagramTitle);
+    deps.showStatus(
+      "\u5DF2\u56DE\u6EDA\u5230\u7248\u672C v" + String(targetVersion) + "\uFF0C\u5F53\u524D\u6700\u65B0\u7248\u672C\u4E3A v" + String(response.version),
+      false
+    );
+    return response;
+  }
+  async function loadDiagramFromBackend(state, deps, diagramId) {
+    var targetDiagramId = trim(diagramId || state.backendDiagramId);
+    if (targetDiagramId.length == 0) {
+      throw new Error("\u8BF7\u5148\u9009\u62E9\u4E00\u5F20\u56FE\u7EB8");
+    }
+    var backendUrl = deps.normalizeBackendBaseUrl(state.backendBaseUrl);
+    var snapshot = await requestBackendJson(
+      "GET",
+      backendUrl + "/diagrams/" + encodeURIComponent(targetDiagramId)
+    );
+    deps.restoreDiagramSnapshot(snapshot);
+    deps.syncBackendState(targetDiagramId, snapshot.version, snapshot);
+    deps.showStatus("\u5DF2\u4ECE\u540E\u7AEF\u52A0\u8F7D\u56FE\u7EB8\uFF0C\u7248\u672C\uFF1A" + String(snapshot.version), false);
   }
 
   // services/backend.js
-  function createBackendService(deps) {
-    var session = createBackendSessionStore(deps);
-    var remoteApi = createBackendRemoteApi({
-      state: deps.state,
-      trim: deps.trim,
-      toInt: deps.toInt,
-      cloneJson: deps.cloneJson,
-      normalizeBackendBaseUrl: session.normalizeBackendBaseUrl,
-      normalizeSnapshotGenericIds: deps.normalizeSnapshotGenericIds,
-      exportDiagramSnapshot: deps.exportDiagramSnapshot,
-      resetPendingChangeRecords: deps.resetPendingChangeRecords,
-      computeSnapshotChanges: deps.computeSnapshotChanges,
-      collectChangeObjectIds: deps.collectChangeObjectIds,
-      uniqueStrings: deps.uniqueStrings,
-      showStatus: deps.showStatus,
-      restoreDiagramSnapshot: deps.restoreDiagramSnapshot,
-      saveBackendSession: session.saveBackendSession,
-      syncBackendState: session.syncBackendState
-    });
+  function createBackendService() {
+    var deps = arguments.length > 0 ? arguments[0] : {};
     return {
-      getDiagramHistoryFromBackend: remoteApi.getDiagramHistoryFromBackend,
-      listDiagramsFromBackend: remoteApi.listDiagramsFromBackend,
-      loadBackendSession: session.loadBackendSession,
-      loadDiagramFromBackend: remoteApi.loadDiagramFromBackend,
-      normalizeBackendBaseUrl: session.normalizeBackendBaseUrl,
-      requestBackendJson: remoteApi.requestBackendJson,
-      resetBackendBinding: session.resetBackendBinding,
-      rollbackDiagramToVersion: remoteApi.rollbackDiagramToVersion,
-      saveBackendSession: session.saveBackendSession,
-      saveDiagramToBackend: remoteApi.saveDiagramToBackend,
-      syncBackendState: session.syncBackendState
-    };
-  }
-
-  // bootstrap/createServices.js
-  function createServiceRegistry(app) {
-    var ctx = app.ctx;
-    var constants = app.constants;
-    var utils = app.utils;
-    var domains = app.domains;
-    var helpers = app.helpers;
-    return {
-      draftStore: createDraftStore({
-        state: ctx.state,
-        storageKey: constants.TEMPLATE_DRAFT_STORAGE_KEY,
-        trim: utils.trim,
-        cloneJson: utils.cloneJson
-      }),
-      libraryStore: createLibraryStore({
-        ui: ctx.ui,
-        graph: ctx.graph,
-        state: ctx.state,
-        libraryTitle: constants.LIBRARY_TITLE,
-        trim: utils.trim,
-        isObject: utils.isObject,
-        cloneJson: utils.cloneJson,
-        normalizeSpec: domains.spec.normalizeSpec,
-        isElectricalRoot: helpers.isElectricalRoot,
-        extractSpec: domains.symbol.extractSpec,
-        buildSymbolCell: domains.symbol.buildSymbolCell,
-        showStatus: app.showStatus
-      }),
-      backend: createBackendService({
-        state: ctx.state,
-        constants,
-        trim: utils.trim,
-        toInt: utils.toInt,
-        cloneJson: utils.cloneJson,
-        isObject: utils.isObject,
-        normalizeSnapshotGenericIds: domains.snapshot.normalizeSnapshotGenericIds,
-        exportDiagramSnapshot: domains.snapshot.exportDiagramSnapshot,
-        resetPendingChangeRecords: helpers.resetPendingChangeRecords,
-        computeSnapshotChanges: domains.snapshot.computeSnapshotChanges,
-        collectChangeObjectIds: domains.snapshot.collectChangeObjectIds,
-        uniqueStrings: utils.uniqueStrings,
-        showStatus: app.showStatus,
-        restoreDiagramSnapshot: domains.snapshot.restoreDiagramSnapshot
-      })
-    };
-  }
-
-  // ui/shared/buttonFactory.js
-  function createPluginButton(label, fn) {
-    var button = mxUtils.button(label, fn);
-    button.className = "geBtn";
-    button.style.marginRight = "8px";
-    button.style.marginTop = "8px";
-    return button;
-  }
-
-  // application/runtimeBridge.js
-  function createRuntimeBridge() {
-    return {
-      applyEdgePortConstraintMetadata: null,
-      clearPortSwapOverlay: null,
-      collectComposeDragCandidates: null,
-      enterInstanceComposeMode: null,
-      enterPortSwapMode: null,
-      exitInstanceComposeMode: null,
-      exitPortSwapMode: null,
-      getNearestCabinetPortFromClick: null,
-      handleModelChange: null,
-      isBlockedComposeTarget: function() {
-        return false;
+      getDiagramHistoryFromBackend: function(diagramId) {
+        return getDiagramHistoryFromBackend(
+          deps.state,
+          function(url) {
+            return normalizeBackendBaseUrl(url, deps.constants);
+          },
+          diagramId
+        );
       },
-      isLockedComposedChild: function() {
-        return false;
-      },
-      recordCanvasOperation: null,
-      refreshInstanceComposeOverlay: function() {
-      }
-    };
-  }
-
-  // application/uiBridge.js
-  function createUiBridge() {
-    return {
-      clearCurrentPage: null,
-      closeGapDialogWindow: function() {
-      },
-      createWindow: null,
-      insertIntoGraph: null,
-      openBackendLoadDialog: null,
-      openBackendRollbackDialog: null,
-      openBackendSaveDialog: null,
-      openCabinetGapDialog: null,
-      openCreateFromLibraryDialog: null,
-      openEditInstanceDialog: null,
-      openEditorWithTemplate: null,
-      openInsertCabinetDialog: null,
-      openInsertFrameDialog: null,
-      openSvgExportDialog: null,
-      openTemplateBrowserDialog: null,
-      refreshSelection: null,
-      toggleWindow: null,
-      updatePreview: null,
-      updateSelectedItem: null
-    };
-  }
-
-  // application/selection.js
-  function createSelectionApi(deps) {
-    var graph = deps.ctx.graph;
-    function getSelectedCell() {
-      return graph.getSelectionCell();
-    }
-    function getSelectedRoot() {
-      return deps.findElectricalRoot(getSelectedCell());
-    }
-    function getSelectedFrame() {
-      return deps.findDrawingFrame(getSelectedCell());
-    }
-    function getSelectedCabinetSegment() {
-      return deps.findCabinetSegment(getSelectedCell());
-    }
-    function getSelectedCabinetGap() {
-      var cell = getSelectedCell();
-      return deps.isCabinetGap(cell) ? cell : null;
-    }
-    return {
-      getSelectedCabinetGap,
-      getSelectedCabinetSegment,
-      getSelectedCell,
-      getSelectedFrame,
-      getSelectedRoot
-    };
-  }
-
-  // application/commands.js
-  function createCommandApi(deps) {
-    var ctx = deps.ctx;
-    var graph = ctx.graph;
-    var model = ctx.model;
-    var state = ctx.state;
-    var constants = ctx.constants;
-    function getDefaultParentChildren() {
-      var parent = graph.getDefaultParent();
-      var cells = [];
-      var i;
-      for (i = 0; i < model.getChildCount(parent); i++) {
-        cells.push(model.getChildAt(parent, i));
-      }
-      return cells;
-    }
-    function insertCellIntoFrame(cell, frame) {
-      var insertPoint = deps.frame.getFrameChildInsertPoint(
-        frame,
-        cell.geometry != null ? cell.geometry.width : 0,
-        cell.geometry != null ? cell.geometry.height : 0
-      );
-      graph.setSelectionCells(
-        graph.importCells([cell], insertPoint.x, insertPoint.y, frame)
-      );
-      graph.scrollCellToVisible(graph.getSelectionCell());
-    }
-    function insertIntoGraph(spec) {
-      var root = deps.symbol.buildSymbolCell(spec);
-      var frame = deps.frame.getActiveFrame(false);
-      if (frame != null) {
-        insertCellIntoFrame(root, frame);
-      } else {
-        var pt = graph.getFreeInsertPoint();
-        graph.setSelectionCells(graph.importCells([root], pt.x, pt.y));
-      }
-      graph.scrollCellToVisible(graph.getSelectionCell());
-      deps.showStatus("\u5DF2\u63D2\u5165\u56FE\u5143", false);
-      deps.setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u5143");
-    }
-    function refreshSelection() {
-      var root = deps.selection.getSelectedRoot();
-      var cabinet = deps.selection.getSelectedCabinetSegment();
-      if (cabinet != null) {
-        try {
-          state.updatingModel = true;
-          model.beginUpdate();
-          deps.cabinet.relayoutCabinetByModel(
-            deps.cabinet.extractCabinetModel(cabinet)
-          );
-          deps.showStatus("\u914D\u7535\u67DC\u5DF2\u5237\u65B0", false);
-          deps.setCanvasStatus("\u914D\u7535\u67DC\u5DF2\u5237\u65B0");
-        } catch (e) {
-          deps.showStatus(e.message || String(e), true);
-          deps.setCanvasStatus(e.message || String(e));
-        } finally {
-          model.endUpdate();
-          state.updatingModel = false;
-        }
-        return;
-      }
-      if (root == null) {
-        deps.showStatus("\u8BF7\u5148\u9009\u62E9\u4E00\u4E2A\u7535\u6C14\u56FE\u5143", true);
-        return;
-      }
-      state.updatingModel = true;
-      model.beginUpdate();
-      try {
-        deps.symbol.refreshRoot(root);
-      } catch (e) {
-        deps.showStatus(e.message || String(e), true);
-        return;
-      } finally {
-        model.endUpdate();
-        state.updatingModel = false;
-      }
-      deps.showStatus("\u7535\u6C14\u56FE\u5143\u5DF2\u5237\u65B0", false);
-    }
-    function insertFrame(config, selectedFrame, existingFrames) {
-      var normalizedConfig = deps.frame.normalizeFrameConfig(config || {});
-      var frames = Array.isArray(existingFrames) ? existingFrames : deps.frame.getAllDrawingFrames();
-      var groupId = selectedFrame != null ? deps.frame.getFrameGroupId(selectedFrame) : deps.helpers.generateFrameGroupId();
-      var nextPageNumber = selectedFrame != null ? deps.frame.getMaxFramePageNumberInGroup(groupId) + 1 : 1;
-      var frame = deps.frame.createDrawingFrameCell(normalizedConfig, nextPageNumber, {
-        groupId
-      });
-      state.frameConfig = deps.cloneJson(normalizedConfig);
-      if (selectedFrame != null) {
-        var anchorFrame = deps.frame.getRightmostFrameInGroup(groupId) || selectedFrame;
-        var anchorGeometry = model.getGeometry(anchorFrame);
-        frame.geometry = frame.geometry.clone();
-        frame.geometry.x = anchorGeometry.x + anchorGeometry.width + constants.FRAME_HORIZONTAL_GAP;
-        frame.geometry.y = anchorGeometry.y;
-        deps.frame.addTopLevelCell(frame);
-        graph.setSelectionCell(frame);
-      } else if (frames.length > 0) {
-        var leftmostFrame = deps.frame.getLeftmostFrame();
-        var bottommostFrame = deps.frame.getBottommostFrame();
-        var leftGeometry = leftmostFrame != null ? model.getGeometry(leftmostFrame) : null;
-        var bottomGeometry = bottommostFrame != null ? model.getGeometry(bottommostFrame) : null;
-        frame.geometry = frame.geometry.clone();
-        frame.geometry.x = leftGeometry != null ? leftGeometry.x : 0;
-        frame.geometry.y = bottomGeometry != null ? bottomGeometry.y + bottomGeometry.height + constants.FRAME_VERTICAL_GAP : 0;
-        deps.frame.addTopLevelCell(frame);
-        graph.setSelectionCell(frame);
-      } else {
-        var point = graph.getFreeInsertPoint();
-        graph.setSelectionCells(graph.importCells([frame], point.x, point.y));
-      }
-      graph.scrollCellToVisible(graph.getSelectionCell());
-      deps.showStatus("\u5DF2\u63D2\u5165\u56FE\u6846", false);
-      deps.setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u6846");
-    }
-    function insertCabinet(cabinetModel) {
-      state.updatingModel = true;
-      model.beginUpdate();
-      try {
-        deps.cabinet.relayoutCabinetByModel(cabinetModel);
-      } finally {
-        model.endUpdate();
-        state.updatingModel = false;
-      }
-      var segments = deps.cabinet.findCabinetSegments(cabinetModel.logicalCabinetId);
-      if (segments.length > 0) {
-        graph.setSelectionCell(segments[0]);
-        graph.scrollCellToVisible(segments[0]);
-      }
-      deps.showStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC", false);
-      deps.setCanvasStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC");
-    }
-    function updateCabinetGap(cabinetModel) {
-      state.updatingModel = true;
-      model.beginUpdate();
-      try {
-        deps.cabinet.relayoutCabinetByModel(cabinetModel);
-      } finally {
-        model.endUpdate();
-        state.updatingModel = false;
-      }
-      deps.showStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD", false);
-      deps.setCanvasStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD");
-    }
-    function applyInstanceSpec(root, spec) {
-      if (root == null || root.parent == null) {
-        throw new Error("\u5F53\u524D\u56FE\u5143\u5DF2\u4E0D\u5B58\u5728\uFF0C\u65E0\u6CD5\u5E94\u7528\u4FEE\u6539");
-      }
-      state.updatingModel = true;
-      model.beginUpdate();
-      try {
-        deps.symbol.syncRoot(root, spec, spec.ports);
-        graph.setSelectionCell(root);
-      } finally {
-        model.endUpdate();
-        state.updatingModel = false;
-      }
-      deps.showStatus("\u5DF2\u66F4\u65B0\u56FE\u5143\u5B9E\u4F8B", false);
-    }
-    function clearCurrentPage() {
-      var cells = getDefaultParentChildren();
-      if (cells.length == 0) {
-        deps.showStatus("\u5F53\u524D\u9875\u9762\u6CA1\u6709\u53EF\u6E05\u9664\u7684\u5185\u5BB9", false);
-        return;
-      }
-      if (!mxUtils.confirm("\u786E\u8BA4\u6E05\u9664\u5F53\u524D\u9875\u9762\u6240\u6709\u5185\u5BB9\uFF1F")) {
-        return;
-      }
-      if (!mxUtils.confirm("\u6B64\u64CD\u4F5C\u4E0D\u53EF\u6062\u590D\uFF0C\u786E\u5B9A\u7EE7\u7EED\u6E05\u9664\u5417\uFF1F")) {
-        return;
-      }
-      deps.uiBridge.closeGapDialogWindow();
-      deps.cabinet.setSelectedCabinetGap(null, null);
-      if (typeof deps.runtimeBridge.exitPortSwapMode === "function") {
-        deps.runtimeBridge.exitPortSwapMode(false);
-      }
-      if (typeof deps.runtimeBridge.exitInstanceComposeMode === "function") {
-        deps.runtimeBridge.exitInstanceComposeMode(false);
-      }
-      state.allowProtectedDelete = true;
-      try {
-        graph.removeCells(cells, true);
-        deps.showStatus("\u5DF2\u6E05\u7A7A\u5F53\u524D\u9875\u9762", false);
-      } finally {
-        state.allowProtectedDelete = false;
-      }
-    }
-    return {
-      applyInstanceSpec,
-      clearCurrentPage,
-      insertCabinet,
-      insertFrame,
-      insertIntoGraph,
-      refreshSelection,
-      updateCabinetGap
-    };
-  }
-
-  // application/actions.js
-  function createActionApi(app) {
-    var uiBridge = app.uiBridge;
-    var runtimeBridge = app.runtimeBridge;
-    var commands = app.commands;
-    var backend = app.services.backend;
-    function execute(fn, resetDeleteFlag) {
-      try {
-        return fn();
-      } catch (e) {
-        if (resetDeleteFlag) {
-          app.ctx.state.allowProtectedDelete = false;
-        }
-        app.showStatus(e.message || String(e), true);
-        return null;
-      }
-    }
-    return {
-      electricalBrowse: function() {
-        return execute(function() {
-          return uiBridge.openTemplateBrowserDialog();
+      listDiagramsFromBackend: function() {
+        return listDiagramsFromBackend(deps.state, function(url) {
+          return normalizeBackendBaseUrl(url, deps.constants);
         });
       },
-      electricalClearScreen: function() {
-        return execute(function() {
-          return commands.clearCurrentPage();
-        }, true);
+      loadBackendSession: function() {
+        return loadBackendSession(
+          deps.state,
+          deps.constants,
+          deps.normalizeSnapshotGenericIds
+        );
       },
-      electricalComposeInstance: function() {
-        return execute(function() {
-          return runtimeBridge.enterInstanceComposeMode();
-        });
+      loadDiagramFromBackend: function(diagramId) {
+        return loadDiagramFromBackend(deps.state, {
+          normalizeBackendBaseUrl: function(url) {
+            return normalizeBackendBaseUrl(url, deps.constants);
+          },
+          restoreDiagramSnapshot: deps.restoreDiagramSnapshot,
+          showStatus: deps.showStatus,
+          syncBackendState: function(targetDiagramId, version, snapshot, title) {
+            return syncBackendState(
+              deps.state,
+              deps.constants,
+              targetDiagramId,
+              version,
+              snapshot,
+              title,
+              deps.normalizeSnapshotGenericIds,
+              deps.resetPendingChangeRecords,
+              deps.exportDiagramSnapshot
+            );
+          }
+        }, diagramId);
       },
-      electricalCreate: function() {
-        return execute(function() {
-          return uiBridge.openCreateFromLibraryDialog();
-        });
+      normalizeBackendBaseUrl: function(url) {
+        return normalizeBackendBaseUrl(url, deps.constants);
       },
-      electricalEditInstance: function() {
-        return execute(function() {
-          return uiBridge.openEditInstanceDialog();
-        });
+      requestBackendJson,
+      resetBackendBinding: function() {
+        return resetBackendBinding(
+          deps.state,
+          deps.constants,
+          deps.normalizeSnapshotGenericIds,
+          deps.resetPendingChangeRecords,
+          deps.exportDiagramSnapshot
+        );
       },
-      electricalExportSvg: function() {
-        return execute(function() {
-          return uiBridge.openSvgExportDialog();
-        });
+      rollbackDiagramToVersion: function(targetVersion) {
+        return rollbackDiagramToVersion(deps.state, {
+          normalizeBackendBaseUrl: function(url) {
+            return normalizeBackendBaseUrl(url, deps.constants);
+          },
+          restoreDiagramSnapshot: deps.restoreDiagramSnapshot,
+          showStatus: deps.showStatus,
+          syncBackendState: function(diagramId, version, snapshot, title) {
+            return syncBackendState(
+              deps.state,
+              deps.constants,
+              diagramId,
+              version,
+              snapshot,
+              title,
+              deps.normalizeSnapshotGenericIds,
+              deps.resetPendingChangeRecords,
+              deps.exportDiagramSnapshot
+            );
+          }
+        }, targetVersion);
       },
-      electricalInsertCabinet: function() {
-        return execute(function() {
-          return uiBridge.openInsertCabinetDialog();
-        });
+      saveBackendSession: function() {
+        return saveBackendSession(
+          deps.state,
+          deps.constants,
+          deps.normalizeSnapshotGenericIds
+        );
       },
-      electricalInsertFrame: function() {
-        return execute(function() {
-          return uiBridge.openInsertFrameDialog();
-        });
+      saveDiagramToBackend: function(title) {
+        return saveDiagramToBackend(deps.state, {
+          normalizeBackendBaseUrl: function(url) {
+            return normalizeBackendBaseUrl(url, deps.constants);
+          },
+          normalizeSnapshotGenericIds: deps.normalizeSnapshotGenericIds,
+          exportDiagramSnapshot: deps.exportDiagramSnapshot,
+          resetPendingChangeRecords: deps.resetPendingChangeRecords,
+          computeSnapshotChanges: deps.computeSnapshotChanges,
+          collectChangeObjectIds: deps.collectChangeObjectIds,
+          showStatus: deps.showStatus,
+          restoreDiagramSnapshot: deps.restoreDiagramSnapshot,
+          saveBackendSession: function() {
+            return saveBackendSession(
+              deps.state,
+              deps.constants,
+              deps.normalizeSnapshotGenericIds
+            );
+          },
+          syncBackendState: function(diagramId, version, snapshot, nextTitle) {
+            return syncBackendState(
+              deps.state,
+              deps.constants,
+              diagramId,
+              version,
+              snapshot,
+              nextTitle,
+              deps.normalizeSnapshotGenericIds,
+              deps.resetPendingChangeRecords,
+              deps.exportDiagramSnapshot
+            );
+          }
+        }, title);
       },
-      electricalLoadBackend: function() {
-        return execute(function() {
-          return uiBridge.openBackendLoadDialog();
-        });
-      },
-      electricalNewBackend: function() {
-        return execute(function() {
-          backend.resetBackendBinding();
-          app.showStatus("\u5DF2\u65B0\u5EFA\u540E\u7AEF\u56FE\u7EB8\u4F1A\u8BDD\uFF0C\u4E0B\u4E00\u6B21\u4FDD\u5B58\u5C06\u521B\u5EFA\u65B0\u56FE\u7EB8", false);
-        });
-      },
-      electricalReassignPort: function() {
-        return execute(function() {
-          return runtimeBridge.enterPortSwapMode();
-        });
-      },
-      electricalRefresh: function() {
-        return execute(function() {
-          return commands.refreshSelection();
-        });
-      },
-      electricalRollbackBackend: function() {
-        return execute(function() {
-          return uiBridge.openBackendRollbackDialog();
-        });
-      },
-      electricalSaveBackend: function() {
-        return execute(function() {
-          return uiBridge.openBackendSaveDialog();
-        });
-      },
-      electricalSymbols: function() {
-        return execute(function() {
-          return uiBridge.toggleWindow();
-        });
+      syncBackendState: function(diagramId, version, snapshot, title) {
+        return syncBackendState(
+          deps.state,
+          deps.constants,
+          diagramId,
+          version,
+          snapshot,
+          title,
+          deps.normalizeSnapshotGenericIds,
+          deps.resetPendingChangeRecords,
+          deps.exportDiagramSnapshot
+        );
       }
     };
-  }
-
-  // bootstrap/createApp.js
-  function createApp(ctx) {
-    var constants = ctx.constants;
-    var app = {
-      ctx,
-      constants,
-      appContext: createAppContext(ctx),
-      graphApi: createGraphApi(ctx),
-      runtimeBridge: createRuntimeBridge(),
-      uiBridge: createUiBridge()
-    };
-    app.callUi = function(name) {
-      var fn = app.uiBridge != null ? app.uiBridge[name] : null;
-      if (typeof fn !== "function") {
-        return null;
-      }
-      return fn.apply(null, Array.prototype.slice.call(arguments, 1));
-    };
-    app.callRuntime = function(name) {
-      var fn = app.runtimeBridge != null ? app.runtimeBridge[name] : null;
-      if (typeof fn !== "function") {
-        return null;
-      }
-      return fn.apply(null, Array.prototype.slice.call(arguments, 1));
-    };
-    app.utils = {
-      clamp,
-      cloneJson,
-      createBaseUtils,
-      createButton: createPluginButton,
-      createMetaCell,
-      createNode,
-      createXmlUtils,
-      deepMerge,
-      extractSvgSize: function(svg) {
-        return extractSvgSize(svg, toFloat, trim);
-      },
-      generateUuid,
-      getAttr,
-      isObject,
-      normalizeSvg: function(svg) {
-        return validateSvg(svg, trim);
-      },
-      stripFileExtension,
-      toFloat,
-      toInt,
-      toSlug,
-      trim,
-      uniqueStrings,
-      cloneValue: function(node) {
-        return cloneValue(node, constants.ROOT_TAG);
-      },
-      validateSvg: function(svg) {
-        return validateSvg(svg, trim);
-      }
-    };
-    app.helpers = createRuntimeHelpers({
-      ctx,
-      constants,
-      trim,
-      cloneJson,
-      getAttr,
-      toSlug,
-      stripFileExtension,
-      generateUuid,
-      shouldExportGenericObject: function(cell) {
-        return app.domains != null && app.domains.snapshot != null && typeof app.domains.snapshot.shouldExportGenericObject === "function" && app.domains.snapshot.shouldExportGenericObject(cell);
-      }
-    });
-    app.showStatus = app.helpers.showStatus;
-    app.setCanvasStatus = app.helpers.setCanvasStatus;
-    app.domains = createDomainRegistry(app);
-    app.services = createServiceRegistry(app);
-    app.selection = createSelectionApi({
-      ctx,
-      findElectricalRoot: app.helpers.findElectricalRoot,
-      findDrawingFrame: app.domains.frame.findDrawingFrame,
-      findCabinetSegment: app.domains.cabinet.findCabinetSegment,
-      isCabinetGap: app.helpers.isCabinetGap
-    });
-    app.commands = createCommandApi({
-      ctx,
-      selection: app.selection,
-      frame: app.domains.frame,
-      symbol: app.domains.symbol,
-      cabinet: app.domains.cabinet,
-      helpers: app.helpers,
-      cloneJson,
-      uiBridge: app.uiBridge,
-      runtimeBridge: app.runtimeBridge,
-      showStatus: app.showStatus,
-      setCanvasStatus: app.setCanvasStatus
-    });
-    app.actions = createActionApi(app);
-    return app;
-  }
-
-  // bootstrap/wireApp.js
-  function wireApp(app) {
-    if (app.ui != null) {
-      Object.assign(app.uiBridge, app.ui);
-    }
-    if (app.runtime != null) {
-      Object.assign(app.runtimeBridge, app.runtime);
-    }
-    app.uiBridge.insertIntoGraph = app.commands.insertIntoGraph;
-    app.uiBridge.refreshSelection = app.commands.refreshSelection;
-    app.uiBridge.clearCurrentPage = app.commands.clearCurrentPage;
-    return app;
   }
 
   // ui/exportSvgDialog.js
-  function openSvgExportDialog(deps) {
+  function buildExportDialogDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      toInt: app.utils.toInt,
+      createButton: app.utils.createButton,
+      showStatus: app.showStatus
+    };
+  }
+  function openSvgExportDialog() {
+    var deps = arguments.length > 0 ? arguments[0] : buildExportDialogDeps();
     var ui = deps.ctx.ui;
     var graph = deps.ctx.graph;
     function getDiagramExportBounds() {
@@ -5427,7 +5233,30 @@
   }
 
   // ui/frameDialog.js
-  function openInsertFrameDialog(deps) {
+  function buildFrameDialogDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      cloneJson: app.utils.cloneJson,
+      normalizeFrameConfig: app.domains.frame.normalizeFrameConfig,
+      findDrawingFrame: app.domains.frame.findDrawingFrame,
+      getAllDrawingFrames: app.domains.frame.getAllDrawingFrames,
+      createButton: app.utils.createButton,
+      getFrameGroupId: app.domains.frame.getFrameGroupId,
+      generateFrameGroupId: app.helpers.generateFrameGroupId,
+      getMaxFramePageNumberInGroup: app.domains.frame.getMaxFramePageNumberInGroup,
+      createDrawingFrameCell: app.domains.frame.createDrawingFrameCell,
+      getRightmostFrameInGroup: app.domains.frame.getRightmostFrameInGroup,
+      addTopLevelCell: app.domains.frame.addTopLevelCell,
+      getLeftmostFrame: app.domains.frame.getLeftmostFrame,
+      getBottommostFrame: app.domains.frame.getBottommostFrame,
+      insertFrame: app.commands.insertFrame,
+      showStatus: app.showStatus,
+      setCanvasStatus: app.setCanvasStatus
+    };
+  }
+  function openInsertFrameDialog() {
+    var deps = arguments.length > 0 ? arguments[0] : buildFrameDialogDeps();
     var ctx = deps.ctx;
     var graph = ctx.graph;
     var state = ctx.state;
@@ -5492,7 +5321,31 @@
   }
 
   // ui/cabinetDialog.js
-  function createCabinetDialogs(deps) {
+  function buildCabinetDialogDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      trim: app.utils.trim,
+      clamp: app.utils.clamp,
+      toInt: app.utils.toInt,
+      toFloat: app.utils.toFloat,
+      createButton: app.utils.createButton,
+      getActiveFrame: app.domains.frame.getActiveFrame,
+      getAttr: app.utils.getAttr,
+      normalizeCabinetModel: app.domains.cabinet.normalizeCabinetModel,
+      generateLogicalCabinetId: app.helpers.generateLogicalCabinetId,
+      relayoutCabinetByModel: app.domains.cabinet.relayoutCabinetByModel,
+      findCabinetSegments: app.domains.cabinet.findCabinetSegments,
+      insertCabinet: app.commands.insertCabinet,
+      updateCabinetGap: app.commands.updateCabinetGap,
+      showStatus: app.showStatus,
+      setCanvasStatus: app.setCanvasStatus,
+      findCabinetSegment: app.domains.cabinet.findCabinetSegment,
+      extractCabinetModel: app.domains.cabinet.extractCabinetModel
+    };
+  }
+  function createCabinetDialogs() {
+    var deps = arguments.length > 0 ? arguments[0] : buildCabinetDialogDeps();
     var ctx = deps.ctx;
     var state = ctx.state;
     var constants = ctx.constants;
@@ -5704,7 +5557,20 @@
   }
 
   // ui/backendDialogs.js
-  function createBackendDialogs(deps) {
+  function buildBackendDialogDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      backend: app.services.backend,
+      trim: app.utils.trim,
+      showStatus: app.showStatus,
+      createButton: app.utils.createButton,
+      isObject: app.utils.isObject,
+      toInt: app.utils.toInt
+    };
+  }
+  function createBackendDialogs() {
+    var deps = arguments.length > 0 ? arguments[0] : buildBackendDialogDeps();
     var ctx = deps.ctx;
     var state = ctx.state;
     var trim2 = deps.trim;
@@ -6265,7 +6131,27 @@
   }
 
   // ui/templateBrowser.js
-  function openTemplateBrowserDialog(deps) {
+  function buildTemplateBrowserDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      library: app.services.libraryStore,
+      getLibraryEntrySpec: app.services.libraryStore.getLibraryEntrySpec,
+      showStatus: app.showStatus,
+      normalizePortLayout: app.domains.spec.normalizePortLayout,
+      normalizeLabels: app.domains.spec.normalizeLabels,
+      trim: app.utils.trim,
+      createButton: app.utils.createButton,
+      openEditorWithTemplate: function(template) {
+        return app.ui != null && typeof app.ui.openEditorWithTemplate === "function" ? app.ui.openEditorWithTemplate(template) : null;
+      },
+      openCreateFromLibraryDialog: function(preferredSymbolId) {
+        return app.ui != null && typeof app.ui.openCreateFromLibraryDialog === "function" ? app.ui.openCreateFromLibraryDialog(preferredSymbolId) : null;
+      }
+    };
+  }
+  function openTemplateBrowserDialog() {
+    var deps = arguments.length > 0 ? arguments[0] : buildTemplateBrowserDeps();
     var ctx = deps.ctx;
     var state = ctx.state;
     if (state.templatesWindow != null) {
@@ -6734,7 +6620,49 @@
   }
 
   // ui/templateEditor.js
-  function createTemplateEditor(deps) {
+  function buildTemplateEditorDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      trim: app.utils.trim,
+      cloneJson: app.utils.cloneJson,
+      normalizePortLayout: app.domains.spec.normalizePortLayout,
+      normalizeLabels: app.domains.spec.normalizeLabels,
+      toSvgDataUri: app.domains.spec.toSvgDataUri,
+      createButton: app.utils.createButton,
+      normalizePortMarker: app.domains.spec.normalizePortMarker,
+      normalizePortDirection: app.domains.spec.normalizePortDirection,
+      normalizePortIoMode: app.domains.spec.normalizePortIoMode,
+      portEdgeSnapThresholdPx: app.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
+      nextItemId: app.helpers.nextItemId,
+      normalizeLabelItem: app.domains.spec.normalizeLabelItem,
+      validateSvg: app.utils.validateSvg,
+      extractSvgSize: app.utils.extractSvgSize,
+      scheduleEditorDraftSave: app.services.draftStore.scheduleEditorDraftSave,
+      clearDraftSaveTimer: app.services.draftStore.clearDraftSaveTimer,
+      loadEditorDraft: app.services.draftStore.loadEditorDraft,
+      clearEditorDraft: app.services.draftStore.clearEditorDraft,
+      generateSymbolId: app.helpers.generateSymbolId,
+      getDefaultSchemaFields: app.domains.spec.getDefaultSchemaFields,
+      buildSchemaFromFields: app.domains.spec.buildSchemaFromFields,
+      hasSchemaPath: app.domains.spec.hasSchemaPath,
+      normalizeSchemaField: app.domains.spec.normalizeSchemaField,
+      normalizeSchemaType: app.domains.spec.normalizeSchemaType,
+      normalizeEnumOptions: app.domains.spec.normalizeEnumOptions,
+      isValidFieldPath: app.domains.spec.isValidFieldPath,
+      toInt: app.utils.toInt,
+      showStatus: app.showStatus,
+      normalizeSpec: app.domains.spec.normalizeSpec,
+      normalizeVariantLayouts: app.domains.spec.normalizeVariantLayouts,
+      flattenSchemaFields: app.domains.spec.flattenSchemaFields,
+      isObject: app.utils.isObject,
+      addToLibrary: app.services.libraryStore.addToLibrary,
+      isTemplateNameTaken: app.services.libraryStore.isTemplateNameTaken,
+      loadStoredLibrary: app.services.libraryStore.loadStoredLibrary
+    };
+  }
+  function createTemplateEditor() {
+    var deps = arguments.length > 0 ? arguments[0] : buildTemplateEditorDeps();
     var ctx = deps.ctx;
     var state = ctx.state;
     function hasLabelBinding(spec, binding, ignoreId) {
@@ -8126,7 +8054,31 @@
   }
 
   // ui/instanceEditor.js
-  function openEditInstanceDialog(deps) {
+  function buildInstanceEditorDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      findElectricalRoot: app.helpers.findElectricalRoot,
+      showStatus: app.showStatus,
+      extractSpec: app.domains.symbol.extractSpec,
+      normalizePortLayout: app.domains.spec.normalizePortLayout,
+      normalizeLabels: app.domains.spec.normalizeLabels,
+      trim: app.utils.trim,
+      getValueByPath: app.domains.spec.getValueByPath,
+      createButton: app.utils.createButton,
+      normalizePortMarker: app.domains.spec.normalizePortMarker,
+      normalizePortDirection: app.domains.spec.normalizePortDirection,
+      normalizePortIoMode: app.domains.spec.normalizePortIoMode,
+      normalizeLabelAlign: app.domains.spec.normalizeLabelAlign,
+      toSvgDataUri: app.domains.spec.toSvgDataUri,
+      portEdgeSnapThresholdPx: app.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
+      normalizePortPoint: app.domains.spec.normalizePortPoint,
+      normalizeLabelItem: app.domains.spec.normalizeLabelItem,
+      applyInstanceSpec: app.commands.applyInstanceSpec
+    };
+  }
+  function openEditInstanceDialog() {
+    var deps = arguments.length > 0 ? arguments[0] : buildInstanceEditorDeps();
     var ctx = deps.ctx;
     var graph = ctx.graph;
     var state = ctx.state;
@@ -8569,195 +8521,43 @@
     state.instanceWindow = wnd;
   }
 
-  // bootstrap/createUiRegistry.js
-  function createUiRegistry(app) {
-    var utils = app.utils;
-    var helpers = app.helpers;
-    var spec = app.domains.spec;
-    var symbol = app.domains.symbol;
-    var frame = app.domains.frame;
-    var cabinet = app.domains.cabinet;
-    var library = app.services.libraryStore;
-    var draftStore = app.services.draftStore;
-    var backend = app.services.backend;
-    var constants = app.constants;
-    var uiApi = {};
-    var cabinetDialogs = createCabinetDialogs({
-      ctx: app.ctx,
-      trim: utils.trim,
-      clamp: utils.clamp,
-      toInt: utils.toInt,
-      toFloat: utils.toFloat,
-      createButton: utils.createButton,
-      getActiveFrame: frame.getActiveFrame,
-      getAttr: utils.getAttr,
-      normalizeCabinetModel: cabinet.normalizeCabinetModel,
-      generateLogicalCabinetId: helpers.generateLogicalCabinetId,
-      relayoutCabinetByModel: cabinet.relayoutCabinetByModel,
-      findCabinetSegments: cabinet.findCabinetSegments,
-      insertCabinet: app.commands.insertCabinet,
-      updateCabinetGap: app.commands.updateCabinetGap,
+  // runtime/portSwapMode.js
+  function buildPortSwapDeps() {
+    var app = getApp();
+    var ctx = app.ctx;
+    return {
+      ctx,
+      trim: app.utils.trim,
+      cloneJson: app.utils.cloneJson,
+      parsePortLayout: app.domains.spec.parsePortLayout,
+      getAttr: app.utils.getAttr,
+      findCabinetSegments: app.domains.cabinet.findCabinetSegments,
+      findPortHostRoot: app.helpers.findPortHostRoot,
+      isCabinetSegment: app.helpers.isCabinetSegment,
+      isMovableConnectedTerminal: app.domains.connectionConstraints.isMovableConnectedTerminal,
+      closeGapDialogWindow: function() {
+        return app.ui != null && typeof app.ui.closeGapDialogWindow === "function" ? app.ui.closeGapDialogWindow() : null;
+      },
+      setSelectedCabinetGap: app.domains.cabinet.setSelectedCabinetGap,
       showStatus: app.showStatus,
       setCanvasStatus: app.setCanvasStatus,
-      findCabinetSegment: cabinet.findCabinetSegment,
-      extractCabinetModel: cabinet.extractCabinetModel
-    });
-    uiApi.closeGapDialogWindow = cabinetDialogs.closeGapDialogWindow;
-    uiApi.openInsertCabinetDialog = cabinetDialogs.openInsertCabinetDialog;
-    uiApi.openCabinetGapDialog = cabinetDialogs.openCabinetGapDialog;
-    uiApi.openInsertFrameDialog = function() {
-      return openInsertFrameDialog({
-        ctx: app.ctx,
-        cloneJson: utils.cloneJson,
-        normalizeFrameConfig: frame.normalizeFrameConfig,
-        findDrawingFrame: frame.findDrawingFrame,
-        getAllDrawingFrames: frame.getAllDrawingFrames,
-        createButton: utils.createButton,
-        getFrameGroupId: frame.getFrameGroupId,
-        generateFrameGroupId: helpers.generateFrameGroupId,
-        getMaxFramePageNumberInGroup: frame.getMaxFramePageNumberInGroup,
-        createDrawingFrameCell: frame.createDrawingFrameCell,
-        getRightmostFrameInGroup: frame.getRightmostFrameInGroup,
-        addTopLevelCell: frame.addTopLevelCell,
-        getLeftmostFrame: frame.getLeftmostFrame,
-        getBottommostFrame: frame.getBottommostFrame,
-        insertFrame: app.commands.insertFrame,
-        showStatus: app.showStatus,
-        setCanvasStatus: app.setCanvasStatus
-      });
+      getPortAbsolutePosition: app.domains.cabinet.getPortAbsolutePosition,
+      getPortMetaByConstraint: app.domains.connectionConstraints.getPortMetaByConstraint,
+      mapPortDirectionToConstraint: app.domains.connectionConstraints.mapPortDirectionToConstraint,
+      clearEdgePoints: app.domains.connectionConstraints.clearEdgePoints,
+      moveConnectedGroupToCabinetPort: app.domains.connectionConstraints.moveConnectedGroupToCabinetPort,
+      setConnectionConstraint: function(edge, root, source, constraint) {
+        app.domains.connectionConstraints.applyNativeConnectionConstraint(
+          edge,
+          root,
+          source,
+          constraint
+        );
+      }
     };
-    uiApi.openSvgExportDialog = function() {
-      return openSvgExportDialog({
-        ctx: app.ctx,
-        toInt: utils.toInt,
-        createButton: utils.createButton,
-        showStatus: app.showStatus
-      });
-    };
-    uiApi.openCreateFromLibraryDialog = function(preferredSymbolId) {
-      return openCreateFromLibraryDialog(
-        {
-          library,
-          trim: utils.trim,
-          getLibraryEntrySpec: library.getLibraryEntrySpec,
-          showStatus: app.showStatus,
-          flattenSchemaFields: spec.flattenSchemaFields,
-          normalizeSchemaType: spec.normalizeSchemaType,
-          toFloat: utils.toFloat,
-          setValueByPath: spec.setValueByPath,
-          buildInstanceSpec: spec.buildInstanceSpec,
-          createButton: utils.createButton,
-          insertIntoGraph: app.commands.insertIntoGraph
-        },
-        preferredSymbolId
-      );
-    };
-    uiApi.openTemplateBrowserDialog = function() {
-      return openTemplateBrowserDialog({
-        ctx: app.ctx,
-        library,
-        getLibraryEntrySpec: library.getLibraryEntrySpec,
-        showStatus: app.showStatus,
-        normalizePortLayout: spec.normalizePortLayout,
-        normalizeLabels: spec.normalizeLabels,
-        trim: utils.trim,
-        createButton: utils.createButton,
-        openEditorWithTemplate: function(template) {
-          return uiApi.openEditorWithTemplate(template);
-        },
-        openCreateFromLibraryDialog: function(preferredSymbolId) {
-          return uiApi.openCreateFromLibraryDialog(preferredSymbolId);
-        }
-      });
-    };
-    var templateEditorUi = createTemplateEditor({
-      ctx: app.ctx,
-      trim: utils.trim,
-      cloneJson: utils.cloneJson,
-      normalizePortLayout: spec.normalizePortLayout,
-      normalizeLabels: spec.normalizeLabels,
-      toSvgDataUri: spec.toSvgDataUri,
-      createButton: utils.createButton,
-      normalizePortMarker: spec.normalizePortMarker,
-      normalizePortDirection: spec.normalizePortDirection,
-      normalizePortIoMode: spec.normalizePortIoMode,
-      portEdgeSnapThresholdPx: constants.PORT_EDGE_SNAP_THRESHOLD_PX,
-      nextItemId: helpers.nextItemId,
-      normalizeLabelItem: spec.normalizeLabelItem,
-      validateSvg: app.utils.validateSvg,
-      extractSvgSize: app.utils.extractSvgSize,
-      scheduleEditorDraftSave: draftStore.scheduleEditorDraftSave,
-      clearDraftSaveTimer: draftStore.clearDraftSaveTimer,
-      loadEditorDraft: draftStore.loadEditorDraft,
-      clearEditorDraft: draftStore.clearEditorDraft,
-      generateSymbolId: helpers.generateSymbolId,
-      getDefaultSchemaFields: spec.getDefaultSchemaFields,
-      buildSchemaFromFields: spec.buildSchemaFromFields,
-      hasSchemaPath: spec.hasSchemaPath,
-      normalizeSchemaField: spec.normalizeSchemaField,
-      normalizeSchemaType: spec.normalizeSchemaType,
-      normalizeEnumOptions: spec.normalizeEnumOptions,
-      isValidFieldPath: spec.isValidFieldPath,
-      toInt: utils.toInt,
-      showStatus: app.showStatus,
-      normalizeSpec: spec.normalizeSpec,
-      normalizeVariantLayouts: spec.normalizeVariantLayouts,
-      flattenSchemaFields: spec.flattenSchemaFields,
-      isObject: utils.isObject,
-      addToLibrary: library.addToLibrary,
-      isTemplateNameTaken: library.isTemplateNameTaken,
-      loadStoredLibrary: library.loadStoredLibrary
-    });
-    uiApi.updateSelectedItem = templateEditorUi.updateSelectedItem;
-    uiApi.updatePreview = templateEditorUi.updatePreview;
-    uiApi.createWindow = templateEditorUi.createWindow;
-    uiApi.toggleWindow = templateEditorUi.toggleWindow;
-    uiApi.openEditorWithTemplate = templateEditorUi.openEditorWithTemplate;
-    uiApi.openEditInstanceDialog = function() {
-      return openEditInstanceDialog({
-        ctx: app.ctx,
-        findElectricalRoot: helpers.findElectricalRoot,
-        showStatus: app.showStatus,
-        extractSpec: symbol.extractSpec,
-        normalizePortLayout: spec.normalizePortLayout,
-        normalizeLabels: spec.normalizeLabels,
-        trim: utils.trim,
-        getValueByPath: spec.getValueByPath,
-        createButton: utils.createButton,
-        normalizePortMarker: spec.normalizePortMarker,
-        normalizePortDirection: spec.normalizePortDirection,
-        normalizePortIoMode: spec.normalizePortIoMode,
-        normalizeLabelAlign: spec.normalizeLabelAlign,
-        toSvgDataUri: spec.toSvgDataUri,
-        portEdgeSnapThresholdPx: constants.PORT_EDGE_SNAP_THRESHOLD_PX,
-        normalizePortPoint: spec.normalizePortPoint,
-        normalizeLabelItem: spec.normalizeLabelItem,
-        applyInstanceSpec: app.commands.applyInstanceSpec
-      });
-    };
-    var backendDialogs = createBackendDialogs({
-      ctx: app.ctx,
-      backend,
-      trim: utils.trim,
-      showStatus: app.showStatus,
-      createButton: utils.createButton,
-      isObject: utils.isObject,
-      toInt: utils.toInt
-    });
-    uiApi.openBackendSaveDialog = backendDialogs.openBackendSaveDialog;
-    uiApi.openBackendLoadDialog = backendDialogs.openBackendLoadDialog;
-    uiApi.openBackendRollbackDialog = backendDialogs.openBackendRollbackDialog;
-    return uiApi;
   }
-
-  // bootstrap/installUi.js
-  function installUi(app) {
-    app.ui = createUiRegistry(app);
-    return app.ui;
-  }
-
-  // runtime/portSwapMode.js
-  function createPortSwapMode(deps) {
+  function createPortSwapMode() {
+    var deps = arguments.length > 0 ? arguments[0] : buildPortSwapDeps();
     var ctx = deps.ctx;
     var graph = ctx.graph;
     var model = ctx.model;
@@ -9031,7 +8831,34 @@
   }
 
   // runtime/composeMode.js
-  function createComposeMode(deps) {
+  function buildComposeDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      trim: app.utils.trim,
+      clamp: app.utils.clamp,
+      padding: app.constants.INSTANCE_COMPOSE_ZONE_PADDING,
+      minWidth: app.constants.INSTANCE_COMPOSE_ZONE_MIN_WIDTH,
+      minHeight: app.constants.INSTANCE_COMPOSE_ZONE_MIN_HEIGHT,
+      showStatus: app.showStatus,
+      setCanvasStatus: app.setCanvasStatus,
+      closeGapDialogWindow: function() {
+        return app.ui != null && typeof app.ui.closeGapDialogWindow === "function" ? app.ui.closeGapDialogWindow() : null;
+      },
+      exitPortSwapMode: function(clearStatus) {
+        return app.runtime != null && typeof app.runtime.exitPortSwapMode === "function" ? app.runtime.exitPortSwapMode(clearStatus) : null;
+      },
+      isDrawingFrame: app.helpers.isDrawingFrame,
+      isCabinetSegment: app.helpers.isCabinetSegment,
+      isCabinetGap: app.helpers.isCabinetGap,
+      isPluginInternalCell: app.domains.snapshot.isPluginInternalCell,
+      isElectricalRoot: app.helpers.isElectricalRoot,
+      shouldExportGenericObject: app.domains.snapshot.shouldExportGenericObject,
+      findElectricalRoot: app.helpers.findElectricalRoot
+    };
+  }
+  function createComposeMode() {
+    var deps = arguments.length > 0 ? arguments[0] : buildComposeDeps();
     var ctx = deps.ctx;
     var graph = ctx.graph;
     var model = ctx.model;
@@ -9526,7 +9353,20 @@
   }
 
   // runtime/modelSync.js
-  function createModelSync(deps) {
+  function buildModelSyncDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      isObject: app.utils.isObject,
+      cloneJson: app.utils.cloneJson,
+      exportDiagramSnapshot: app.domains.snapshot.exportDiagramSnapshot,
+      computeSnapshotChanges: app.domains.snapshot.computeSnapshotChanges,
+      isElectricalRoot: app.helpers.isElectricalRoot,
+      refreshRoot: app.domains.symbol.refreshRoot
+    };
+  }
+  function createModelSync() {
+    var deps = arguments.length > 0 ? arguments[0] : buildModelSyncDeps();
     var ctx = deps.ctx;
     var model = ctx.model;
     var state = ctx.state;
@@ -9679,7 +9519,7 @@
     var ui = ctx.ui;
     var actions = app.actions;
     var helpers = app.helpers;
-    var runtimeBridge = app.runtimeBridge;
+    var runtimeApi = app.runtime;
     var graphIsCellDeletable = graph.isCellDeletable;
     var graphIsCellMovable = graph.isCellMovable;
     var graphIsCellSelectable = graph.isCellSelectable;
@@ -9694,19 +9534,19 @@
       return graphIsCellDeletable.apply(this, arguments);
     };
     graph.isCellMovable = function(cell) {
-      if (runtimeBridge.isBlockedComposeTarget(cell) || runtimeBridge.isLockedComposedChild(cell)) {
+      if (runtimeApi.isBlockedComposeTarget(cell) || runtimeApi.isLockedComposedChild(cell)) {
         return false;
       }
       return graphIsCellMovable.apply(this, arguments);
     };
     graph.isCellSelectable = function(cell) {
-      if (runtimeBridge.isBlockedComposeTarget(cell)) {
+      if (runtimeApi.isBlockedComposeTarget(cell)) {
         return false;
       }
       return graphIsCellSelectable.apply(this, arguments);
     };
     graph.selectCellForEvent = function(cell) {
-      if (runtimeBridge.isBlockedComposeTarget(cell)) {
+      if (runtimeApi.isBlockedComposeTarget(cell)) {
         return;
       }
       return graphSelectCellForEvent.apply(this, arguments);
@@ -9716,7 +9556,7 @@
       var filtered = [];
       var i;
       for (i = 0; i < result.length; i++) {
-        if (!runtimeBridge.isBlockedComposeTarget(result[i])) {
+        if (!runtimeApi.isBlockedComposeTarget(result[i])) {
           filtered.push(result[i]);
         }
       }
@@ -9762,16 +9602,16 @@
         session.dragging = false;
         session.startPoint = null;
         session.dragCandidates = [];
-        if (runtimeBridge.isBlockedComposeTarget(eventCell)) {
-          runtimeBridge.refreshInstanceComposeOverlay();
+        if (runtimeApi.isBlockedComposeTarget(eventCell)) {
+          runtimeApi.refreshInstanceComposeOverlay();
           return;
         }
-        session.dragCandidates = runtimeBridge.collectComposeDragCandidates(
+        session.dragCandidates = runtimeApi.collectComposeDragCandidates(
           session.root,
           eventCell
         );
         if (session.dragCandidates.length == 0) {
-          runtimeBridge.refreshInstanceComposeOverlay();
+          runtimeApi.refreshInstanceComposeOverlay();
           return;
         }
         session.pointerDown = true;
@@ -9791,7 +9631,7 @@
         dy = Math.abs(me.getGraphY() - session.startPoint.y);
         if (dx > 2 || dy > 2) {
           session.dragging = true;
-          runtimeBridge.refreshInstanceComposeOverlay();
+          runtimeApi.refreshInstanceComposeOverlay();
         }
       },
       mouseUp: function() {
@@ -9803,26 +9643,26 @@
         session.dragging = false;
         session.startPoint = null;
         session.dragCandidates = [];
-        runtimeBridge.refreshInstanceComposeOverlay();
+        runtimeApi.refreshInstanceComposeOverlay();
       }
     });
     mxEvent.addListener(
       graph.container,
       "scroll",
-      runtimeBridge.refreshInstanceComposeOverlay
+      runtimeApi.refreshInstanceComposeOverlay
     );
-    graph.view.addListener(mxEvent.SCALE, runtimeBridge.refreshInstanceComposeOverlay);
+    graph.view.addListener(mxEvent.SCALE, runtimeApi.refreshInstanceComposeOverlay);
     graph.view.addListener(
       mxEvent.SCALE_AND_TRANSLATE,
-      runtimeBridge.refreshInstanceComposeOverlay
+      runtimeApi.refreshInstanceComposeOverlay
     );
     graph.view.addListener(
       mxEvent.TRANSLATE,
-      runtimeBridge.refreshInstanceComposeOverlay
+      runtimeApi.refreshInstanceComposeOverlay
     );
     state.lastOperationSnapshot = app.domains.snapshot.exportDiagramSnapshot();
-    model.addListener(mxEvent.CHANGE, runtimeBridge.recordCanvasOperation);
-    model.addListener(mxEvent.CHANGE, runtimeBridge.handleModelChange);
+    model.addListener(mxEvent.CHANGE, runtimeApi.recordCanvasOperation);
+    model.addListener(mxEvent.CHANGE, runtimeApi.handleModelChange);
   }
 
   // ui/topActionBar.js
@@ -9855,96 +9695,342 @@
     ui.menubarContainer.appendChild(bar);
   }
 
-  // bootstrap/createRuntimeRegistry.js
-  function createRuntimeRegistry(app) {
-    var runtimeApi = {};
-    var portSwapMode = createPortSwapMode({
-      ctx: app.ctx,
-      trim: app.utils.trim,
-      cloneJson: app.utils.cloneJson,
-      parsePortLayout: app.domains.spec.parsePortLayout,
-      getAttr: app.utils.getAttr,
-      findCabinetSegments: app.domains.cabinet.findCabinetSegments,
-      findPortHostRoot: app.helpers.findPortHostRoot,
-      isCabinetSegment: app.helpers.isCabinetSegment,
-      isMovableConnectedTerminal: app.domains.connectionConstraints.isMovableConnectedTerminal,
-      closeGapDialogWindow: function() {
-        return app.callUi("closeGapDialogWindow");
-      },
-      setSelectedCabinetGap: app.domains.cabinet.setSelectedCabinetGap,
+  // bootstrap/createApp.js
+  function createDomains(app) {
+    var ctx = app.ctx;
+    var constants = app.constants;
+    var utils = app.utils;
+    var helpers = app.helpers;
+    var domains = {};
+    domains.spec = createSpecDomain({
+      trim: utils.trim,
+      isObject: utils.isObject,
+      cloneJson: utils.cloneJson,
+      validateSvg: app.utils.validateSvg,
+      generateSymbolId: helpers.generateSymbolId,
+      clamp: utils.clamp,
+      toInt: utils.toInt,
+      toFloat: utils.toFloat,
+      nextItemId: helpers.nextItemId,
+      normalizeMode: helpers.normalizeMode,
+      deepMerge: utils.deepMerge,
+      generateInstanceId: helpers.generateInstanceId
+    });
+    domains.symbol = createSymbolDomain({
+      model: ctx.model,
+      ROOT_TAG: constants.ROOT_TAG,
+      ROOT_TYPE: constants.ROOT_TYPE,
+      BODY_TAG: constants.BODY_TAG,
+      BODY_KIND: constants.BODY_KIND,
+      LABEL_TAG: constants.LABEL_TAG,
+      LABEL_KIND: constants.LABEL_KIND,
+      trim: utils.trim,
+      isObject: utils.isObject,
+      normalizeMode: helpers.normalizeMode,
+      normalizeSpec: domains.spec.normalizeSpec,
+      normalizePortLayout: domains.spec.normalizePortLayout,
+      normalizeLabels: domains.spec.normalizeLabels,
+      parsePortLayout: domains.spec.parsePortLayout,
+      getAttr: utils.getAttr,
+      createNode: utils.createNode,
+      createMetaCell: utils.createMetaCell,
+      cloneValue: utils.cloneValue,
+      toStyleImageUri: domains.spec.toStyleImageUri,
+      serializePortLayout: domains.spec.serializePortLayout,
+      buildPortLayout: domains.spec.buildPortLayout,
+      buildResolvedLabels: domains.spec.buildResolvedLabels
+    });
+    domains.frame = createFrameDomain({
+      graph: ctx.graph,
+      model: ctx.model,
+      state: ctx.state,
+      frameTag: constants.FRAME_TAG,
+      frameType: constants.FRAME_TYPE,
+      frameLabelTag: constants.FRAME_LABEL_TAG,
+      frameLabelKind: constants.FRAME_LABEL_KIND,
+      frameMarginRatio: constants.FRAME_MARGIN_RATIO,
+      defaultWidth: constants.FRAME_DEFAULT_WIDTH,
+      defaultHeight: constants.FRAME_DEFAULT_HEIGHT,
+      trim: utils.trim,
+      toInt: utils.toInt,
+      isObject: utils.isObject,
+      getAttr: utils.getAttr,
+      createNode: utils.createNode,
+      createMetaCell: utils.createMetaCell,
+      generateFrameId: helpers.generateFrameId,
+      isDrawingFrame: helpers.isDrawingFrame,
       showStatus: app.showStatus,
-      setCanvasStatus: app.setCanvasStatus,
-      getPortAbsolutePosition: app.domains.cabinet.getPortAbsolutePosition,
-      getPortMetaByConstraint: app.domains.connectionConstraints.getPortMetaByConstraint,
-      mapPortDirectionToConstraint: app.domains.connectionConstraints.mapPortDirectionToConstraint,
-      clearEdgePoints: app.domains.connectionConstraints.clearEdgePoints,
-      moveConnectedGroupToCabinetPort: app.domains.connectionConstraints.moveConnectedGroupToCabinetPort,
-      setConnectionConstraint: function(edge, root, source, constraint) {
-        app.domains.connectionConstraints.applyNativeConnectionConstraint(
-          edge,
-          root,
-          source,
-          constraint
-        );
+      setCanvasStatus: app.setCanvasStatus
+    });
+    domains.connectionConstraints = createConnectionConstraints({
+      ctx,
+      trim: utils.trim,
+      clamp: utils.clamp,
+      parsePortLayout: domains.spec.parsePortLayout,
+      getAttr: utils.getAttr,
+      buildPortLayout: domains.spec.buildPortLayout,
+      findPortHostRoot: helpers.findPortHostRoot,
+      normalizePortDirection: domains.spec.normalizePortDirection,
+      normalizePortIoMode: domains.spec.normalizePortIoMode,
+      isDrawingFrame: helpers.isDrawingFrame,
+      isCabinetSegment: helpers.isCabinetSegment,
+      isCabinetGap: helpers.isCabinetGap,
+      findDrawingFrame: domains.frame.findDrawingFrame,
+      getCellAbsoluteGeometry: function(cell) {
+        return domains.cabinet.getCellAbsoluteGeometry(cell);
+      },
+      getPortAbsolutePosition: function(root, port) {
+        return domains.cabinet.getPortAbsolutePosition(root, port);
       }
     });
+    domains.cabinet = createCabinetDomain({
+      model: ctx.model,
+      state: ctx.state,
+      cabinetTag: constants.CABINET_TAG,
+      cabinetType: constants.CABINET_TYPE,
+      cabinetBodyTag: constants.CABINET_BODY_TAG,
+      cabinetBodyKind: constants.CABINET_BODY_KIND,
+      cabinetGapTag: constants.CABINET_GAP_TAG,
+      cabinetGapType: constants.CABINET_GAP_TYPE,
+      cabinetGapKind: constants.CABINET_GAP_KIND,
+      frameLabelKind: constants.FRAME_LABEL_KIND,
+      frameContentRatio: constants.FRAME_CONTENT_RATIO,
+      frameMarginRatio: constants.FRAME_MARGIN_RATIO,
+      frameHorizontalGap: constants.FRAME_HORIZONTAL_GAP,
+      minPortFollowSpaceRatio: constants.CABINET_MIN_PORT_FOLLOW_SPACE_RATIO,
+      defaultWidth: constants.CABINET_DEFAULT_WIDTH,
+      defaultPortCount: constants.CABINET_DEFAULT_PORT_COUNT,
+      defaultX: constants.CABINET_DEFAULT_X,
+      tailPadding: constants.CABINET_TAIL_PADDING,
+      trim: utils.trim,
+      toInt: utils.toInt,
+      toFloat: utils.toFloat,
+      clamp: utils.clamp,
+      isObject: utils.isObject,
+      cloneJson: utils.cloneJson,
+      normalizePortPoint: domains.spec.normalizePortPoint,
+      generateLogicalCabinetId: helpers.generateLogicalCabinetId,
+      createNode: utils.createNode,
+      createMetaCell: utils.createMetaCell,
+      serializePortLayout: domains.spec.serializePortLayout,
+      getAttr: utils.getAttr,
+      isCabinetSegment: helpers.isCabinetSegment,
+      isCabinetGap: helpers.isCabinetGap,
+      getNormalizedFrameConfig: domains.frame.normalizeFrameConfig,
+      getAllDrawingFrames: domains.frame.getAllDrawingFrames,
+      getFrameConfig: domains.frame.getFrameConfig,
+      getFrameGroupId: domains.frame.getFrameGroupId,
+      getFramePageNumber: domains.frame.getFramePageNumber,
+      getMaxFramePageNumberInGroup: domains.frame.getMaxFramePageNumberInGroup,
+      getRightmostFrameInGroup: domains.frame.getRightmostFrameInGroup,
+      findFrameById: domains.frame.findFrameById,
+      findDrawingFrame: domains.frame.findDrawingFrame,
+      createDrawingFrameCell: domains.frame.createDrawingFrameCell,
+      addTopLevelCell: domains.frame.addTopLevelCell,
+      getEdgePortId: function(edge, root, source) {
+        return domains.snapshot.getEdgePortId(edge, root, source);
+      },
+      getPortMetaById: domains.connectionConstraints.getPortMetaById,
+      parsePortLayout: domains.spec.parsePortLayout,
+      isMovableConnectedTerminal: domains.connectionConstraints.isMovableConnectedTerminal,
+      moveCellToFrameByDelta: domains.connectionConstraints.moveCellToFrameByDelta,
+      setConnectionConstraint: function(edge, root, source, constraint) {
+        ctx.graph.setConnectionConstraint(edge, root, source, constraint);
+      }
+    });
+    domains.snapshot = createSnapshotDomain({
+      graph: ctx.graph,
+      model: ctx.model,
+      state: ctx.state,
+      ui: ctx.ui,
+      BODY_KIND: constants.BODY_KIND,
+      LABEL_KIND: constants.LABEL_KIND,
+      FRAME_LABEL_KIND: constants.FRAME_LABEL_KIND,
+      CABINET_BODY_KIND: constants.CABINET_BODY_KIND,
+      CABINET_GAP_KIND: constants.CABINET_GAP_KIND,
+      FRAME_MARGIN_RATIO: constants.FRAME_MARGIN_RATIO,
+      trim: utils.trim,
+      toInt: utils.toInt,
+      isObject: utils.isObject,
+      cloneJson: utils.cloneJson,
+      createNode: utils.createNode,
+      getAttr: utils.getAttr,
+      uniqueStrings: utils.uniqueStrings,
+      isCabinetGap: helpers.isCabinetGap,
+      isDrawingFrame: helpers.isDrawingFrame,
+      isCabinetSegment: helpers.isCabinetSegment,
+      isElectricalRoot: helpers.isElectricalRoot,
+      extractSpec: domains.symbol.extractSpec,
+      getFrameConfig: domains.frame.getFrameConfig,
+      getFramePageNumber: domains.frame.getFramePageNumber,
+      getFrameGroupId: domains.frame.getFrameGroupId,
+      findFrameById: domains.frame.findFrameById,
+      extractCabinetModel: domains.cabinet.extractCabinetModel,
+      findCabinetSegments: domains.cabinet.findCabinetSegments,
+      getPortMetaById: domains.connectionConstraints.getPortMetaById,
+      findDrawingFrame: domains.frame.findDrawingFrame,
+      findPortHostRoot: helpers.findPortHostRoot,
+      parsePortLayout: domains.spec.parsePortLayout,
+      getAllDrawingFrames: domains.frame.getAllDrawingFrames,
+      exitInstanceComposeMode: function(clearStatus) {
+        return app.runtime != null && typeof app.runtime.exitInstanceComposeMode === "function" ? app.runtime.exitInstanceComposeMode(clearStatus) : null;
+      },
+      closeGapDialogWindow: function() {
+        return app.ui != null && typeof app.ui.closeGapDialogWindow === "function" ? app.ui.closeGapDialogWindow() : null;
+      },
+      setSelectedCabinetGap: function(logicalCabinetId, gapIndex) {
+        return domains.cabinet.setSelectedCabinetGap(logicalCabinetId, gapIndex);
+      },
+      exitPortSwapMode: function(clearStatus) {
+        return app.runtime != null && typeof app.runtime.exitPortSwapMode === "function" ? app.runtime.exitPortSwapMode(clearStatus) : null;
+      },
+      createDrawingFrameCell: domains.frame.createDrawingFrameCell,
+      addTopLevelCell: domains.frame.addTopLevelCell,
+      relayoutCabinetByModel: domains.cabinet.relayoutCabinetByModel,
+      normalizeSpec: domains.spec.normalizeSpec,
+      buildSymbolCell: domains.symbol.buildSymbolCell,
+      resetPendingChangeRecords: helpers.resetPendingChangeRecords
+    });
+    return domains;
+  }
+  function createServices(app) {
+    var ctx = app.ctx;
+    var constants = app.constants;
+    var utils = app.utils;
+    var domains = app.domains;
+    var helpers = app.helpers;
+    return {
+      draftStore: createDraftStore({
+        state: ctx.state,
+        storageKey: constants.TEMPLATE_DRAFT_STORAGE_KEY,
+        trim: utils.trim,
+        cloneJson: utils.cloneJson
+      }),
+      libraryStore: createLibraryStore({
+        ui: ctx.ui,
+        graph: ctx.graph,
+        state: ctx.state,
+        libraryTitle: constants.LIBRARY_TITLE,
+        trim: utils.trim,
+        isObject: utils.isObject,
+        cloneJson: utils.cloneJson,
+        normalizeSpec: domains.spec.normalizeSpec,
+        isElectricalRoot: helpers.isElectricalRoot,
+        extractSpec: domains.symbol.extractSpec,
+        buildSymbolCell: domains.symbol.buildSymbolCell,
+        showStatus: app.showStatus
+      }),
+      backend: createBackendService({
+        state: ctx.state,
+        constants,
+        trim: utils.trim,
+        toInt: utils.toInt,
+        cloneJson: utils.cloneJson,
+        isObject: utils.isObject,
+        normalizeSnapshotGenericIds: domains.snapshot.normalizeSnapshotGenericIds,
+        exportDiagramSnapshot: domains.snapshot.exportDiagramSnapshot,
+        resetPendingChangeRecords: helpers.resetPendingChangeRecords,
+        computeSnapshotChanges: domains.snapshot.computeSnapshotChanges,
+        collectChangeObjectIds: domains.snapshot.collectChangeObjectIds,
+        uniqueStrings: utils.uniqueStrings,
+        showStatus: app.showStatus,
+        restoreDiagramSnapshot: domains.snapshot.restoreDiagramSnapshot
+      })
+    };
+  }
+  function createUi(app) {
+    var utils = app.utils;
+    var helpers = app.helpers;
+    var spec = app.domains.spec;
+    var symbol = app.domains.symbol;
+    var frame = app.domains.frame;
+    var cabinet = app.domains.cabinet;
+    var library = app.services.libraryStore;
+    var draftStore = app.services.draftStore;
+    var backend = app.services.backend;
+    var constants = app.constants;
+    var uiApi = {};
+    var cabinetDialogs = createCabinetDialogs();
+    uiApi.closeGapDialogWindow = cabinetDialogs.closeGapDialogWindow;
+    uiApi.openInsertCabinetDialog = cabinetDialogs.openInsertCabinetDialog;
+    uiApi.openCabinetGapDialog = cabinetDialogs.openCabinetGapDialog;
+    uiApi.openInsertFrameDialog = function() {
+      return openInsertFrameDialog();
+    };
+    uiApi.openSvgExportDialog = function() {
+      return openSvgExportDialog();
+    };
+    uiApi.openCreateFromLibraryDialog = function(preferredSymbolId) {
+      return openCreateFromLibraryDialog(
+        {
+          library,
+          trim: utils.trim,
+          getLibraryEntrySpec: library.getLibraryEntrySpec,
+          showStatus: app.showStatus,
+          flattenSchemaFields: spec.flattenSchemaFields,
+          normalizeSchemaType: spec.normalizeSchemaType,
+          toFloat: utils.toFloat,
+          setValueByPath: spec.setValueByPath,
+          buildInstanceSpec: spec.buildInstanceSpec,
+          createButton: utils.createButton,
+          insertIntoGraph: app.commands.insertIntoGraph
+        },
+        preferredSymbolId
+      );
+    };
+    uiApi.openTemplateBrowserDialog = function() {
+      return openTemplateBrowserDialog();
+    };
+    var templateEditorUi = createTemplateEditor();
+    uiApi.updateSelectedItem = templateEditorUi.updateSelectedItem;
+    uiApi.updatePreview = templateEditorUi.updatePreview;
+    uiApi.createWindow = templateEditorUi.createWindow;
+    uiApi.toggleWindow = templateEditorUi.toggleWindow;
+    uiApi.openEditorWithTemplate = templateEditorUi.openEditorWithTemplate;
+    uiApi.openEditInstanceDialog = function() {
+      return openEditInstanceDialog();
+    };
+    var backendDialogs = createBackendDialogs();
+    uiApi.openBackendSaveDialog = backendDialogs.openBackendSaveDialog;
+    uiApi.openBackendLoadDialog = backendDialogs.openBackendLoadDialog;
+    uiApi.openBackendRollbackDialog = backendDialogs.openBackendRollbackDialog;
+    return uiApi;
+  }
+  function createRuntime(app) {
+    var runtimeApi = {};
+    var portSwapMode = createPortSwapMode();
     runtimeApi.applyEdgePortConstraintMetadata = portSwapMode.applyEdgePortConstraintMetadata;
     runtimeApi.clearPortSwapOverlay = portSwapMode.clearPortSwapOverlay;
     runtimeApi.commitPortSwap = portSwapMode.commitPortSwap;
     runtimeApi.enterPortSwapMode = portSwapMode.enterPortSwapMode;
     runtimeApi.exitPortSwapMode = portSwapMode.exitPortSwapMode;
     runtimeApi.getNearestCabinetPortFromClick = portSwapMode.getNearestCabinetPortFromClick;
-    var composeMode = createComposeMode({
-      ctx: app.ctx,
-      trim: app.utils.trim,
-      clamp: app.utils.clamp,
-      padding: app.constants.INSTANCE_COMPOSE_ZONE_PADDING,
-      minWidth: app.constants.INSTANCE_COMPOSE_ZONE_MIN_WIDTH,
-      minHeight: app.constants.INSTANCE_COMPOSE_ZONE_MIN_HEIGHT,
-      showStatus: app.showStatus,
-      setCanvasStatus: app.setCanvasStatus,
-      closeGapDialogWindow: function() {
-        return app.callUi("closeGapDialogWindow");
-      },
-      exitPortSwapMode: function(clearStatus) {
-        return app.callRuntime("exitPortSwapMode", clearStatus);
-      },
-      isDrawingFrame: app.helpers.isDrawingFrame,
-      isCabinetSegment: app.helpers.isCabinetSegment,
-      isCabinetGap: app.helpers.isCabinetGap,
-      isPluginInternalCell: app.domains.snapshot.isPluginInternalCell,
-      isElectricalRoot: app.helpers.isElectricalRoot,
-      shouldExportGenericObject: app.domains.snapshot.shouldExportGenericObject,
-      findElectricalRoot: app.helpers.findElectricalRoot
-    });
+    var composeMode = createComposeMode();
     runtimeApi.collectComposeDragCandidates = composeMode.collectComposeDragCandidates;
     runtimeApi.enterInstanceComposeMode = composeMode.enterInstanceComposeMode;
     runtimeApi.exitInstanceComposeMode = composeMode.exitInstanceComposeMode;
     runtimeApi.isBlockedComposeTarget = composeMode.isBlockedComposeTarget;
     runtimeApi.isLockedComposedChild = composeMode.isLockedComposedChild;
     runtimeApi.refreshInstanceComposeOverlay = composeMode.refreshInstanceComposeOverlay;
-    var modelSync = createModelSync({
-      ctx: app.ctx,
-      isObject: app.utils.isObject,
-      cloneJson: app.utils.cloneJson,
-      exportDiagramSnapshot: app.domains.snapshot.exportDiagramSnapshot,
-      computeSnapshotChanges: app.domains.snapshot.computeSnapshotChanges,
-      isElectricalRoot: app.helpers.isElectricalRoot,
-      refreshRoot: app.domains.symbol.refreshRoot
-    });
+    var modelSync = createModelSync();
     runtimeApi.recordCanvasOperation = modelSync.recordCanvasOperation;
     runtimeApi.handleModelChange = modelSync.handleModelChange;
     function activateRuntime() {
       portSwapMode.installGraphClickBehavior({
         isCabinetGap: app.helpers.isCabinetGap,
         openCabinetGapDialog: function() {
-          var args = ["openCabinetGapDialog"].concat(
+          var currentApp2 = getApp();
+          if (currentApp2.ui == null || typeof currentApp2.ui.openCabinetGapDialog !== "function") {
+            return null;
+          }
+          return currentApp2.ui.openCabinetGapDialog.apply(
+            null,
             Array.prototype.slice.call(arguments)
           );
-          return app.callUi.apply(null, args);
         },
         closeGapDialogWindow: function() {
-          return app.callUi("closeGapDialogWindow");
+          var currentApp2 = getApp();
+          return currentApp2.ui != null && typeof currentApp2.ui.closeGapDialogWindow === "function" ? currentApp2.ui.closeGapDialogWindow() : null;
         },
         setSelectedCabinetGap: app.domains.cabinet.setSelectedCabinetGap
       });
@@ -9978,22 +10064,80 @@
       runtimeApi
     };
   }
-
-  // bootstrap/installRuntime.js
-  function installRuntime(app) {
-    var runtime = createRuntimeRegistry(app);
+  function createApp(ctx) {
+    var constants = ctx.constants;
+    var app = {
+      ctx,
+      constants,
+      appContext: createAppContext(ctx),
+      graphApi: createGraphApi(ctx),
+      runtime: null,
+      ui: null
+    };
+    app.utils = {
+      clamp,
+      cloneJson,
+      createBaseUtils,
+      createButton: createPluginButton,
+      createMetaCell,
+      createNode,
+      createXmlUtils,
+      deepMerge,
+      extractSvgSize: function(svg) {
+        return extractSvgSize(svg, toFloat, trim);
+      },
+      generateUuid,
+      getAttr,
+      isObject,
+      normalizeSvg: function(svg) {
+        return validateSvg(svg, trim);
+      },
+      stripFileExtension,
+      toFloat,
+      toInt,
+      toSlug,
+      trim,
+      uniqueStrings,
+      cloneValue: function(node) {
+        return cloneValue(node, constants.ROOT_TAG);
+      },
+      validateSvg: function(svg) {
+        return validateSvg(svg, trim);
+      }
+    };
+    app.helpers = createRuntimeHelpers({
+      ctx,
+      constants,
+      trim,
+      cloneJson,
+      getAttr,
+      toSlug,
+      stripFileExtension,
+      generateUuid,
+      shouldExportGenericObject: function(cell) {
+        return app.domains != null && app.domains.snapshot != null && typeof app.domains.snapshot.shouldExportGenericObject === "function" && app.domains.snapshot.shouldExportGenericObject(cell);
+      }
+    });
+    app.showStatus = app.helpers.showStatus;
+    app.setCanvasStatus = app.helpers.setCanvasStatus;
+    setApp(app);
+    app.selection = selectionApi;
+    app.commands = commandApi;
+    app.actions = createActionApi();
+    app.domains = createDomains(app);
+    app.services = createServices(app);
+    app.ui = createUi(app);
+    var runtime = createRuntime(app);
     app.runtime = runtime.runtimeApi;
     app.activateRuntime = runtime.activateRuntime;
-    return app.runtime;
+    return app;
   }
 
   // bootstrap/installElectricalSymbols.js
   function installElectricalSymbols(ctx) {
     var app = createApp(ctx);
+    setApp(app);
     app.services.backend.loadBackendSession();
-    installUi(app);
-    installRuntime(app);
-    wireApp(app);
     app.activateRuntime();
   }
 

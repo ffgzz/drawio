@@ -3,7 +3,44 @@
  * 负责绿色组合区域 overlay、拖拽候选筛选和最终挂接到 root 的过程。
  */
 // 组合模式本质上是一个短生命周期的画布交互会话。
-export function createComposeMode(deps) {
+import { getApp } from "../core/appRuntime.js";
+
+function buildComposeDeps() {
+  var app = getApp();
+
+  return {
+    ctx: app.ctx,
+    trim: app.utils.trim,
+    clamp: app.utils.clamp,
+    padding: app.constants.INSTANCE_COMPOSE_ZONE_PADDING,
+    minWidth: app.constants.INSTANCE_COMPOSE_ZONE_MIN_WIDTH,
+    minHeight: app.constants.INSTANCE_COMPOSE_ZONE_MIN_HEIGHT,
+    showStatus: app.showStatus,
+    setCanvasStatus: app.setCanvasStatus,
+    closeGapDialogWindow: function () {
+      return app.ui != null &&
+        typeof app.ui.closeGapDialogWindow === "function"
+        ? app.ui.closeGapDialogWindow()
+        : null;
+    },
+    exitPortSwapMode: function (clearStatus) {
+      return app.runtime != null &&
+        typeof app.runtime.exitPortSwapMode === "function"
+        ? app.runtime.exitPortSwapMode(clearStatus)
+        : null;
+    },
+    isDrawingFrame: app.helpers.isDrawingFrame,
+    isCabinetSegment: app.helpers.isCabinetSegment,
+    isCabinetGap: app.helpers.isCabinetGap,
+    isPluginInternalCell: app.domains.snapshot.isPluginInternalCell,
+    isElectricalRoot: app.helpers.isElectricalRoot,
+    shouldExportGenericObject: app.domains.snapshot.shouldExportGenericObject,
+    findElectricalRoot: app.helpers.findElectricalRoot,
+  };
+}
+
+export function createComposeMode() {
+  var deps = arguments.length > 0 ? arguments[0] : buildComposeDeps();
   var ctx = deps.ctx;
   var graph = ctx.graph;
   var model = ctx.model;

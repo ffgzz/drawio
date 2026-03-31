@@ -7,9 +7,36 @@ import {
   renderInteractivePreviewSurface,
   snapPortPointToEdge,
 } from "./shared/previewSurface.js";
+import { getApp } from "../core/appRuntime.js";
 
 // 实例编辑器只作用于当前选中的电气图元实例。
-export function openEditInstanceDialog(deps) {
+function buildInstanceEditorDeps() {
+  var app = getApp();
+
+  return {
+    ctx: app.ctx,
+    findElectricalRoot: app.helpers.findElectricalRoot,
+    showStatus: app.showStatus,
+    extractSpec: app.domains.symbol.extractSpec,
+    normalizePortLayout: app.domains.spec.normalizePortLayout,
+    normalizeLabels: app.domains.spec.normalizeLabels,
+    trim: app.utils.trim,
+    getValueByPath: app.domains.spec.getValueByPath,
+    createButton: app.utils.createButton,
+    normalizePortMarker: app.domains.spec.normalizePortMarker,
+    normalizePortDirection: app.domains.spec.normalizePortDirection,
+    normalizePortIoMode: app.domains.spec.normalizePortIoMode,
+    normalizeLabelAlign: app.domains.spec.normalizeLabelAlign,
+    toSvgDataUri: app.domains.spec.toSvgDataUri,
+    portEdgeSnapThresholdPx: app.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
+    normalizePortPoint: app.domains.spec.normalizePortPoint,
+    normalizeLabelItem: app.domains.spec.normalizeLabelItem,
+    applyInstanceSpec: app.commands.applyInstanceSpec,
+  };
+}
+
+export function openEditInstanceDialog() {
+  var deps = arguments.length > 0 ? arguments[0] : buildInstanceEditorDeps();
   var ctx = deps.ctx;
   var graph = ctx.graph;
   var state = ctx.state;

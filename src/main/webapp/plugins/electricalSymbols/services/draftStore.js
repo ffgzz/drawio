@@ -3,7 +3,8 @@
  * 负责模板编辑器草稿的保存、节流、恢复和清理。
  */
 // 这里故意只处理草稿，不掺入模板图库逻辑。
-export function createDraftStore(deps) {
+export function createDraftStore() {
+  var deps = arguments.length > 0 ? arguments[0] : {};
   var state = deps.state;
   var storageKey = deps.storageKey;
   var trim = deps.trim;

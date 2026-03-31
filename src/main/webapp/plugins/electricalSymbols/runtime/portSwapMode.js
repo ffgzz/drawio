@@ -3,7 +3,53 @@
  * 负责从当前选中边推导换挂点上下文、渲染端口 overlay 并提交切换。
  */
 // 这个模式和配电柜 gap 点击共用部分点击监听，因此集中放在一个 runtime 模块里。
-export function createPortSwapMode(deps) {
+import { getApp } from "../core/appRuntime.js";
+
+function buildPortSwapDeps() {
+  var app = getApp();
+  var ctx = app.ctx;
+
+  return {
+    ctx,
+    trim: app.utils.trim,
+    cloneJson: app.utils.cloneJson,
+    parsePortLayout: app.domains.spec.parsePortLayout,
+    getAttr: app.utils.getAttr,
+    findCabinetSegments: app.domains.cabinet.findCabinetSegments,
+    findPortHostRoot: app.helpers.findPortHostRoot,
+    isCabinetSegment: app.helpers.isCabinetSegment,
+    isMovableConnectedTerminal:
+      app.domains.connectionConstraints.isMovableConnectedTerminal,
+    closeGapDialogWindow: function () {
+      return app.ui != null &&
+        typeof app.ui.closeGapDialogWindow === "function"
+        ? app.ui.closeGapDialogWindow()
+        : null;
+    },
+    setSelectedCabinetGap: app.domains.cabinet.setSelectedCabinetGap,
+    showStatus: app.showStatus,
+    setCanvasStatus: app.setCanvasStatus,
+    getPortAbsolutePosition: app.domains.cabinet.getPortAbsolutePosition,
+    getPortMetaByConstraint:
+      app.domains.connectionConstraints.getPortMetaByConstraint,
+    mapPortDirectionToConstraint:
+      app.domains.connectionConstraints.mapPortDirectionToConstraint,
+    clearEdgePoints: app.domains.connectionConstraints.clearEdgePoints,
+    moveConnectedGroupToCabinetPort:
+      app.domains.connectionConstraints.moveConnectedGroupToCabinetPort,
+    setConnectionConstraint: function (edge, root, source, constraint) {
+      app.domains.connectionConstraints.applyNativeConnectionConstraint(
+        edge,
+        root,
+        source,
+        constraint,
+      );
+    },
+  };
+}
+
+export function createPortSwapMode() {
+  var deps = arguments.length > 0 ? arguments[0] : buildPortSwapDeps();
   var ctx = deps.ctx;
   var graph = ctx.graph;
   var model = ctx.model;

@@ -76,7 +76,7 @@ export function installCanvasFeatures(app) {
   var ui = ctx.ui;
   var actions = app.actions;
   var helpers = app.helpers;
-  var runtimeBridge = app.runtimeBridge;
+  var runtimeApi = app.runtime;
   var graphIsCellDeletable = graph.isCellDeletable;
   var graphIsCellMovable = graph.isCellMovable;
   var graphIsCellSelectable = graph.isCellSelectable;
@@ -95,8 +95,8 @@ export function installCanvasFeatures(app) {
 
   graph.isCellMovable = function (cell) {
     if (
-      runtimeBridge.isBlockedComposeTarget(cell) ||
-      runtimeBridge.isLockedComposedChild(cell)
+      runtimeApi.isBlockedComposeTarget(cell) ||
+      runtimeApi.isLockedComposedChild(cell)
     ) {
       return false;
     }
@@ -105,7 +105,7 @@ export function installCanvasFeatures(app) {
   };
 
   graph.isCellSelectable = function (cell) {
-    if (runtimeBridge.isBlockedComposeTarget(cell)) {
+    if (runtimeApi.isBlockedComposeTarget(cell)) {
       return false;
     }
 
@@ -113,7 +113,7 @@ export function installCanvasFeatures(app) {
   };
 
   graph.selectCellForEvent = function (cell) {
-    if (runtimeBridge.isBlockedComposeTarget(cell)) {
+    if (runtimeApi.isBlockedComposeTarget(cell)) {
       return;
     }
 
@@ -126,7 +126,7 @@ export function installCanvasFeatures(app) {
     var i;
 
     for (i = 0; i < result.length; i++) {
-      if (!runtimeBridge.isBlockedComposeTarget(result[i])) {
+      if (!runtimeApi.isBlockedComposeTarget(result[i])) {
         filtered.push(result[i]);
       }
     }
@@ -179,18 +179,18 @@ export function installCanvasFeatures(app) {
       session.startPoint = null;
       session.dragCandidates = [];
 
-      if (runtimeBridge.isBlockedComposeTarget(eventCell)) {
-        runtimeBridge.refreshInstanceComposeOverlay();
+      if (runtimeApi.isBlockedComposeTarget(eventCell)) {
+        runtimeApi.refreshInstanceComposeOverlay();
         return;
       }
 
-      session.dragCandidates = runtimeBridge.collectComposeDragCandidates(
+      session.dragCandidates = runtimeApi.collectComposeDragCandidates(
         session.root,
         eventCell,
       );
 
       if (session.dragCandidates.length == 0) {
-        runtimeBridge.refreshInstanceComposeOverlay();
+        runtimeApi.refreshInstanceComposeOverlay();
         return;
       }
 
@@ -219,7 +219,7 @@ export function installCanvasFeatures(app) {
 
       if (dx > 2 || dy > 2) {
         session.dragging = true;
-        runtimeBridge.refreshInstanceComposeOverlay();
+        runtimeApi.refreshInstanceComposeOverlay();
       }
     },
     mouseUp: function () {
@@ -233,25 +233,25 @@ export function installCanvasFeatures(app) {
       session.dragging = false;
       session.startPoint = null;
       session.dragCandidates = [];
-      runtimeBridge.refreshInstanceComposeOverlay();
+      runtimeApi.refreshInstanceComposeOverlay();
     },
   });
   mxEvent.addListener(
     graph.container,
     "scroll",
-    runtimeBridge.refreshInstanceComposeOverlay,
+    runtimeApi.refreshInstanceComposeOverlay,
   );
-  graph.view.addListener(mxEvent.SCALE, runtimeBridge.refreshInstanceComposeOverlay);
+  graph.view.addListener(mxEvent.SCALE, runtimeApi.refreshInstanceComposeOverlay);
   graph.view.addListener(
     mxEvent.SCALE_AND_TRANSLATE,
-    runtimeBridge.refreshInstanceComposeOverlay,
+    runtimeApi.refreshInstanceComposeOverlay,
   );
   graph.view.addListener(
     mxEvent.TRANSLATE,
-    runtimeBridge.refreshInstanceComposeOverlay,
+    runtimeApi.refreshInstanceComposeOverlay,
   );
 
   state.lastOperationSnapshot = app.domains.snapshot.exportDiagramSnapshot();
-  model.addListener(mxEvent.CHANGE, runtimeBridge.recordCanvasOperation);
-  model.addListener(mxEvent.CHANGE, runtimeBridge.handleModelChange);
+  model.addListener(mxEvent.CHANGE, runtimeApi.recordCanvasOperation);
+  model.addListener(mxEvent.CHANGE, runtimeApi.handleModelChange);
 }

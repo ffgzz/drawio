@@ -1,31 +1,95 @@
-import { createSnapshotCore } from "./snapshotCore.js";
+import {
+  computeSnapshotChanges,
+  deserializeCellValue,
+  deserializeGeometry,
+  getCellStableId,
+  getGenericObjectId,
+  normalizeGenericStableId,
+  normalizeSnapshotGenericIds,
+  serializeCellValue,
+  serializeGeometry,
+  toNumber,
+} from "./snapshotCore.js";
+import { getApp } from "../core/appRuntime.js";
 
 /**
  * 快照域模型。
  * 负责图纸导出、恢复、对象标识归一化和快照差异比较。
  */
 // 这个模块支撑后端保存、加载、回滚和本地操作记录。
-export function createSnapshotDomain(deps) {
+function buildSnapshotDeps() {
+  var app = getApp();
+  var graphApi = app.graphApi;
+
+  return {
+    graph: graphApi.graph,
+    model: graphApi.model,
+    state: graphApi.state,
+    ui: graphApi.ui,
+    BODY_KIND: app.constants.BODY_KIND,
+    LABEL_KIND: app.constants.LABEL_KIND,
+    FRAME_LABEL_KIND: app.constants.FRAME_LABEL_KIND,
+    CABINET_BODY_KIND: app.constants.CABINET_BODY_KIND,
+    CABINET_GAP_KIND: app.constants.CABINET_GAP_KIND,
+    FRAME_MARGIN_RATIO: app.constants.FRAME_MARGIN_RATIO,
+    trim: app.utils.trim,
+    toInt: app.utils.toInt,
+    isObject: app.utils.isObject,
+    cloneJson: app.utils.cloneJson,
+    createNode: app.utils.createNode,
+    getAttr: app.utils.getAttr,
+    uniqueStrings: app.utils.uniqueStrings,
+    isCabinetGap: app.helpers.isCabinetGap,
+    isDrawingFrame: app.helpers.isDrawingFrame,
+    isCabinetSegment: app.helpers.isCabinetSegment,
+    isElectricalRoot: app.helpers.isElectricalRoot,
+    extractSpec: app.domains.symbol.extractSpec,
+    getFrameConfig: app.domains.frame.getFrameConfig,
+    getFramePageNumber: app.domains.frame.getFramePageNumber,
+    getFrameGroupId: app.domains.frame.getFrameGroupId,
+    findFrameById: app.domains.frame.findFrameById,
+    extractCabinetModel: app.domains.cabinet.extractCabinetModel,
+    findCabinetSegments: app.domains.cabinet.findCabinetSegments,
+    getPortMetaById: app.domains.connectionConstraints.getPortMetaById,
+    findDrawingFrame: app.domains.frame.findDrawingFrame,
+    findPortHostRoot: app.helpers.findPortHostRoot,
+    parsePortLayout: app.domains.spec.parsePortLayout,
+    getAllDrawingFrames: app.domains.frame.getAllDrawingFrames,
+    exitInstanceComposeMode: function (clearStatus) {
+      return app.runtime != null &&
+        typeof app.runtime.exitInstanceComposeMode === "function"
+        ? app.runtime.exitInstanceComposeMode(clearStatus)
+        : null;
+    },
+    closeGapDialogWindow: function () {
+      return app.ui != null && typeof app.ui.closeGapDialogWindow === "function"
+        ? app.ui.closeGapDialogWindow()
+        : null;
+    },
+    setSelectedCabinetGap: function (logicalCabinetId, gapIndex) {
+      return app.domains.cabinet.setSelectedCabinetGap(logicalCabinetId, gapIndex);
+    },
+    exitPortSwapMode: function (clearStatus) {
+      return app.runtime != null &&
+        typeof app.runtime.exitPortSwapMode === "function"
+        ? app.runtime.exitPortSwapMode(clearStatus)
+        : null;
+    },
+    createDrawingFrameCell: app.domains.frame.createDrawingFrameCell,
+    addTopLevelCell: app.domains.frame.addTopLevelCell,
+    relayoutCabinetByModel: app.domains.cabinet.relayoutCabinetByModel,
+    normalizeSpec: app.domains.spec.normalizeSpec,
+    buildSymbolCell: app.domains.symbol.buildSymbolCell,
+    resetPendingChangeRecords: app.helpers.resetPendingChangeRecords,
+  };
+}
+
+export function createSnapshotDomain() {
+  var deps = arguments.length > 0 ? arguments[0] : buildSnapshotDeps();
   var graph = deps.graph;
   var model = deps.model;
   var state = deps.state;
   var ui = deps.ui;
-  var core = createSnapshotCore({
-    trim: deps.trim,
-    isObject: deps.isObject,
-    cloneJson: deps.cloneJson,
-    createNode: deps.createNode,
-  });
-  var getCellStableId = core.getCellStableId;
-  var normalizeGenericStableId = core.normalizeGenericStableId;
-  var getGenericObjectId = core.getGenericObjectId;
-  var normalizeSnapshotGenericIds = core.normalizeSnapshotGenericIds;
-  var serializeCellValue = core.serializeCellValue;
-  var deserializeCellValue = core.deserializeCellValue;
-  var toNumber = core.toNumber;
-  var serializeGeometry = core.serializeGeometry;
-  var deserializeGeometry = core.deserializeGeometry;
-  var computeSnapshotChanges = core.computeSnapshotChanges;
 
   function belongsToCurrentDefaultParent(cell) {
     var parent = cell != null ? model.getParent(cell) : null;

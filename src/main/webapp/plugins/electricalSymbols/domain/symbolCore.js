@@ -2,7 +2,22 @@
  * 电气图元纯规则子模块。
  * 负责 root/body/label 的样式和值元数据拼装，不直接操作 graph/model。
  */
-export function createSymbolCore(deps) {
+import { getApp } from "../core/appRuntime.js";
+
+function buildSymbolCoreDeps() {
+  var app = getApp();
+
+  return {
+    toStyleImageUri: app.domains.spec.toStyleImageUri,
+    ROOT_TYPE: app.constants.ROOT_TYPE,
+    trim: app.utils.trim,
+    serializePortLayout: app.domains.spec.serializePortLayout,
+    normalizeLabels: app.domains.spec.normalizeLabels,
+  };
+}
+
+export function createSymbolCore() {
+  var deps = arguments.length > 0 ? arguments[0] : buildSymbolCoreDeps();
   function makeRootStyle() {
     return (
       "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;" +

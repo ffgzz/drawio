@@ -2,24 +2,61 @@
  * 规格数据域模型。
  * 负责 schema、端口、标签、变体、实例数据这些“纯数据结构”的归一化与构造。
  */
-import { createSpecSchemaModule } from "./specSchema.js";
-import { createSpecPortsModule } from "./specPorts.js";
-import { createSpecLabelsModule } from "./specLabels.js";
+import {
+  buildEmptyValueFromSchema,
+  buildSchemaFromFields,
+  flattenSchemaFields,
+  getDefaultSchemaFields,
+  getValueByPath,
+  hasSchemaPath,
+  isSchemaLeafDescriptor,
+  isValidFieldPath,
+  normalizeEnumOptions,
+  normalizeSchemaField,
+  normalizeSchemaType,
+  setValueByPath,
+} from "./specSchema.js";
+import {
+  buildPortLayout,
+  normalizePortDirection,
+  normalizePortIoMode,
+  normalizePortLayout,
+  normalizePortMarker,
+  normalizePortPoint,
+  parsePortLayout,
+  serializePortLayout,
+} from "./specPorts.js";
+import {
+  buildResolvedLabels,
+  normalizeLabelAlign,
+  normalizeLabelItem,
+  normalizeLabels,
+} from "./specLabels.js";
+import { getApp } from "../core/appRuntime.js";
 
 // 这一层尽量保持纯函数，便于后续继续拆测试。
-export function createSpecDomain(deps) {
+function buildSpecDeps() {
+  var app = getApp();
+
+  return {
+    trim: app.utils.trim,
+    isObject: app.utils.isObject,
+    cloneJson: app.utils.cloneJson,
+    validateSvg: app.utils.validateSvg,
+    generateSymbolId: app.helpers.generateSymbolId,
+    clamp: app.utils.clamp,
+    toInt: app.utils.toInt,
+    toFloat: app.utils.toFloat,
+    nextItemId: app.helpers.nextItemId,
+    normalizeMode: app.helpers.normalizeMode,
+    deepMerge: app.utils.deepMerge,
+    generateInstanceId: app.helpers.generateInstanceId,
+  };
+}
+
+export function createSpecDomain() {
+  var deps = arguments.length > 0 ? arguments[0] : buildSpecDeps();
   var trim = deps.trim;
-  var schemaModule = createSpecSchemaModule(deps);
-  var portsModule = createSpecPortsModule(deps);
-  var labelsModule = createSpecLabelsModule({
-    trim,
-    clamp: deps.clamp,
-    cloneJson: deps.cloneJson,
-    getValueByPath: schemaModule.getValueByPath,
-    isObject: deps.isObject,
-    toFloat: deps.toFloat,
-    toInt: deps.toInt,
-  });
 
   function getVariantLayout(spec, variantKey) {
     var layouts = normalizeVariantLayouts(spec.variantLayouts);
@@ -27,20 +64,20 @@ export function createSpecDomain(deps) {
 
     if (key.length > 0 && layouts[key] != null) {
       return {
-        ports: portsModule.normalizePortLayout(layouts[key].ports),
-        labels: labelsModule.normalizeLabels(layouts[key].labels),
+        ports: normalizePortLayout(layouts[key].ports),
+        labels: normalizeLabels(layouts[key].labels),
       };
     }
 
     return {
-      ports: portsModule.normalizePortLayout(spec.ports),
-      labels: labelsModule.normalizeLabels(spec.labels),
+      ports: normalizePortLayout(spec.ports),
+      labels: normalizeLabels(spec.labels),
     };
   }
 
   function getActiveVariantKey(spec) {
     var field = trim(spec.variantField || "");
-    var value = trim(schemaModule.getValueByPath(spec.data, field));
+    var value = trim(getValueByPath(spec.data, field));
 
     if (value.length == 0 && field == "mode") {
       value = trim(spec.device.mode);
@@ -79,8 +116,8 @@ export function createSpecDomain(deps) {
       if (raw.hasOwnProperty(key) && trim(key).length > 0) {
         var entry = deps.isObject(raw[key]) ? raw[key] : {};
         result[trim(key)] = {
-          ports: portsModule.normalizePortLayout(entry.ports),
-          labels: labelsModule.normalizeLabels(entry.labels),
+          ports: normalizePortLayout(entry.ports),
+          labels: normalizeLabels(entry.labels),
         };
       }
     }
@@ -123,8 +160,8 @@ export function createSpecDomain(deps) {
         mode: deps.normalizeMode(device.mode),
         params,
       },
-      ports: portsModule.normalizePortLayout(ports),
-      labels: labelsModule.normalizeLabels(raw.labels),
+      ports: normalizePortLayout(ports),
+      labels: normalizeLabels(raw.labels),
       schema,
       data,
       variantField,
@@ -171,28 +208,24 @@ export function createSpecDomain(deps) {
   }
 
   function buildInstanceSpec(instanceData, template, sizeOverride) {
-    template =
+      template =
       template != null
         ? normalizeSpec(deps.cloneJson(template))
         : createEmptyTemplateSpec();
     var mergedData = deps.deepMerge(
-      schemaModule.buildEmptyValueFromSchema(template.schema),
+      buildEmptyValueFromSchema(template.schema),
       instanceData,
     );
     var spec = deps.cloneJson(template);
     var nameValue =
-      schemaModule.getValueByPath(mergedData, "name") ||
-      schemaModule.getValueByPath(mergedData, "device.name");
+      getValueByPath(mergedData, "name") || getValueByPath(mergedData, "device.name");
     var codeValue =
-      schemaModule.getValueByPath(mergedData, "code") ||
-      schemaModule.getValueByPath(mergedData, "device.code");
+      getValueByPath(mergedData, "code") || getValueByPath(mergedData, "device.code");
     var powerValue =
-      schemaModule.getValueByPath(mergedData, "power") ||
-      schemaModule.getValueByPath(mergedData, "device.power");
+      getValueByPath(mergedData, "power") || getValueByPath(mergedData, "device.power");
     var modeValue =
-      schemaModule.getValueByPath(mergedData, "mode") ||
-      schemaModule.getValueByPath(mergedData, "device.mode");
-    var titleValue = schemaModule.getValueByPath(mergedData, "title");
+      getValueByPath(mergedData, "mode") || getValueByPath(mergedData, "device.mode");
+    var titleValue = getValueByPath(mergedData, "title");
     var variantKey;
     var layout;
 
@@ -223,43 +256,53 @@ export function createSpecDomain(deps) {
     variantKey = getActiveVariantKey(spec);
     layout = getVariantLayout(template, variantKey);
     spec.ports = layout.ports;
-    spec.labels = labelsModule.buildResolvedLabels(layout.labels, mergedData);
+    spec.labels = buildResolvedLabels(layout.labels, mergedData, getValueByPath);
 
     return normalizeSpec(spec);
   }
 
   return {
-    buildEmptyValueFromSchema: schemaModule.buildEmptyValueFromSchema,
+    buildEmptyValueFromSchema,
     buildInstanceSpec,
-    buildPortLayout: portsModule.buildPortLayout,
-    buildResolvedLabels: labelsModule.buildResolvedLabels,
-    buildSchemaFromFields: schemaModule.buildSchemaFromFields,
+    buildPortLayout,
+    buildResolvedLabels: function (labels, instance) {
+      return buildResolvedLabels(labels, instance, getValueByPath);
+    },
+    buildSchemaFromFields: function (fields) {
+      return buildSchemaFromFields(fields, deps.nextItemId);
+    },
     createEmptyTemplateSpec,
-    flattenSchemaFields: schemaModule.flattenSchemaFields,
+    flattenSchemaFields: function (schema, prefix, result) {
+      return flattenSchemaFields(schema, prefix, result, deps.nextItemId);
+    },
     getActiveSvg,
     getActiveVariantKey,
-    getDefaultSchemaFields: schemaModule.getDefaultSchemaFields,
-    getValueByPath: schemaModule.getValueByPath,
+    getDefaultSchemaFields: function () {
+      return getDefaultSchemaFields(deps.nextItemId);
+    },
+    getValueByPath,
     getVariantLayout,
-    hasSchemaPath: schemaModule.hasSchemaPath,
-    isSchemaLeafDescriptor: schemaModule.isSchemaLeafDescriptor,
-    isValidFieldPath: schemaModule.isValidFieldPath,
-    normalizeEnumOptions: schemaModule.normalizeEnumOptions,
-    normalizeLabelAlign: labelsModule.normalizeLabelAlign,
-    normalizeLabelItem: labelsModule.normalizeLabelItem,
-    normalizeLabels: labelsModule.normalizeLabels,
-    normalizePortDirection: portsModule.normalizePortDirection,
-    normalizePortIoMode: portsModule.normalizePortIoMode,
-    normalizePortLayout: portsModule.normalizePortLayout,
-    normalizePortMarker: portsModule.normalizePortMarker,
-    normalizePortPoint: portsModule.normalizePortPoint,
-    normalizeSchemaField: schemaModule.normalizeSchemaField,
-    normalizeSchemaType: schemaModule.normalizeSchemaType,
+    hasSchemaPath,
+    isSchemaLeafDescriptor,
+    isValidFieldPath,
+    normalizeEnumOptions,
+    normalizeLabelAlign,
+    normalizeLabelItem,
+    normalizeLabels,
+    normalizePortDirection,
+    normalizePortIoMode,
+    normalizePortLayout,
+    normalizePortMarker,
+    normalizePortPoint,
+    normalizeSchemaField: function (raw) {
+      return normalizeSchemaField(raw, deps.nextItemId);
+    },
+    normalizeSchemaType,
     normalizeSpec,
     normalizeVariantLayouts,
-    parsePortLayout: portsModule.parsePortLayout,
-    serializePortLayout: portsModule.serializePortLayout,
-    setValueByPath: schemaModule.setValueByPath,
+    parsePortLayout,
+    serializePortLayout,
+    setValueByPath,
     toStyleImageUri,
     toSvgDataUri,
   };

@@ -74,7 +74,8 @@ export function extractSvgSize(svg, toFloatFn, trimFn) {
 }
 
 // 兼容旧工厂模式，允许旧模块渐进迁移到直接 import。
-export function createXmlUtils(deps) {
+export function createXmlUtils() {
+  var deps = arguments.length > 0 ? arguments[0] : null;
   var trim = deps != null ? deps.trim : defaultTrim;
 
   return {
