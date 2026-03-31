@@ -1,7 +1,13 @@
+/**
+ * 预览面板共享能力。
+ * 负责模板编辑器和实例编辑器共用的预览坐标换算、吸附和渲染。
+ */
+// 这层抽出来之后，两个编辑器就不需要各自维护一套预览几何逻辑。
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+// 按 id 在端口或标签列表里查找预览项。
 export function findPreviewItemById(list, id) {
   var i;
 
@@ -14,6 +20,7 @@ export function findPreviewItemById(list, id) {
   return null;
 }
 
+// 预览 metrics 负责把业务尺寸映射到当前面板像素坐标。
 export function getPreviewMetrics(spec, surface) {
   var surfaceWidth = Math.max(200, surface.clientWidth || 520);
   var surfaceHeight = Math.max(200, surface.clientHeight || 260);
@@ -32,12 +39,13 @@ export function getPreviewMetrics(spec, surface) {
   return {
     left: Math.round((surfaceWidth - width) / 2),
     top: Math.round((surfaceHeight - height) / 2),
-    width: width,
-    height: height,
-    scale: scale,
+    width,
+    height,
+    scale,
   };
 }
 
+// 把浏览器坐标换算成图元内部的相对坐标。
 export function getRelativePoint(evt, surface, metrics, clampToBody) {
   var rect = surface.getBoundingClientRect();
   var x = (evt.clientX - rect.left - metrics.left) / metrics.width;
@@ -49,6 +57,7 @@ export function getRelativePoint(evt, surface, metrics, clampToBody) {
   };
 }
 
+// 新建端口时优先吸附到边缘，符合电气图元端口的典型布局方式。
 export function snapPortPointToEdge(point, metrics, thresholdPx) {
   var thresholdX;
   var thresholdY;
@@ -113,6 +122,7 @@ function positionLabelTarget(target, metrics, label) {
     metrics.top + label.y * metrics.height - label.height / 2 + "px";
 }
 
+// 渲染交互式预览面板，并把拖拽/点击事件透出给调用方。
 export function renderInteractivePreviewSurface(deps, options) {
   var resolvePreviewMetrics =
     deps != null && typeof deps.getPreviewMetrics === "function"
@@ -330,7 +340,7 @@ export function renderInteractivePreviewSurface(deps, options) {
   });
 
   return {
-    metrics: metrics,
-    surface: surface,
+    metrics,
+    surface,
   };
 }

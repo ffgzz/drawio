@@ -1,3 +1,8 @@
+/**
+ * 模板草稿服务。
+ * 负责模板编辑器草稿的保存、节流、恢复和清理。
+ */
+// 这里故意只处理草稿，不掺入模板图库逻辑。
 export function createDraftStore(deps) {
   var ctx = deps.ctx;
   var state = ctx.state;
@@ -116,12 +121,11 @@ export function createDraftStore(deps) {
   }
 
   return {
-    buildEditorDraftSnapshot: buildEditorDraftSnapshot,
-    clearDraftSaveTimer: clearDraftSaveTimer,
-    clearEditorDraft: clearEditorDraft,
-    loadEditorDraft: loadEditorDraft,
-    saveEditorDraftNow: saveEditorDraftNow,
-    scheduleEditorDraftSave: scheduleEditorDraftSave,
+    buildEditorDraftSnapshot,
+    clearDraftSaveTimer,
+    clearEditorDraft,
+    loadEditorDraft,
+    saveEditorDraftNow,
+    scheduleEditorDraftSave,
   };
 }
-

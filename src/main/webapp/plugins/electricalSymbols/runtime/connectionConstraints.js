@@ -1,3 +1,8 @@
+/**
+ * 连接约束运行时。
+ * 负责端口约束生成、连线校验、端口元数据写回和端子切换后的跟随移动。
+ */
+// 这个模块是电气端口系统和 mxGraph 原生连线约束的衔接层。
 export function createConnectionConstraints(deps) {
   var ctx = deps.ctx;
   var graph = ctx.graph;
@@ -7,6 +12,7 @@ export function createConnectionConstraints(deps) {
   var oldSetConnectionConstraint = graph.setConnectionConstraint;
   var oldValidateConnection = graph.connectionHandler.validateConnection;
 
+  // 从端口布局生成 mxGraph 可识别的连接约束数组。
   function getElectricalConstraints(cell) {
     var root = deps.findPortHostRoot(cell);
     var layout;
@@ -79,6 +85,7 @@ export function createConnectionConstraints(deps) {
     }
   }
 
+  // 端口 IO 方向校验直接作用在连线开始/结束阶段。
   function validatePortIoMode(sourcePort, targetPort) {
     if (sourcePort != null && deps.normalizePortIoMode(sourcePort.ioMode) == "in") {
       return "该端子仅允许接入，不能作为连线起点";
@@ -158,8 +165,8 @@ export function createConnectionConstraints(deps) {
 
     if (!isMovableConnectedTerminal(startCell)) {
       return {
-        vertices: vertices,
-        edges: edges,
+        vertices,
+        edges,
       };
     }
 
@@ -195,8 +202,8 @@ export function createConnectionConstraints(deps) {
     }
 
     return {
-      vertices: vertices,
-      edges: edges,
+      vertices,
+      edges,
     };
   }
 
@@ -501,15 +508,15 @@ export function createConnectionConstraints(deps) {
   }
 
   return {
-    applyNativeConnectionConstraint: applyNativeConnectionConstraint,
-    clearEdgePoints: clearEdgePoints,
-    getElectricalConstraints: getElectricalConstraints,
-    getPortMetaByConstraint: getPortMetaByConstraint,
-    getPortMetaById: getPortMetaById,
-    isMovableConnectedTerminal: isMovableConnectedTerminal,
-    installGraphBehavior: installGraphBehavior,
-    mapPortDirectionToConstraint: mapPortDirectionToConstraint,
-    moveCellToFrameByDelta: moveCellToFrameByDelta,
-    moveConnectedGroupToCabinetPort: moveConnectedGroupToCabinetPort,
+    applyNativeConnectionConstraint,
+    clearEdgePoints,
+    getElectricalConstraints,
+    getPortMetaByConstraint,
+    getPortMetaById,
+    isMovableConnectedTerminal,
+    installGraphBehavior,
+    mapPortDirectionToConstraint,
+    moveCellToFrameByDelta,
+    moveConnectedGroupToCabinetPort,
   };
 }

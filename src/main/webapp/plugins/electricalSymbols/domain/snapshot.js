@@ -1,3 +1,8 @@
+/**
+ * 快照域模型。
+ * 负责图纸导出、恢复、对象标识归一化和快照差异比较。
+ */
+// 这个模块支撑后端保存、加载、回滚和本地操作记录。
 export function createSnapshotDomain(deps) {
   var ctx = deps.ctx;
   var graph = ctx.graph;
@@ -5,6 +10,7 @@ export function createSnapshotDomain(deps) {
   var state = ctx.state;
   var ui = ctx.ui;
 
+  // 快照里的 generic 对象需要稳定 ID，避免导入导出后丢失绑定关系。
   function getCellStableId(cell) {
     return deps.trim(
       cell != null
@@ -140,7 +146,7 @@ export function createSnapshotDomain(deps) {
     return {
       tagName: node.nodeName,
       attributes: attrs,
-      children: children,
+      children,
     };
   }
 
@@ -198,7 +204,7 @@ export function createSnapshotDomain(deps) {
       typeof value === "number" ||
       typeof value === "boolean"
     ) {
-      return { kind: "primitive", value: value };
+      return { kind: "primitive", value };
     }
 
     if (isPlainXmlNode(value)) {
@@ -479,6 +485,7 @@ export function createSnapshotDomain(deps) {
     return geometry;
   }
 
+  // 统一过滤插件内部辅助 cell，避免把 body/label/gap 当成业务对象导出。
   function isPluginInternalCell(cell) {
     var kind = deps.trim(deps.getAttr(cell, "esKind"));
 
@@ -492,6 +499,7 @@ export function createSnapshotDomain(deps) {
     );
   }
 
+  // 只有真正的“普通图形”才会作为 generic 对象导出到快照。
   function shouldExportGenericObject(cell) {
     return (
       cell != null &&
@@ -591,7 +599,7 @@ export function createSnapshotDomain(deps) {
       };
       result.push({
         port: entry,
-        constraint: constraint,
+        constraint,
       });
     }
 
@@ -667,7 +675,7 @@ export function createSnapshotDomain(deps) {
       },
       props: {
         pageNumber: deps.getFramePageNumber(frame),
-        frameConfig: frameConfig,
+        frameConfig,
         originFrameId: deps.trim(deps.getAttr(frame, "originFrameId")) || null,
         autoFrameOwner: deps.trim(deps.getAttr(frame, "autoFrameOwner")) || null,
         autoFrameIndex: deps.toInt(deps.getAttr(frame, "autoFrameIndex"), 0),
@@ -694,7 +702,7 @@ export function createSnapshotDomain(deps) {
         height: 0,
       },
       props: {
-        cabinetModel: cabinetModel,
+        cabinetModel,
       },
     };
   }
@@ -721,7 +729,7 @@ export function createSnapshotDomain(deps) {
         height: geometry != null ? geometry.height : spec.size.height,
       },
       props: {
-        spec: spec,
+        spec,
       },
     };
   }
@@ -941,9 +949,9 @@ export function createSnapshotDomain(deps) {
 
       if (op != null) {
         changes.push({
-          objectType: objectType,
-          objectId: objectId,
-          op: op,
+          objectType,
+          objectId,
+          op,
           before: previousValue != null ? deps.cloneJson(previousValue) : null,
           after: nextValue != null ? deps.cloneJson(nextValue) : null,
         });
@@ -952,8 +960,8 @@ export function createSnapshotDomain(deps) {
     }
 
     return {
-      touchedObjectIds: touchedObjectIds,
-      changes: changes,
+      touchedObjectIds,
+      changes,
     };
   }
 
@@ -1350,22 +1358,22 @@ export function createSnapshotDomain(deps) {
   }
 
   return {
-    collectChangeObjectIds: collectChangeObjectIds,
-    collectGenericPortBindings: collectGenericPortBindings,
-    computeSnapshotChanges: computeSnapshotChanges,
-    deserializeCellValue: deserializeCellValue,
-    deserializeGeometry: deserializeGeometry,
-    exportDiagramSnapshot: exportDiagramSnapshot,
-    getEdgePortId: getEdgePortId,
+    collectChangeObjectIds,
+    collectGenericPortBindings,
+    computeSnapshotChanges,
+    deserializeCellValue,
+    deserializeGeometry,
+    exportDiagramSnapshot,
+    getEdgePortId,
     getConstraintForPort: buildConstraintForPort,
-    getGenericObjectId: getGenericObjectId,
-    getGenericPortBindingById: getGenericPortBindingById,
-    isPluginInternalCell: isPluginInternalCell,
-    normalizeGenericStableId: normalizeGenericStableId,
-    normalizeSnapshotGenericIds: normalizeSnapshotGenericIds,
-    restoreDiagramSnapshot: restoreDiagramSnapshot,
-    serializeCellValue: serializeCellValue,
-    serializeGeometry: serializeGeometry,
-    shouldExportGenericObject: shouldExportGenericObject,
+    getGenericObjectId,
+    getGenericPortBindingById,
+    isPluginInternalCell,
+    normalizeGenericStableId,
+    normalizeSnapshotGenericIds,
+    restoreDiagramSnapshot,
+    serializeCellValue,
+    serializeGeometry,
+    shouldExportGenericObject,
   };
 }

@@ -1,3 +1,8 @@
+/**
+ * 模板浏览器窗口。
+ * 负责浏览图库模板、打开模板编辑器、从模板创建实例以及删除模板。
+ */
+// 这个窗口本质上是“图库首页”，因此聚合了查看和跳转动作。
 export function openTemplateBrowserDialog(deps) {
   var ctx = deps.ctx;
   var state = ctx.state;

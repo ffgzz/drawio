@@ -1,3 +1,8 @@
+/**
+ * XML/SVG 相关工具函数。
+ * 这里统一处理 mxGraph value 节点、SVG 校验和尺寸提取。
+ */
+// createXmlUtils 把依赖最小化，只依赖外部注入的 trim。
 export function createXmlUtils(deps) {
   var trim = deps.trim;
 
@@ -69,11 +74,11 @@ export function createXmlUtils(deps) {
   }
 
   return {
-    cloneValue: cloneValue,
-    createMetaCell: createMetaCell,
-    createNode: createNode,
-    extractSvgSize: extractSvgSize,
-    getAttr: getAttr,
-    validateSvg: validateSvg,
+    cloneValue,
+    createMetaCell,
+    createNode,
+    extractSvgSize,
+    getAttr,
+    validateSvg,
   };
 }

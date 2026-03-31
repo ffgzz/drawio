@@ -1,3 +1,8 @@
+/**
+ * 插件状态模型。
+ * 这里把原来单体文件里的大状态对象拆成多个 slice，并保留旧字段别名。
+ */
+// 别名机制用于兼容旧代码路径，避免重构过程中一次性改动过大。
 function defineAlias(state, alias, slice, key) {
   Object.defineProperty(state, alias, {
     configurable: true,
@@ -11,8 +16,10 @@ function defineAlias(state, alias, slice, key) {
   });
 }
 
+// createPluginState 是插件运行期唯一的状态初始化入口。
 export function createPluginState(constants) {
   var state = {
+    // editor 存放模板编辑器及预览相关状态。
     editor: {
       status: null,
       symbolIdInput: null,
@@ -36,6 +43,7 @@ export function createPluginState(constants) {
       variantItems: [],
       draftSaveTimer: null,
     },
+    // windows 只记录各弹窗/窗口实例。
     windows: {
       templateEditor: null,
       templateBrowser: null,
@@ -45,6 +53,7 @@ export function createPluginState(constants) {
     library: {
       images: [],
     },
+    // backend 记录当前与后端图纸会话相关的上下文。
     backend: {
       baseUrl: constants.BACKEND_DEFAULT_BASE_URL,
       actorId: "local-user",
@@ -53,6 +62,7 @@ export function createPluginState(constants) {
       diagramVersion: 0,
       lastSnapshot: null,
     },
+    // canvas 存放图编辑器运行期的保护开关和变更记录。
     canvas: {
       updatingModel: false,
       allowProtectedDelete: false,
@@ -144,4 +154,3 @@ export function createPluginState(constants) {
 
   return state;
 }
-

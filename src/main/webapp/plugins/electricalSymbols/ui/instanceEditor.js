@@ -1,9 +1,14 @@
+/**
+ * 图元实例编辑器。
+ * 负责编辑单个实例的端口、标签和绑定数据，并把变更同步回 root。
+ */
 import {
   findPreviewItemById,
   renderInteractivePreviewSurface,
   snapPortPointToEdge,
 } from "./shared/previewSurface.js";
 
+// 实例编辑器只作用于当前选中的电气图元实例。
 export function openEditInstanceDialog(deps) {
   var ctx = deps.ctx;
   var graph = ctx.graph;
@@ -21,6 +26,7 @@ export function openEditInstanceDialog(deps) {
     state.instanceWindow = null;
   }
 
+  // editorState 是实例编辑窗口的私有状态，不回写全局模板编辑状态。
   var editorState = {
     spec: deps.extractSpec(root),
     selectedItem: null,
@@ -33,6 +39,7 @@ export function openEditInstanceDialog(deps) {
   editorState.spec.ports = deps.normalizePortLayout(editorState.spec.ports);
   editorState.spec.labels = deps.normalizeLabels(editorState.spec.labels);
 
+  // 扫描现有端口/标签 id，确保新建项时不会和旧 id 冲突。
   function scanNextId() {
     var maxId = 0;
 
@@ -61,7 +68,7 @@ export function openEditInstanceDialog(deps) {
 
   function setEditorSelection(type, id) {
     editorState.selectedItem =
-      type != null && id != null ? { type: type, id: id } : null;
+      type != null && id != null ? { type, id } : null;
   }
 
   function updateEditorStatus(message, isError) {

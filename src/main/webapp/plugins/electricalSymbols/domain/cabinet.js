@@ -1,8 +1,13 @@
+/**
+ * 配电柜域模型。
+ * 负责配电柜分页、端口布局、gap 编辑、高亮和附件恢复。
+ */
 export function createCabinetDomain(deps) {
   var ctx = deps.ctx;
   var model = ctx.model;
   var state = ctx.state;
 
+  // 配电柜 root 本身只作为容器和端口宿主，不直接画外观。
   function makeCabinetRootStyle() {
     return (
       "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;" +
@@ -10,6 +15,7 @@ export function createCabinetDomain(deps) {
     );
   }
 
+  // 根据是否跨页续接来生成不同形状的柜体 SVG。
   function createCabinetBodySvg(descriptor) {
     var width = Math.max(20, Math.round(descriptor.width));
     var height = Math.max(20, Math.round(descriptor.height));
@@ -130,6 +136,7 @@ export function createCabinetDomain(deps) {
     );
   }
 
+  // 端子间 gap 既参与布局，也会映射为可点击热点。
   function normalizeGapRatio(value, fallbackValue) {
     return deps.clamp(
       deps.toFloat(value, fallbackValue != null ? fallbackValue : 0.12),
@@ -138,6 +145,7 @@ export function createCabinetDomain(deps) {
     );
   }
 
+  // 配电柜端口强制归一成“右侧输出端子”。
   function normalizeCabinetPort(raw, index) {
     var base = deps.normalizePortPoint(
       raw,
@@ -200,11 +208,14 @@ export function createCabinetDomain(deps) {
         deps.trim(raw.logicalCabinetId) || deps.generateLogicalCabinetId(),
       originFrameId: deps.trim(raw.originFrameId),
       title: deps.trim(raw.title) || "配电柜",
-      cabinetWidth: Math.max(30, deps.toInt(raw.cabinetWidth, deps.defaultWidth)),
+      cabinetWidth: Math.max(
+        30,
+        deps.toInt(raw.cabinetWidth, deps.defaultWidth),
+      ),
       cabinetX: Math.max(20, deps.toInt(raw.cabinetX, deps.defaultX)),
       tailPadding: Math.max(8, deps.toInt(raw.tailPadding, deps.tailPadding)),
-      ports: ports,
-      gapRatios: gapRatios,
+      ports,
+      gapRatios,
     };
   }
 
@@ -277,9 +288,9 @@ export function createCabinetDomain(deps) {
     return {
       frameConfig: config,
       cabinetModel: modelData,
-      usableHeight: usableHeight,
-      topMargin: topMargin,
-      offsets: offsets,
+      usableHeight,
+      topMargin,
+      offsets,
       totalLogicalHeight:
         (offsets.length > 0
           ? offsets[offsets.length - 1]
@@ -334,7 +345,9 @@ export function createCabinetDomain(deps) {
           var port = deps.cloneJson(layout.cabinetModel.ports[i]);
           port.x = 1;
           port.y =
-            segmentHeight > 0 ? deps.clamp(localOffset / segmentHeight, 0, 1) : 0;
+            segmentHeight > 0
+              ? deps.clamp(localOffset / segmentHeight, 0, 1)
+              : 0;
           port.order = i;
           port.logicalOffset = layout.offsets[i];
           ports.push(port);
@@ -352,7 +365,11 @@ export function createCabinetDomain(deps) {
 
         if (visibleEnd > visibleStart) {
           var gapStart = deps.clamp(visibleStart - pageStart, 0, segmentHeight);
-          var gapEnd = deps.clamp(visibleEnd - pageStart, gapStart, segmentHeight);
+          var gapEnd = deps.clamp(
+            visibleEnd - pageStart,
+            gapStart,
+            segmentHeight,
+          );
 
           if (gapEnd - gapStart < 12) {
             gapEnd = Math.min(segmentHeight, gapStart + 12);
@@ -361,7 +378,10 @@ export function createCabinetDomain(deps) {
           gaps.push({
             id: "cabinet-gap:" + i + ":" + pageIndex,
             gapIndex: i,
-            y: segmentHeight > 0 ? deps.clamp(gapStart / segmentHeight, 0, 1) : 0,
+            y:
+              segmentHeight > 0
+                ? deps.clamp(gapStart / segmentHeight, 0, 1)
+                : 0,
             height: Math.max(12, gapEnd - gapStart),
           });
         }
@@ -369,7 +389,7 @@ export function createCabinetDomain(deps) {
 
       descriptors.push({
         segmentIndex: pageIndex,
-        pageCount: pageCount,
+        pageCount,
         continuesFromPrev: pageIndex > 0,
         continuesToNext: pageIndex < pageCount - 1,
         x: layout.cabinetModel.cabinetX,
@@ -378,8 +398,8 @@ export function createCabinetDomain(deps) {
         height: segmentHeight,
         segmentStartOffset: pageStart,
         segmentEndOffset: pageStart + segmentHeight,
-        ports: ports,
-        gaps: gaps,
+        ports,
+        gaps,
         frameConfig: layout.frameConfig,
         cabinetModel: layout.cabinetModel,
       });
@@ -390,7 +410,10 @@ export function createCabinetDomain(deps) {
 
   function createCabinetValueMetadata(node, cabinetModel, descriptor, frameId) {
     node.setAttribute("pluginType", deps.cabinetType);
-    node.setAttribute("logicalCabinetId", deps.trim(cabinetModel.logicalCabinetId));
+    node.setAttribute(
+      "logicalCabinetId",
+      deps.trim(cabinetModel.logicalCabinetId),
+    );
     node.setAttribute("originFrameId", deps.trim(cabinetModel.originFrameId));
     node.setAttribute("frameId", deps.trim(frameId));
     node.setAttribute("segmentIndex", String(descriptor.segmentIndex));
@@ -412,7 +435,12 @@ export function createCabinetDomain(deps) {
 
   function createCabinetBodyCell(descriptor) {
     var cell = new mxCell(
-      deps.createMetaCell(deps.cabinetBodyTag, deps.cabinetBodyKind, "main", ""),
+      deps.createMetaCell(
+        deps.cabinetBodyTag,
+        deps.cabinetBodyKind,
+        "main",
+        "",
+      ),
       new mxGeometry(0, 0, descriptor.width, descriptor.height),
       makeCabinetBodyStyle(descriptor),
     );
@@ -426,7 +454,8 @@ export function createCabinetDomain(deps) {
       state.selectedCabinetGap != null &&
       deps.trim(state.selectedCabinetGap.logicalCabinetId) ==
         deps.trim(logicalCabinetId) &&
-      deps.toInt(state.selectedCabinetGap.gapIndex, -1) == deps.toInt(gapIndex, -1)
+      deps.toInt(state.selectedCabinetGap.gapIndex, -1) ==
+        deps.toInt(gapIndex, -1)
     );
   }
 
@@ -435,7 +464,10 @@ export function createCabinetDomain(deps) {
     value.setAttribute("pluginType", deps.cabinetGapType);
     value.setAttribute("esKind", deps.cabinetGapKind);
     value.setAttribute("esKey", String(gap.gapIndex));
-    value.setAttribute("logicalCabinetId", deps.trim(cabinetModel.logicalCabinetId));
+    value.setAttribute(
+      "logicalCabinetId",
+      deps.trim(cabinetModel.logicalCabinetId),
+    );
     value.setAttribute("gapIndex", String(gap.gapIndex));
     value.setAttribute("label", "");
     var geometry = new mxGeometry(1, gap.y, 14, gap.height);
@@ -444,9 +476,9 @@ export function createCabinetDomain(deps) {
     var cell = new mxCell(
       value,
       geometry,
-        makeCabinetGapStyle(
-          isSelectedCabinetGap(cabinetModel.logicalCabinetId, gap.gapIndex),
-        ),
+      makeCabinetGapStyle(
+        isSelectedCabinetGap(cabinetModel.logicalCabinetId, gap.gapIndex),
+      ),
     );
     cell.vertex = true;
     cell.setConnectable(false);
@@ -471,8 +503,8 @@ export function createCabinetDomain(deps) {
     }
 
     return {
-      x: x,
-      y: y,
+      x,
+      y,
       width: geometry != null ? geometry.width : 0,
       height: geometry != null ? geometry.height : 0,
     };
@@ -598,7 +630,10 @@ export function createCabinetDomain(deps) {
   }
 
   function setSelectedCabinetGap(logicalCabinetId, gapIndex) {
-    if (deps.trim(logicalCabinetId).length == 0 || deps.toInt(gapIndex, -1) < 0) {
+    if (
+      deps.trim(logicalCabinetId).length == 0 ||
+      deps.toInt(gapIndex, -1) < 0
+    ) {
       state.selectedCabinetGap = null;
     } else {
       state.selectedCabinetGap = {
@@ -648,9 +683,9 @@ export function createCabinetDomain(deps) {
         }
 
         attachments.push({
-          edge: edge,
-          source: source,
-          portId: portId,
+          edge,
+          source,
+          portId,
           oldPortPosition: getPortAbsolutePosition(segment, port),
           otherTerminal: model.getTerminal(edge, !source),
         });
@@ -672,9 +707,9 @@ export function createCabinetDomain(deps) {
 
       for (j = 0; j < ports.length; j++) {
         result[deps.trim(ports[j].id)] = {
-          segment: segment,
+          segment,
           port: ports[j],
-          frame: frame,
+          frame,
           absolutePosition: getPortAbsolutePosition(segment, ports[j]),
         };
       }
@@ -738,8 +773,10 @@ export function createCabinetDomain(deps) {
 
     for (i = 0; i < frames.length; i++) {
       if (
-        deps.trim(deps.getAttr(frames[i], "originFrameId")) == deps.trim(originFrameId) &&
-        deps.trim(deps.getAttr(frames[i], "autoFrameOwner")) == deps.trim(logicalCabinetId)
+        deps.trim(deps.getAttr(frames[i], "originFrameId")) ==
+          deps.trim(originFrameId) &&
+        deps.trim(deps.getAttr(frames[i], "autoFrameOwner")) ==
+          deps.trim(logicalCabinetId)
       ) {
         result.push(frames[i]);
       }
@@ -767,7 +804,8 @@ export function createCabinetDomain(deps) {
 
       if (
         deps.isCabinetSegment(child) &&
-        deps.trim(deps.getAttr(child, "logicalCabinetId")) == deps.trim(logicalCabinetId)
+        deps.trim(deps.getAttr(child, "logicalCabinetId")) ==
+          deps.trim(logicalCabinetId)
       ) {
         continue;
       }
@@ -778,7 +816,12 @@ export function createCabinetDomain(deps) {
     return true;
   }
 
-  function ensureCabinetFrames(originFrame, cabinetModel, pageCount, skipCleanup) {
+  function ensureCabinetFrames(
+    originFrame,
+    cabinetModel,
+    pageCount,
+    skipCleanup,
+  ) {
     var originFrameId = deps.trim(deps.getAttr(originFrame, "frameId"));
     var originGroupId = deps.getFrameGroupId(originFrame);
     var logicalCabinetId = deps.trim(cabinetModel.logicalCabinetId);
@@ -802,7 +845,7 @@ export function createCabinetDomain(deps) {
             deps.getFramePageNumber(previousFrame),
           ) + 1,
           {
-            originFrameId: originFrameId,
+            originFrameId,
             groupId: originGroupId,
             autoFrameOwner: logicalCabinetId,
             autoFrameIndex: i,
@@ -861,7 +904,12 @@ export function createCabinetDomain(deps) {
     var newSegments = [];
     var i;
 
-    frames = ensureCabinetFrames(originFrame, normalized, descriptors.length, true);
+    frames = ensureCabinetFrames(
+      originFrame,
+      normalized,
+      descriptors.length,
+      true,
+    );
 
     for (i = 0; i < descriptors.length; i++) {
       var segment = buildCabinetSegmentCell(
@@ -884,18 +932,18 @@ export function createCabinetDomain(deps) {
   }
 
   return {
-    buildCabinetPageDescriptors: buildCabinetPageDescriptors,
-    buildCabinetPortMap: buildCabinetPortMap,
-    buildCabinetSegmentCell: buildCabinetSegmentCell,
-    collectCabinetAttachments: collectCabinetAttachments,
-    extractCabinetModel: extractCabinetModel,
-    findCabinetSegment: findCabinetSegment,
-    findCabinetSegments: findCabinetSegments,
-    getCellAbsoluteGeometry: getCellAbsoluteGeometry,
-    getPortAbsolutePosition: getPortAbsolutePosition,
-    normalizeCabinetModel: normalizeCabinetModel,
-    relayoutCabinetByModel: relayoutCabinetByModel,
-    restoreCabinetAttachments: restoreCabinetAttachments,
-    setSelectedCabinetGap: setSelectedCabinetGap,
+    buildCabinetPageDescriptors,
+    buildCabinetPortMap,
+    buildCabinetSegmentCell,
+    collectCabinetAttachments,
+    extractCabinetModel,
+    findCabinetSegment,
+    findCabinetSegments,
+    getCellAbsoluteGeometry,
+    getPortAbsolutePosition,
+    normalizeCabinetModel,
+    relayoutCabinetByModel,
+    restoreCabinetAttachments,
+    setSelectedCabinetGap,
   };
 }

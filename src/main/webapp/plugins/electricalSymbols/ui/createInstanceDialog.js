@@ -1,3 +1,8 @@
+/**
+ * 从图库创建实例的对话框。
+ * 用户在这里选择模板、填写 schema 字段，并生成实例规格插入画布。
+ */
+// 这里的表单结构完全来自模板 schema，而不是写死字段。
 export function openCreateFromLibraryDialog(deps, preferredSymbolId) {
   var trim = deps.trim;
 
@@ -167,10 +172,10 @@ export function openCreateFromLibraryDialog(deps, preferredSymbolId) {
           block.appendChild(error);
 
           formControls.push({
-            field: field,
-            control: control,
-            type: type,
-            error: error,
+            field,
+            control,
+            type,
+            error,
           });
         },
       );

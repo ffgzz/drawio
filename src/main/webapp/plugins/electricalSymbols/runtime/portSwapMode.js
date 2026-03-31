@@ -1,3 +1,8 @@
+/**
+ * 更换挂点模式。
+ * 负责从当前选中边推导换挂点上下文、渲染端口 overlay 并提交切换。
+ */
+// 这个模式和配电柜 gap 点击共用部分点击监听，因此集中放在一个 runtime 模块里。
 export function createPortSwapMode(deps) {
   var ctx = deps.ctx;
   var graph = ctx.graph;
@@ -37,7 +42,7 @@ export function createPortSwapMode(deps) {
     }
 
     return {
-      edge: edge,
+      edge,
       source: sourceCabinet,
       cabinetRoot: sourceCabinet ? sourceRoot : targetRoot,
       portId: deps.trim(
@@ -343,12 +348,12 @@ export function createPortSwapMode(deps) {
   }
 
   return {
-    applyEdgePortConstraintMetadata: applyEdgePortConstraintMetadata,
-    clearPortSwapOverlay: clearPortSwapOverlay,
-    commitPortSwap: commitPortSwap,
-    enterPortSwapMode: enterPortSwapMode,
-    exitPortSwapMode: exitPortSwapMode,
-    getNearestCabinetPortFromClick: getNearestCabinetPortFromClick,
-    installGraphClickBehavior: installGraphClickBehavior,
+    applyEdgePortConstraintMetadata,
+    clearPortSwapOverlay,
+    commitPortSwap,
+    enterPortSwapMode,
+    exitPortSwapMode,
+    getNearestCabinetPortFromClick,
+    installGraphClickBehavior,
   };
 }

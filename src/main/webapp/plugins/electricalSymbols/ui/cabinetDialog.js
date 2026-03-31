@@ -1,3 +1,8 @@
+/**
+ * 配电柜相关对话框。
+ * 负责插入配电柜窗口，以及配电柜 gap 比例编辑窗口。
+ */
+// 由于 gap 对话框是悬浮在画布附近的小窗，所以这里还负责计算弹窗位置。
 export function createCabinetDialogs(deps) {
   var ctx = deps.ctx;
   var graph = ctx.graph;
@@ -6,6 +11,7 @@ export function createCabinetDialogs(deps) {
   var constants = ctx.constants;
   var trim = deps.trim;
 
+  // 根据点击位置推导 gap 对话框坐标，尽量避免超出视口。
   function getGapDialogPosition(nativeEvent, width, height) {
     var fallback = { x: 220, y: 180 };
 
@@ -60,6 +66,7 @@ export function createCabinetDialogs(deps) {
     };
   }
 
+  // 保证同一时刻只有一个 gap 编辑小窗存在。
   function closeGapDialogWindow() {
     if (state.gapDialogWindow != null) {
       var wnd = state.gapDialogWindow;
@@ -68,6 +75,7 @@ export function createCabinetDialogs(deps) {
     }
   }
 
+  // 插入配电柜时只采集必要输入，实际分页和布局都由 domain 层完成。
   function openInsertCabinetDialog() {
     var frame = deps.getActiveFrame(true);
 
@@ -184,6 +192,7 @@ export function createCabinetDialogs(deps) {
     wnd.setVisible(true);
   }
 
+  // gap 对话框只负责把比例值回写给 cabinetModel，再触发重排。
   function openCabinetGapDialog(gapCell, nativeEvent) {
     var segment = deps.findCabinetSegment(gapCell);
     var gapIndex = deps.toInt(deps.getAttr(gapCell, "gapIndex"), -1);
@@ -287,9 +296,9 @@ export function createCabinetDialogs(deps) {
   }
 
   return {
-    closeGapDialogWindow: closeGapDialogWindow,
-    getGapDialogPosition: getGapDialogPosition,
-    openCabinetGapDialog: openCabinetGapDialog,
-    openInsertCabinetDialog: openInsertCabinetDialog,
+    closeGapDialogWindow,
+    getGapDialogPosition,
+    openCabinetGapDialog,
+    openInsertCabinetDialog,
   };
 }

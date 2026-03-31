@@ -1,3 +1,8 @@
+/**
+ * 顶部动作栏渲染器。
+ * 负责把插件 action 以按钮形式铺到 draw.io 顶部菜单容器里。
+ */
+// 这里只渲染按钮，不负责 action 注册。
 export function installTopActionBar(options) {
   var ui = options.ui;
   var createButton = options.createButton;
@@ -31,4 +36,3 @@ export function installTopActionBar(options) {
 
   ui.menubarContainer.appendChild(bar);
 }
-

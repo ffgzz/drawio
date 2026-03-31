@@ -1,6 +1,12 @@
+/**
+ * 规格数据域模型。
+ * 负责 schema、端口、标签、变体、实例数据这些“纯数据结构”的归一化与构造。
+ */
+// 这一层尽量保持纯函数，便于后续继续拆测试。
 export function createSpecDomain(deps) {
   var trim = deps.trim;
 
+  // 叶子描述符代表一个最终可填写的字段，而不是嵌套对象。
   function isSchemaLeafDescriptor(value) {
     return (
       deps.isObject(value) &&
@@ -9,6 +15,7 @@ export function createSpecDomain(deps) {
     );
   }
 
+  // 当前 schema 类型只允许 string / number / boolean / enum。
   function normalizeSchemaType(type) {
     type = trim(type).toLowerCase();
 
@@ -17,6 +24,7 @@ export function createSpecDomain(deps) {
       : "string";
   }
 
+  // 枚举值会被去重、去空白，保证表单和校验逻辑稳定。
   function normalizeEnumOptions(options) {
     var list = Array.isArray(options)
       ? options
@@ -37,6 +45,7 @@ export function createSpecDomain(deps) {
     return result;
   }
 
+  // schema 字段归一化后，后续 UI 和实例生成都基于统一结构工作。
   function normalizeSchemaField(raw) {
     var field = deps.isObject(raw) ? deps.cloneJson(raw) : {};
     field.id =
@@ -113,13 +122,13 @@ export function createSpecDomain(deps) {
     }
 
     return {
-      id: id,
+      id,
       x: deps.clamp(x, 0, 1),
       y: deps.clamp(y, 0, 1),
-      name: name,
-      marker: marker,
-      direction: direction,
-      ioMode: ioMode,
+      name,
+      marker,
+      direction,
+      ioMode,
     };
   }
 
@@ -147,14 +156,14 @@ export function createSpecDomain(deps) {
     }
 
     return {
-      id: id,
-      text: text,
-      binding: binding,
+      id,
+      text,
+      binding,
       x: deps.clamp(x, -1.5, 2.5),
       y: deps.clamp(y, -1.5, 2.5),
-      width: width,
-      height: height,
-      align: align,
+      width,
+      height,
+      align,
     };
   }
 
@@ -409,7 +418,7 @@ export function createSpecDomain(deps) {
         if (isSchemaLeafDescriptor(value)) {
           result.push(
             normalizeSchemaField({
-              path: path,
+              path,
               type: value.type,
               required: value.required,
               enumValues: value.enumValues,
@@ -582,13 +591,13 @@ export function createSpecDomain(deps) {
         code: trim(device.code),
         power: trim(device.power),
         mode: deps.normalizeMode(device.mode),
-        params: params,
+        params,
       },
       ports: normalizePortLayout(ports),
       labels: normalizeLabels(raw.labels),
-      schema: schema,
-      data: data,
-      variantField: variantField,
+      schema,
+      data,
+      variantField,
       svgVariants: {},
       variantLayouts: normalizeVariantLayouts(raw.variantLayouts),
     };
@@ -690,38 +699,38 @@ export function createSpecDomain(deps) {
   }
 
   return {
-    buildEmptyValueFromSchema: buildEmptyValueFromSchema,
-    buildResolvedLabels: buildResolvedLabels,
-    buildSchemaFromFields: buildSchemaFromFields,
-    buildInstanceSpec: buildInstanceSpec,
-    createEmptyTemplateSpec: createEmptyTemplateSpec,
-    getActiveSvg: getActiveSvg,
-    getActiveVariantKey: getActiveVariantKey,
-    getDefaultSchemaFields: getDefaultSchemaFields,
-    getValueByPath: getValueByPath,
-    hasSchemaPath: hasSchemaPath,
-    isSchemaLeafDescriptor: isSchemaLeafDescriptor,
-    isValidFieldPath: isValidFieldPath,
-    flattenSchemaFields: flattenSchemaFields,
-    getVariantLayout: getVariantLayout,
-    normalizeEnumOptions: normalizeEnumOptions,
-    normalizeLabelAlign: normalizeLabelAlign,
-    normalizeLabelItem: normalizeLabelItem,
-    normalizeLabels: normalizeLabels,
-    normalizePortDirection: normalizePortDirection,
-    normalizePortIoMode: normalizePortIoMode,
-    normalizePortLayout: normalizePortLayout,
-    normalizePortMarker: normalizePortMarker,
-    normalizePortPoint: normalizePortPoint,
-    normalizeSchemaField: normalizeSchemaField,
-    normalizeSchemaType: normalizeSchemaType,
-    normalizeSpec: normalizeSpec,
-    normalizeVariantLayouts: normalizeVariantLayouts,
-    parsePortLayout: parsePortLayout,
-    buildPortLayout: buildPortLayout,
-    serializePortLayout: serializePortLayout,
-    setValueByPath: setValueByPath,
-    toStyleImageUri: toStyleImageUri,
-    toSvgDataUri: toSvgDataUri,
+    buildEmptyValueFromSchema,
+    buildResolvedLabels,
+    buildSchemaFromFields,
+    buildInstanceSpec,
+    createEmptyTemplateSpec,
+    getActiveSvg,
+    getActiveVariantKey,
+    getDefaultSchemaFields,
+    getValueByPath,
+    hasSchemaPath,
+    isSchemaLeafDescriptor,
+    isValidFieldPath,
+    flattenSchemaFields,
+    getVariantLayout,
+    normalizeEnumOptions,
+    normalizeLabelAlign,
+    normalizeLabelItem,
+    normalizeLabels,
+    normalizePortDirection,
+    normalizePortIoMode,
+    normalizePortLayout,
+    normalizePortMarker,
+    normalizePortPoint,
+    normalizeSchemaField,
+    normalizeSchemaType,
+    normalizeSpec,
+    normalizeVariantLayouts,
+    parsePortLayout,
+    buildPortLayout,
+    serializePortLayout,
+    setValueByPath,
+    toStyleImageUri,
+    toSvgDataUri,
   };
 }

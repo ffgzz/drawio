@@ -1,5 +1,10 @@
+/**
+ * 画布运行时行为。
+ * 负责 action 注册、菜单注入、画布保护逻辑以及与组合模式相关的鼠标监听。
+ */
 import { installTopActionBar } from "../ui/topActionBar.js";
 
+// 顶部动作栏按钮顺序在这里集中维护。
 var ACTION_ITEMS = [
   { resourceKey: "electricalSymbols", actionKey: "electricalSymbols" },
   { resourceKey: "electricalBrowse", actionKey: "electricalBrowse" },
@@ -44,6 +49,7 @@ var ACTION_ITEMS = [
   },
 ];
 
+// extras 菜单也复用同一批 action，只是多了刷新项。
 var EXTRA_MENU_ACTIONS = [
   "-",
   "electricalSymbols",
@@ -63,6 +69,7 @@ var EXTRA_MENU_ACTIONS = [
   "electricalRollbackBackend",
 ];
 
+// createCanvasActions 封装“会改动 graph/model 的用户动作”。
 export function createCanvasActions(deps) {
   var ctx = deps.ctx;
   var graph = ctx.graph;
@@ -93,6 +100,7 @@ export function createCanvasActions(deps) {
     graph.scrollCellToVisible(graph.getSelectionCell());
   }
 
+  // 插入图元时优先放进当前激活图框，否则回退到画布自由插入点。
   function insertIntoGraph(spec) {
     var root = deps.buildSymbolCell(spec);
     var frame = deps.getActiveFrame(false);
@@ -109,6 +117,7 @@ export function createCanvasActions(deps) {
     deps.setCanvasStatus("已插入图元");
   }
 
+  // refreshSelection 同时支持普通图元刷新和配电柜重排。
   function refreshSelection() {
     var root = deps.findElectricalRoot(graph.getSelectionCell());
     var cabinet = deps.findCabinetSegment(graph.getSelectionCell());
@@ -151,6 +160,7 @@ export function createCanvasActions(deps) {
     deps.showStatus("电气图元已刷新", false);
   }
 
+  // 清屏前要退出会拦截交互的运行模式，避免残留状态污染下一页。
   function clearCurrentPage() {
     var cells = getDefaultParentChildren();
 
@@ -183,12 +193,13 @@ export function createCanvasActions(deps) {
   }
 
   return {
-    clearCurrentPage: clearCurrentPage,
-    insertIntoGraph: insertIntoGraph,
-    refreshSelection: refreshSelection,
+    clearCurrentPage,
+    insertIntoGraph,
+    refreshSelection,
   };
 }
 
+// installCanvasFeatures 负责把所有 action 和 hook 真正挂到 draw.io 上。
 export function installCanvasFeatures(deps) {
   var ctx = deps.ctx;
   var graph = ctx.graph;
@@ -327,20 +338,20 @@ export function installCanvasFeatures(deps) {
   };
 
   installTopActionBar({
-    ui: ui,
+    ui,
     createButton: deps.createButton,
     items: ACTION_ITEMS,
   });
   ui.addListener("languageChanged", function () {
     installTopActionBar({
-      ui: ui,
+      ui,
       createButton: deps.createButton,
       items: ACTION_ITEMS,
     });
   });
   ui.addListener("currentThemeChanged", function () {
     installTopActionBar({
-      ui: ui,
+      ui,
       createButton: deps.createButton,
       items: ACTION_ITEMS,
     });

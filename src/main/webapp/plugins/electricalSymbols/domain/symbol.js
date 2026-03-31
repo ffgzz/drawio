@@ -1,3 +1,8 @@
+/**
+ * 电气图元域模型。
+ * 负责 root/body/label 三层结构的创建、提取和同步刷新。
+ */
+// 这个模块是“模板规格”与“mxGraph cell 结构”之间的桥梁。
 export function createSymbolDomain(deps) {
   var model = deps.ctx.model;
 
@@ -367,9 +372,9 @@ export function createSymbolDomain(deps) {
   }
 
   return {
-    buildSymbolCell: buildSymbolCell,
-    extractSpec: extractSpec,
-    refreshRoot: refreshRoot,
-    syncRoot: syncRoot,
+    buildSymbolCell,
+    extractSpec,
+    refreshRoot,
+    syncRoot,
   };
 }

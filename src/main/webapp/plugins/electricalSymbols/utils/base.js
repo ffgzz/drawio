@@ -1,12 +1,20 @@
+/**
+ * 通用基础工具函数。
+ * 这里放与业务无关的字符串、数字、对象和 ID 处理函数。
+ */
+// createBaseUtils 返回的是纯工具集合，便于在 bundle 装配时整体注入。
 export function createBaseUtils() {
+  // 统一做空值保护，避免调用方到处判断 null / undefined。
   function trim(value) {
     return value != null ? mxUtils.trim(String(value)) : "";
   }
 
+  // 仅把普通对象视为可递归合并对象，数组单独处理。
   function isObject(value) {
     return value != null && typeof value === "object" && !Array.isArray(value);
   }
 
+  // clamp 常用于几何坐标、比例值和尺寸的边界约束。
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
   }
@@ -25,6 +33,7 @@ export function createBaseUtils() {
     return JSON.parse(JSON.stringify(value));
   }
 
+  // deepMerge 用于把用户输入覆盖到默认配置上，同时保留嵌套结构。
   function deepMerge(base, value) {
     var key;
 
@@ -47,6 +56,7 @@ export function createBaseUtils() {
     return result;
   }
 
+  // 统一生成适合做标识符的 slug。
   function toSlug(value) {
     return trim(value)
       .toLowerCase()
@@ -60,6 +70,7 @@ export function createBaseUtils() {
     return index > 0 ? text.substring(0, index) : text;
   }
 
+  // 生成 UUID 时优先使用浏览器原生实现，降级时再走随机串。
   function generateUuid() {
     if (
       typeof crypto !== "undefined" &&
@@ -97,16 +108,16 @@ export function createBaseUtils() {
   }
 
   return {
-    clamp: clamp,
-    cloneJson: cloneJson,
-    deepMerge: deepMerge,
-    generateUuid: generateUuid,
-    isObject: isObject,
-    stripFileExtension: stripFileExtension,
-    toFloat: toFloat,
-    toInt: toInt,
-    toSlug: toSlug,
-    trim: trim,
-    uniqueStrings: uniqueStrings,
+    clamp,
+    cloneJson,
+    deepMerge,
+    generateUuid,
+    isObject,
+    stripFileExtension,
+    toFloat,
+    toInt,
+    toSlug,
+    trim,
+    uniqueStrings,
   };
 }

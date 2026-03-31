@@ -1,3 +1,8 @@
+/**
+ * 插件依赖装配层。
+ * 这个文件把 core、domain、services、基础工具层拼装成一个可复用的 bundle，
+ * 供后续 UI 和 runtime 模块统一取用，避免再回到“大闭包 + 隐式依赖”的写法。
+ */
 import { createDraftStore } from "../services/draftStore.js";
 import { createLibraryStore } from "../services/libraryStore.js";
 import { createBackendService } from "../services/backend.js";
@@ -12,14 +17,16 @@ import { createBaseUtils } from "../utils/base.js";
 import { createXmlUtils } from "../utils/xml.js";
 import { createPluginButton } from "../ui/shared/buttonFactory.js";
 
+// bundle 是插件运行期的“依赖容器”，统一挂载公共能力和跨模块函数。
 export function createPluginBundle(ctx) {
   var constants = ctx.constants;
   var bundle = {
-    ctx: ctx,
-    constants: constants,
+    ctx,
+    constants,
     runtime: {},
     ui: {},
   };
+  // 基础工具和 XML 工具是后续所有模块共享的底层依赖。
   var baseUtils = createBaseUtils();
   var xmlUtils = createXmlUtils({
     trim: baseUtils.trim,
@@ -48,11 +55,12 @@ export function createPluginBundle(ctx) {
   };
   bundle.createButton = createPluginButton;
 
+  // runtime helpers 负责最基础的运行期查找、提示和 ID 生成逻辑。
   Object.assign(
     bundle,
     createRuntimeHelpers({
-      ctx: ctx,
-      constants: constants,
+      ctx,
+      constants,
       trim: bundle.trim,
       cloneJson: bundle.cloneJson,
       getAttr: bundle.getAttr,
@@ -68,6 +76,7 @@ export function createPluginBundle(ctx) {
     }),
   );
 
+  // spec domain 负责 schema、端口、标签、实例化数据的纯业务规则。
   Object.assign(
     bundle,
     createSpecDomain({
@@ -86,10 +95,11 @@ export function createPluginBundle(ctx) {
     }),
   );
 
+  // symbol domain 负责电气图元 root/body/label 的读写和同步。
   Object.assign(
     bundle,
     createSymbolDomain({
-      ctx: ctx,
+      ctx,
       ROOT_TAG: constants.ROOT_TAG,
       ROOT_TYPE: constants.ROOT_TYPE,
       BODY_TAG: constants.BODY_TAG,
@@ -114,10 +124,11 @@ export function createPluginBundle(ctx) {
     }),
   );
 
+  // frame domain 负责图框的查询、定位和创建。
   Object.assign(
     bundle,
     createFrameDomain({
-      ctx: ctx,
+      ctx,
       frameTag: constants.FRAME_TAG,
       frameType: constants.FRAME_TYPE,
       frameLabelTag: constants.FRAME_LABEL_TAG,
@@ -138,8 +149,9 @@ export function createPluginBundle(ctx) {
     }),
   );
 
+  // 连接约束单独创建，后续 cabinet/runtime 都会复用这里的能力。
   bundle.connectionConstraints = createConnectionConstraints({
-    ctx: ctx,
+    ctx,
     trim: bundle.trim,
     clamp: bundle.clamp,
     parsePortLayout: bundle.parsePortLayout,
@@ -174,10 +186,11 @@ export function createPluginBundle(ctx) {
   bundle.moveConnectedGroupToCabinetPort =
     bundle.connectionConstraints.moveConnectedGroupToCabinetPort;
 
+  // cabinet domain 负责配电柜分页、端口布局和附件恢复。
   Object.assign(
     bundle,
     createCabinetDomain({
-      ctx: ctx,
+      ctx,
       cabinetTag: constants.CABINET_TAG,
       cabinetType: constants.CABINET_TYPE,
       cabinetBodyTag: constants.CABINET_BODY_TAG,
@@ -234,10 +247,11 @@ export function createPluginBundle(ctx) {
     }),
   );
 
+  // snapshot domain 负责序列化、导入恢复和变更比较。
   Object.assign(
     bundle,
     createSnapshotDomain({
-      ctx: ctx,
+      ctx,
       BODY_KIND: constants.BODY_KIND,
       LABEL_KIND: constants.LABEL_KIND,
       FRAME_LABEL_KIND: constants.FRAME_LABEL_KIND,
@@ -304,8 +318,9 @@ export function createPluginBundle(ctx) {
     }),
   );
 
+  // 草稿服务只管理模板编辑器的本地草稿。
   bundle.draftStore = createDraftStore({
-    ctx: ctx,
+    ctx,
     trim: bundle.trim,
     cloneJson: bundle.cloneJson,
   });
@@ -315,8 +330,9 @@ export function createPluginBundle(ctx) {
   bundle.loadEditorDraft = bundle.draftStore.loadEditorDraft;
   bundle.clearEditorDraft = bundle.draftStore.clearEditorDraft;
 
+  // 图库服务统一封装 localStorage 中的模板读写。
   bundle.libraryStore = createLibraryStore({
-    ctx: ctx,
+    ctx,
     trim: bundle.trim,
     isObject: bundle.isObject,
     cloneJson: bundle.cloneJson,
@@ -332,8 +348,9 @@ export function createPluginBundle(ctx) {
   bundle.removeTemplateFromLibrary =
     bundle.libraryStore.removeTemplateFromLibrary;
 
+  // 后端服务统一封装保存、加载、回滚和会话同步。
   bundle.backendService = createBackendService({
-    ctx: ctx,
+    ctx,
     trim: bundle.trim,
     toInt: bundle.toInt,
     cloneJson: bundle.cloneJson,

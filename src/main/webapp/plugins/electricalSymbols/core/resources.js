@@ -1,3 +1,8 @@
+/**
+ * 国际化资源注册表。
+ * 这里维护插件 action 与界面文案对应关系，并统一注册给 mxResources。
+ */
+// 资源键保持和 action 名称一一对应，便于菜单和按钮复用。
 export const ELECTRICAL_RESOURCE_ENTRIES = [
   "electricalSymbols=定义电气图元",
   "electricalBrowse=已定义图元",
@@ -21,7 +26,7 @@ export const ELECTRICAL_RESOURCE_ENTRIES = [
   "electricalAddVariantSvg=新增变体SVG",
 ];
 
+// 插件启动时调用一次，把资源批量注册到 draw.io。
 export function registerElectricalResources() {
   mxResources.parse(ELECTRICAL_RESOURCE_ENTRIES.join("\n"));
 }
-

@@ -1,3 +1,8 @@
+/**
+ * 图框插入对话框。
+ * 负责采集图框尺寸，并根据当前选中图框决定插入位置与分页组关系。
+ */
+// 图框创建后的具体 cell 结构由 frame domain 负责。
 export function openInsertFrameDialog(deps) {
   var ctx = deps.ctx;
   var graph = ctx.graph;
@@ -79,7 +84,7 @@ export function openInsertFrameDialog(deps) {
         ? deps.getMaxFramePageNumberInGroup(groupId) + 1
         : 1;
     var frame = deps.createDrawingFrameCell(config, nextPageNumber, {
-      groupId: groupId,
+      groupId,
     });
     state.frameConfig = deps.cloneJson(config);
 
@@ -127,4 +132,3 @@ export function openInsertFrameDialog(deps) {
 
   wnd.setVisible(true);
 }
-

@@ -1,3 +1,8 @@
+/**
+ * 组合模式运行时。
+ * 负责绿色组合区域 overlay、拖拽候选筛选和最终挂接到 root 的过程。
+ */
+// 组合模式本质上是一个短生命周期的画布交互会话。
 export function createComposeMode(deps) {
   var ctx = deps.ctx;
   var graph = ctx.graph;
@@ -578,7 +583,7 @@ export function createComposeMode(deps) {
     }
 
     state.instanceComposeSession = {
-      root: root,
+      root,
       pointerDown: false,
       dragging: false,
       startPoint: null,
@@ -617,11 +622,11 @@ export function createComposeMode(deps) {
   }
 
   return {
-    collectComposeDragCandidates: collectComposeDragCandidates,
-    enterInstanceComposeMode: enterInstanceComposeMode,
-    exitInstanceComposeMode: exitInstanceComposeMode,
-    isBlockedComposeTarget: isBlockedComposeTarget,
-    isLockedComposedChild: isLockedComposedChild,
-    refreshInstanceComposeOverlay: refreshInstanceComposeOverlay,
+    collectComposeDragCandidates,
+    enterInstanceComposeMode,
+    exitInstanceComposeMode,
+    isBlockedComposeTarget,
+    isLockedComposedChild,
+    refreshInstanceComposeOverlay,
   };
 }

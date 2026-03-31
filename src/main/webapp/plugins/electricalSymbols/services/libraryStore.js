@@ -1,3 +1,8 @@
+/**
+ * 本地图元库服务。
+ * 负责模板保存、删除、加载以及从图上提取模板规格。
+ */
+// 图库底层仍然使用 draw.io 现有格式存储，但外部只暴露统一接口。
 export function createLibraryStore(deps) {
   var ctx = deps.ctx;
   var ui = ctx.ui;
@@ -24,7 +29,7 @@ export function createLibraryStore(deps) {
     }
 
     return {
-      xml: xml,
+      xml,
       w: bounds != null ? Math.round(bounds.width) : spec.size.width,
       h: bounds != null ? Math.round(bounds.height) : spec.size.height,
       title: spec.templateName || spec.title,
@@ -250,11 +255,11 @@ export function createLibraryStore(deps) {
   }
 
   return {
-    addToLibrary: addToLibrary,
-    getLibraryEntrySpec: getLibraryEntrySpec,
-    isTemplateNameTaken: isTemplateNameTaken,
-    loadStoredLibrary: loadStoredLibrary,
-    removeTemplateFromLibrary: removeTemplateFromLibrary,
-    saveLibraryImages: saveLibraryImages,
+    addToLibrary,
+    getLibraryEntrySpec,
+    isTemplateNameTaken,
+    loadStoredLibrary,
+    removeTemplateFromLibrary,
+    saveLibraryImages,
   };
 }

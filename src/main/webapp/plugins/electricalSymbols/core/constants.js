@@ -1,3 +1,8 @@
+/**
+ * 插件常量定义。
+ * 这里集中维护标签名、类型名、默认尺寸和各类运行参数，避免魔法字符串散落。
+ */
+// ELECTRICAL_CONSTANTS 是整个插件共享的只读配置表。
 export const ELECTRICAL_CONSTANTS = Object.freeze({
   LIBRARY_TITLE: "电气图元库",
   ROOT_TAG: "ElectricalSymbol",
@@ -36,4 +41,3 @@ export const ELECTRICAL_CONSTANTS = Object.freeze({
   INSTANCE_COMPOSE_ZONE_MIN_WIDTH: 260,
   INSTANCE_COMPOSE_ZONE_MIN_HEIGHT: 200,
 });
-

@@ -1,3 +1,8 @@
+/**
+ * SVG 导出对话框。
+ * 负责读取当前画布导出边界、生成 SVG 代码并提供复制/下载能力。
+ */
+// 导出逻辑和 UI 在这里闭合，避免在入口层散落按钮处理代码。
 export function openSvgExportDialog(deps) {
   var ui = deps.ctx.ui;
   var graph = deps.ctx.graph;

@@ -1,3 +1,8 @@
+/**
+ * 模型同步监听器。
+ * 负责记录画布变更快照，以及在 root 尺寸变化后自动刷新内部结构。
+ */
+// 这里不创建 UI，只监听 model change 事件。
 export function createModelSync(deps) {
   var ctx = deps.ctx;
   var model = ctx.model;
@@ -100,7 +105,7 @@ export function createModelSync(deps) {
   }
 
   return {
-    handleModelChange: handleModelChange,
-    recordCanvasOperation: recordCanvasOperation,
+    handleModelChange,
+    recordCanvasOperation,
   };
 }

@@ -1,13 +1,19 @@
+/**
+ * 模板编辑器主窗口。
+ * 负责编辑模板的 SVG、schema、端口、标签和变体信息。
+ */
 import {
   findPreviewItemById,
   renderInteractivePreviewSurface,
   snapPortPointToEdge,
 } from "./shared/previewSurface.js";
 
+// 这是插件里最复杂的 UI 模块，承载模板定义的完整编辑流程。
 export function createTemplateEditor(deps) {
   var ctx = deps.ctx;
   var state = ctx.state;
 
+  // 一个 binding 只能绑定到一个标签，避免生成含糊的模板语义。
   function hasLabelBinding(spec, binding, ignoreId) {
     var normalized = deps.trim(binding);
     var i;
@@ -28,6 +34,7 @@ export function createTemplateEditor(deps) {
     return false;
   }
 
+  // 变体 key 需要在模板内部保持唯一，后续实例切换才可靠。
   function hasVariantKey(key, ignoreId) {
     var normalized = deps.trim(key);
     var i;
@@ -236,8 +243,8 @@ export function createTemplateEditor(deps) {
       state.uploadedPrimarySvgSize || deps.extractSvgSize(state.uploadedPrimarySvg);
 
     return deps.normalizeSpec({
-      symbolId: symbolId,
-      templateName: templateName,
+      symbolId,
+      templateName,
       title: deps.trim(current.title) || templateName,
       svg: state.uploadedPrimarySvg,
       size: {
@@ -263,9 +270,9 @@ export function createTemplateEditor(deps) {
       device: current.device || {},
       ports: current.ports || [],
       labels: current.labels || [],
-      schema: schema,
+      schema,
       data: current.data || {},
-      variantField: variantField,
+      variantField,
       svgVariants: collectVariantMap(),
       variantLayouts: collectVariantLayouts(),
     });
@@ -286,7 +293,7 @@ export function createTemplateEditor(deps) {
 
   function updateSelectedItem(type, id) {
     state.selectedItem =
-      type != null && id != null ? { type: type, id: id } : null;
+      type != null && id != null ? { type, id } : null;
   }
 
   function deleteSelectedItem() {
@@ -618,7 +625,7 @@ export function createTemplateEditor(deps) {
                 {
                   id: labelId,
                   text: "文本",
-                  binding: binding,
+                  binding,
                   x: point.x,
                   y: point.y,
                   width: 120,
@@ -1338,7 +1345,7 @@ export function createTemplateEditor(deps) {
 
         return {
           id: deps.nextItemId("variant"),
-          key: key,
+          key,
           svg: spec.svgVariants[key],
           name: key + ".svg",
           ports: deps.normalizePortLayout(variantLayout.ports || []),
@@ -1713,7 +1720,7 @@ export function createTemplateEditor(deps) {
 
     return {
       window: wnd,
-      container: container,
+      container,
       loadTemplate: function (template) {
         loadTemplateIntoEditor(template);
       },
@@ -1746,11 +1753,11 @@ export function createTemplateEditor(deps) {
   }
 
   return {
-    createWindow: createWindow,
-    deleteSelectedItem: deleteSelectedItem,
-    openEditorWithTemplate: openEditorWithTemplate,
-    toggleWindow: toggleWindow,
-    updatePreview: updatePreview,
-    updateSelectedItem: updateSelectedItem,
+    createWindow,
+    deleteSelectedItem,
+    openEditorWithTemplate,
+    toggleWindow,
+    updatePreview,
+    updateSelectedItem,
   };
 }

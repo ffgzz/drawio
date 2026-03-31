@@ -55,6 +55,7 @@
   }
   function createPluginState(constants) {
     var state = {
+      // editor 存放模板编辑器及预览相关状态。
       editor: {
         status: null,
         symbolIdInput: null,
@@ -78,6 +79,7 @@
         variantItems: [],
         draftSaveTimer: null
       },
+      // windows 只记录各弹窗/窗口实例。
       windows: {
         templateEditor: null,
         templateBrowser: null,
@@ -87,6 +89,7 @@
       library: {
         images: []
       },
+      // backend 记录当前与后端图纸会话相关的上下文。
       backend: {
         baseUrl: constants.BACKEND_DEFAULT_BASE_URL,
         actorId: "local-user",
@@ -95,6 +98,7 @@
         diagramVersion: 0,
         lastSnapshot: null
       },
+      // canvas 存放图编辑器运行期的保护开关和变更记录。
       canvas: {
         updatingModel: false,
         allowProtectedDelete: false,

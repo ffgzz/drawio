@@ -1,9 +1,15 @@
+/**
+ * 图框域模型。
+ * 负责图框配置归一化、图框查找、分页编号和图框 cell 创建。
+ */
+// 图框是很多插入逻辑的锚点，所以它的定位函数会被多个模块复用。
 export function createFrameDomain(deps) {
   var ctx = deps.ctx;
   var graph = ctx.graph;
   var model = ctx.model;
   var state = ctx.state;
 
+  // 图框主体样式保持固定，避免被误编辑或误删除。
   function makeFrameStyle() {
     return (
       "shape=rectangle;fillColor=none;strokeColor=#6b7280;strokeWidth=2;" +
@@ -12,6 +18,7 @@ export function createFrameDomain(deps) {
     );
   }
 
+  // 页码标签是图框内部的只读子节点。
   function makeFrameLabelStyle() {
     return (
       "text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;" +
@@ -20,6 +27,7 @@ export function createFrameDomain(deps) {
     );
   }
 
+  // normalizeFrameConfig 用于兜底尺寸输入，避免生成过小图框。
   function normalizeFrameConfig(raw) {
     raw = deps.isObject(raw) ? raw : {};
 
@@ -335,20 +343,20 @@ export function createFrameDomain(deps) {
   }
 
   return {
-    addTopLevelCell: addTopLevelCell,
-    createDrawingFrameCell: createDrawingFrameCell,
-    findDrawingFrame: findDrawingFrame,
-    findFrameById: findFrameById,
-    getActiveFrame: getActiveFrame,
-    getAllDrawingFrames: getAllDrawingFrames,
-    getBottommostFrame: getBottommostFrame,
-    getFrameChildInsertPoint: getFrameChildInsertPoint,
-    getFrameConfig: getFrameConfig,
-    getFrameGroupId: getFrameGroupId,
-    getFramePageNumber: getFramePageNumber,
-    getLeftmostFrame: getLeftmostFrame,
-    getMaxFramePageNumberInGroup: getMaxFramePageNumberInGroup,
-    getRightmostFrameInGroup: getRightmostFrameInGroup,
-    normalizeFrameConfig: normalizeFrameConfig,
+    addTopLevelCell,
+    createDrawingFrameCell,
+    findDrawingFrame,
+    findFrameById,
+    getActiveFrame,
+    getAllDrawingFrames,
+    getBottommostFrame,
+    getFrameChildInsertPoint,
+    getFrameConfig,
+    getFrameGroupId,
+    getFramePageNumber,
+    getLeftmostFrame,
+    getMaxFramePageNumberInGroup,
+    getRightmostFrameInGroup,
+    normalizeFrameConfig,
   };
 }

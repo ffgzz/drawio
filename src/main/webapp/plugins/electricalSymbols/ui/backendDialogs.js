@@ -1,3 +1,8 @@
+/**
+ * 后端相关对话框。
+ * 负责保存、加载、回滚三个面向用户的窗口，不直接承担后端通信细节。
+ */
+// 这里主要做表单与按钮布局，实际请求都走 backend service。
 export function createBackendDialogs(deps) {
   var ctx = deps.ctx;
   var state = ctx.state;
@@ -331,7 +336,7 @@ export function createBackendDialogs(deps) {
             actorId: trim(commit.actorId),
             commitType: trim(commit.commitType) || "normal",
             createdAt: trim(commit.createdAt),
-            rollbackTargetVersion: rollbackTargetVersion,
+            rollbackTargetVersion,
           };
         }),
       );
@@ -424,8 +429,8 @@ export function createBackendDialogs(deps) {
   }
 
   return {
-    openBackendLoadDialog: openBackendLoadDialog,
-    openBackendRollbackDialog: openBackendRollbackDialog,
-    openBackendSaveDialog: openBackendSaveDialog,
+    openBackendLoadDialog,
+    openBackendRollbackDialog,
+    openBackendSaveDialog,
   };
 }

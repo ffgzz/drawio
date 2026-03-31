@@ -1,3 +1,7 @@
+/**
+ * UI 和 runtime 装配层。
+ * 这个文件把窗口、动作、graph hook 和运行模式组合起来，对外只暴露安装结果。
+ */
 import {
   createCanvasActions,
   installCanvasFeatures,
@@ -14,14 +18,16 @@ import { openTemplateBrowserDialog as showTemplateBrowserDialog } from "../ui/te
 import { createTemplateEditor as createTemplateEditorUi } from "../ui/templateEditor.js";
 import { openEditInstanceDialog as showInstanceEditorDialog } from "../ui/instanceEditor.js";
 
+// 这里把“面向用户的 UI 能力”和“面向图编辑器的运行时能力”分开装配。
 export function createUiRuntime(bundle) {
   var ctx = bundle.ctx;
   var constants = bundle.constants;
   var uiApi = bundle.ui;
   var runtimeApi = bundle.runtime;
 
+  // 配电柜相关对话框由独立 UI 模块管理。
   var cabinetDialogs = createCabinetDialogs({
-    ctx: ctx,
+    ctx,
     trim: bundle.trim,
     clamp: bundle.clamp,
     toInt: bundle.toInt,
@@ -42,9 +48,10 @@ export function createUiRuntime(bundle) {
   uiApi.openInsertCabinetDialog = cabinetDialogs.openInsertCabinetDialog;
   uiApi.openCabinetGapDialog = cabinetDialogs.openCabinetGapDialog;
 
+  // 图框插入对话框只做 UI，真正的图框创建仍走 domain 层。
   uiApi.openInsertFrameDialog = function () {
     return showInsertFrameDialog({
-      ctx: ctx,
+      ctx,
       cloneJson: bundle.cloneJson,
       normalizeFrameConfig: bundle.normalizeFrameConfig,
       findDrawingFrame: bundle.findDrawingFrame,
@@ -63,15 +70,17 @@ export function createUiRuntime(bundle) {
     });
   };
 
+  // SVG 导出仍保持为独立对话框，避免和其它窗口状态耦合。
   uiApi.openSvgExportDialog = function () {
     return showSvgExportDialog({
-      ctx: ctx,
+      ctx,
       toInt: bundle.toInt,
       createButton: bundle.createButton,
       showStatus: bundle.showStatus,
     });
   };
 
+  // 从图库创建实例时，只通过注入的纯依赖与业务层交互。
   uiApi.openCreateFromLibraryDialog = function (preferredSymbolId) {
     return showCreateInstanceDialog(
       {
@@ -93,9 +102,10 @@ export function createUiRuntime(bundle) {
     );
   };
 
+  // 模板浏览器负责查看、编辑和从模板创建实例。
   uiApi.openTemplateBrowserDialog = function () {
     return showTemplateBrowserDialog({
-      ctx: ctx,
+      ctx,
       library: bundle.libraryStore,
       getLibraryEntrySpec: bundle.libraryStore.getLibraryEntrySpec,
       showStatus: bundle.showStatus,
@@ -112,8 +122,9 @@ export function createUiRuntime(bundle) {
     });
   };
 
+  // 模板编辑器是主窗口，也是状态最复杂的 UI 模块。
   var templateEditorUi = createTemplateEditorUi({
-    ctx: ctx,
+    ctx,
     trim: bundle.trim,
     cloneJson: bundle.cloneJson,
     normalizePortLayout: bundle.normalizePortLayout,
@@ -156,9 +167,10 @@ export function createUiRuntime(bundle) {
   uiApi.toggleWindow = templateEditorUi.toggleWindow;
   uiApi.openEditorWithTemplate = templateEditorUi.openEditorWithTemplate;
 
+  // 实例编辑器只面向当前选中的 root，不直接操作全局模板状态。
   uiApi.openEditInstanceDialog = function () {
     return showInstanceEditorDialog({
-      ctx: ctx,
+      ctx,
       findElectricalRoot: bundle.findElectricalRoot,
       showStatus: bundle.showStatus,
       extractSpec: bundle.extractSpec,
@@ -179,8 +191,9 @@ export function createUiRuntime(bundle) {
     });
   };
 
+  // 画布动作封装了插入、刷新、清屏这三类“用户动作 -> graph 写操作”。
   var canvasActions = createCanvasActions({
-    ctx: ctx,
+    ctx,
     getFrameChildInsertPoint: bundle.getFrameChildInsertPoint,
     buildSymbolCell: bundle.buildSymbolCell,
     getActiveFrame: bundle.getActiveFrame,
@@ -220,8 +233,9 @@ export function createUiRuntime(bundle) {
   uiApi.insertIntoGraph = canvasActions.insertIntoGraph;
   uiApi.refreshSelection = canvasActions.refreshSelection;
 
+  // 后端相关对话框统一托管到一个 UI 模块，避免重复表单逻辑。
   var backendDialogs = createBackendDialogs({
-    ctx: ctx,
+    ctx,
     backend: bundle.backendService,
     trim: bundle.trim,
     showStatus: bundle.showStatus,
@@ -233,8 +247,9 @@ export function createUiRuntime(bundle) {
   uiApi.openBackendLoadDialog = backendDialogs.openBackendLoadDialog;
   uiApi.openBackendRollbackDialog = backendDialogs.openBackendRollbackDialog;
 
+  // 更换挂点模式是一个独立的运行态，需要维护 overlay 和点击行为。
   var portSwapMode = createPortSwapMode({
-    ctx: ctx,
+    ctx,
     trim: bundle.trim,
     cloneJson: bundle.cloneJson,
     parsePortLayout: bundle.parsePortLayout,
@@ -278,14 +293,16 @@ export function createUiRuntime(bundle) {
     setSelectedCabinetGap: bundle.setSelectedCabinetGap,
   });
 
+  // 连接约束 hook 要在挂点模式之后安装，确保元数据写回逻辑已准备好。
   bundle.connectionConstraints.installGraphBehavior({
     applyEdgePortConstraintMetadata:
       runtimeApi.applyEdgePortConstraintMetadata,
     setCanvasStatus: bundle.setCanvasStatus,
   });
 
+  // 组合模式负责 overlay、拖拽候选过滤和最终挂接。
   var composeMode = createComposeMode({
-    ctx: ctx,
+    ctx,
     trim: bundle.trim,
     clamp: bundle.clamp,
     padding: constants.INSTANCE_COMPOSE_ZONE_PADDING,
@@ -324,8 +341,9 @@ export function createUiRuntime(bundle) {
     composeMode.collectComposeDragCandidates;
   runtimeApi.enterInstanceComposeMode = composeMode.enterInstanceComposeMode;
 
+  // modelSync 用于监听模型变化并维护快照差异记录。
   var modelSync = createModelSync({
-    ctx: ctx,
+    ctx,
     isObject: bundle.isObject,
     cloneJson: bundle.cloneJson,
     exportDiagramSnapshot: bundle.exportDiagramSnapshot,
@@ -338,8 +356,9 @@ export function createUiRuntime(bundle) {
 
   return {
     installCanvas: function () {
+      // 所有 action 注册、菜单注入、graph hook 都在这里统一挂到 draw.io 上。
       installCanvasFeatures({
-        ctx: ctx,
+        ctx,
         createButton: bundle.createButton,
         toggleWindow: uiApi.toggleWindow,
         openTemplateBrowserDialog: uiApi.openTemplateBrowserDialog,

@@ -1,3 +1,8 @@
+/**
+ * 后端服务层。
+ * 负责后端地址归一化、会话持久化、HTTP 请求和图纸版本链交互。
+ */
+// 所有后端读写都从这里经过，UI 层只拿结果，不直接写 fetch。
 export function createBackendService(deps) {
   var ctx = deps.ctx;
   var state = ctx.state;
@@ -7,6 +12,7 @@ export function createBackendService(deps) {
   var cloneJson = deps.cloneJson;
   var isObject = deps.isObject;
 
+  // 本地默认 /api，同时对 localhost/127.0.0.1 的冗余地址做收敛。
   function normalizeBackendBaseUrl(url) {
     var normalized = trim(url).replace(/\/+$/, "");
 
@@ -24,6 +30,7 @@ export function createBackendService(deps) {
     return normalized;
   }
 
+  // 启动时从 localStorage 恢复上一次图纸会话。
   function loadBackendSession() {
     if (typeof localStorage === "undefined") {
       return;
@@ -61,6 +68,7 @@ export function createBackendService(deps) {
     }
   }
 
+  // 每次保存或切换图纸后都要把后端会话写回本地。
   function saveBackendSession() {
     if (typeof localStorage === "undefined") {
       return;
@@ -87,7 +95,7 @@ export function createBackendService(deps) {
 
   function requestBackendJson(method, url, body) {
     var options = {
-      method: method,
+      method,
       headers: {
         Accept: "application/json",
       },
@@ -246,10 +254,10 @@ export function createBackendService(deps) {
       backendUrl + "/diagrams/" + encodeURIComponent(diagramId) + "/commits",
       {
         baseVersion: Math.max(0, state.backendDiagramVersion),
-        actorId: actorId,
+        actorId,
         touchedObjectIds: diff.touchedObjectIds,
         changes: diff.changes,
-        snapshot: snapshot,
+        snapshot,
       },
     );
 
@@ -341,17 +349,16 @@ export function createBackendService(deps) {
   }
 
   return {
-    getDiagramHistoryFromBackend: getDiagramHistoryFromBackend,
-    listDiagramsFromBackend: listDiagramsFromBackend,
-    loadBackendSession: loadBackendSession,
-    loadDiagramFromBackend: loadDiagramFromBackend,
-    normalizeBackendBaseUrl: normalizeBackendBaseUrl,
-    requestBackendJson: requestBackendJson,
-    resetBackendBinding: resetBackendBinding,
-    rollbackDiagramToVersion: rollbackDiagramToVersion,
-    saveBackendSession: saveBackendSession,
-    saveDiagramToBackend: saveDiagramToBackend,
-    syncBackendState: syncBackendState,
+    getDiagramHistoryFromBackend,
+    listDiagramsFromBackend,
+    loadBackendSession,
+    loadDiagramFromBackend,
+    normalizeBackendBaseUrl,
+    requestBackendJson,
+    resetBackendBinding,
+    rollbackDiagramToVersion,
+    saveBackendSession,
+    saveDiagramToBackend,
+    syncBackendState,
   };
 }
-
