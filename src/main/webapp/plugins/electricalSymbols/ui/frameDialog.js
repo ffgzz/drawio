@@ -6,9 +6,7 @@
 export function openInsertFrameDialog(deps) {
   var ctx = deps.ctx;
   var graph = ctx.graph;
-  var model = ctx.model;
   var state = ctx.state;
-  var constants = ctx.constants;
   var defaultConfig = deps.normalizeFrameConfig(state.frameConfig || {});
   var selectedFrame = deps.findDrawingFrame(graph.getSelectionCell());
   var existingFrames = deps.getAllDrawingFrames();
@@ -75,56 +73,7 @@ export function openInsertFrameDialog(deps) {
       width: widthInput.value,
       height: heightInput.value,
     });
-    var groupId =
-      selectedFrame != null
-        ? deps.getFrameGroupId(selectedFrame)
-        : deps.generateFrameGroupId();
-    var nextPageNumber =
-      selectedFrame != null
-        ? deps.getMaxFramePageNumberInGroup(groupId) + 1
-        : 1;
-    var frame = deps.createDrawingFrameCell(config, nextPageNumber, {
-      groupId,
-    });
-    state.frameConfig = deps.cloneJson(config);
-
-    if (selectedFrame != null) {
-      var anchorFrame =
-        deps.getRightmostFrameInGroup(groupId) || selectedFrame;
-      var anchorGeometry = model.getGeometry(anchorFrame);
-      frame.geometry = frame.geometry.clone();
-      frame.geometry.x =
-        anchorGeometry.x +
-        anchorGeometry.width +
-        constants.FRAME_HORIZONTAL_GAP;
-      frame.geometry.y = anchorGeometry.y;
-      deps.addTopLevelCell(frame);
-      graph.setSelectionCell(frame);
-    } else if (existingFrames.length > 0) {
-      var leftmostFrame = deps.getLeftmostFrame();
-      var bottommostFrame = deps.getBottommostFrame();
-      var leftGeometry =
-        leftmostFrame != null ? model.getGeometry(leftmostFrame) : null;
-      var bottomGeometry =
-        bottommostFrame != null ? model.getGeometry(bottommostFrame) : null;
-      frame.geometry = frame.geometry.clone();
-      frame.geometry.x = leftGeometry != null ? leftGeometry.x : 0;
-      frame.geometry.y =
-        bottomGeometry != null
-          ? bottomGeometry.y +
-            bottomGeometry.height +
-            constants.FRAME_VERTICAL_GAP
-          : 0;
-      deps.addTopLevelCell(frame);
-      graph.setSelectionCell(frame);
-    } else {
-      var point = graph.getFreeInsertPoint();
-      graph.setSelectionCells(graph.importCells([frame], point.x, point.y));
-    }
-
-    graph.scrollCellToVisible(graph.getSelectionCell());
-    deps.showStatus("已插入图框", false);
-    deps.setCanvasStatus("已插入图框");
+    deps.insertFrame(config, selectedFrame, existingFrames);
     wnd.destroy();
   });
   submitButton.style.marginTop = "0";

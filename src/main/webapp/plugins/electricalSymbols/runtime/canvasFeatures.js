@@ -2,10 +2,8 @@
  * 画布运行时行为。
  * 负责 action 注册、菜单注入、画布保护逻辑以及与组合模式相关的鼠标监听。
  */
-import { installTopActionBar } from "../ui/topActionBar.js";
-
 // 顶部动作栏按钮顺序在这里集中维护。
-var ACTION_ITEMS = [
+export var ACTION_ITEMS = [
   { resourceKey: "electricalSymbols", actionKey: "electricalSymbols" },
   { resourceKey: "electricalBrowse", actionKey: "electricalBrowse" },
   { resourceKey: "electricalCreate", actionKey: "electricalCreate" },
@@ -69,143 +67,16 @@ var EXTRA_MENU_ACTIONS = [
   "electricalRollbackBackend",
 ];
 
-// createCanvasActions 封装“会改动 graph/model 的用户动作”。
-export function createCanvasActions(deps) {
-  var ctx = deps.ctx;
-  var graph = ctx.graph;
-  var model = ctx.model;
-  var state = ctx.state;
-
-  function getDefaultParentChildren() {
-    var parent = graph.getDefaultParent();
-    var cells = [];
-    var i;
-
-    for (i = 0; i < model.getChildCount(parent); i++) {
-      cells.push(model.getChildAt(parent, i));
-    }
-
-    return cells;
-  }
-
-  function insertCellIntoFrame(cell, frame) {
-    var insertPoint = deps.getFrameChildInsertPoint(
-      frame,
-      cell.geometry != null ? cell.geometry.width : 0,
-      cell.geometry != null ? cell.geometry.height : 0,
-    );
-    graph.setSelectionCells(
-      graph.importCells([cell], insertPoint.x, insertPoint.y, frame),
-    );
-    graph.scrollCellToVisible(graph.getSelectionCell());
-  }
-
-  // 插入图元时优先放进当前激活图框，否则回退到画布自由插入点。
-  function insertIntoGraph(spec) {
-    var root = deps.buildSymbolCell(spec);
-    var frame = deps.getActiveFrame(false);
-
-    if (frame != null) {
-      insertCellIntoFrame(root, frame);
-    } else {
-      var pt = graph.getFreeInsertPoint();
-      graph.setSelectionCells(graph.importCells([root], pt.x, pt.y));
-    }
-
-    graph.scrollCellToVisible(graph.getSelectionCell());
-    deps.showStatus("已插入图元", false);
-    deps.setCanvasStatus("已插入图元");
-  }
-
-  // refreshSelection 同时支持普通图元刷新和配电柜重排。
-  function refreshSelection() {
-    var root = deps.findElectricalRoot(graph.getSelectionCell());
-    var cabinet = deps.findCabinetSegment(graph.getSelectionCell());
-
-    if (cabinet != null) {
-      try {
-        state.updatingModel = true;
-        model.beginUpdate();
-        deps.relayoutCabinetByModel(deps.extractCabinetModel(cabinet));
-        deps.showStatus("配电柜已刷新", false);
-        deps.setCanvasStatus("配电柜已刷新");
-      } catch (e) {
-        deps.showStatus(e.message || String(e), true);
-        deps.setCanvasStatus(e.message || String(e));
-      } finally {
-        model.endUpdate();
-        state.updatingModel = false;
-      }
-      return;
-    }
-
-    if (root == null) {
-      deps.showStatus("请先选择一个电气图元", true);
-      return;
-    }
-
-    state.updatingModel = true;
-    model.beginUpdate();
-
-    try {
-      deps.refreshRoot(root);
-    } catch (e) {
-      deps.showStatus(e.message || String(e), true);
-      return;
-    } finally {
-      model.endUpdate();
-      state.updatingModel = false;
-    }
-
-    deps.showStatus("电气图元已刷新", false);
-  }
-
-  // 清屏前要退出会拦截交互的运行模式，避免残留状态污染下一页。
-  function clearCurrentPage() {
-    var cells = getDefaultParentChildren();
-
-    if (cells.length == 0) {
-      deps.showStatus("当前页面没有可清除的内容", false);
-      return;
-    }
-
-    if (!mxUtils.confirm("确认清除当前页面所有内容？")) {
-      return;
-    }
-
-    if (!mxUtils.confirm("此操作不可恢复，确定继续清除吗？")) {
-      return;
-    }
-
-    deps.closeGapDialogWindow();
-    deps.setSelectedCabinetGap(null, null);
-    deps.exitPortSwapMode(false);
-    deps.exitInstanceComposeMode(false);
-
-    state.allowProtectedDelete = true;
-
-    try {
-      graph.removeCells(cells, true);
-      deps.showStatus("已清空当前页面", false);
-    } finally {
-      state.allowProtectedDelete = false;
-    }
-  }
-
-  return {
-    clearCurrentPage,
-    insertIntoGraph,
-    refreshSelection,
-  };
-}
-
 // installCanvasFeatures 负责把所有 action 和 hook 真正挂到 draw.io 上。
-export function installCanvasFeatures(deps) {
-  var ctx = deps.ctx;
+export function installCanvasFeatures(app) {
+  var ctx = app.ctx;
   var graph = ctx.graph;
   var model = ctx.model;
   var state = ctx.state;
   var ui = ctx.ui;
+  var actions = app.actions;
+  var helpers = app.helpers;
+  var runtimeBridge = app.runtimeBridge;
   var graphIsCellDeletable = graph.isCellDeletable;
   var graphIsCellMovable = graph.isCellMovable;
   var graphIsCellSelectable = graph.isCellSelectable;
@@ -215,7 +86,7 @@ export function installCanvasFeatures(deps) {
   var oldExtrasMenu = menu.funct;
 
   graph.isCellDeletable = function (cell) {
-    if (deps.isDrawingFrame(cell)) {
+    if (helpers.isDrawingFrame(cell)) {
       return !!state.allowProtectedDelete;
     }
 
@@ -223,7 +94,10 @@ export function installCanvasFeatures(deps) {
   };
 
   graph.isCellMovable = function (cell) {
-    if (deps.isBlockedComposeTarget(cell) || deps.isLockedComposedChild(cell)) {
+    if (
+      runtimeBridge.isBlockedComposeTarget(cell) ||
+      runtimeBridge.isLockedComposedChild(cell)
+    ) {
       return false;
     }
 
@@ -231,7 +105,7 @@ export function installCanvasFeatures(deps) {
   };
 
   graph.isCellSelectable = function (cell) {
-    if (deps.isBlockedComposeTarget(cell)) {
+    if (runtimeBridge.isBlockedComposeTarget(cell)) {
       return false;
     }
 
@@ -239,7 +113,7 @@ export function installCanvasFeatures(deps) {
   };
 
   graph.selectCellForEvent = function (cell) {
-    if (deps.isBlockedComposeTarget(cell)) {
+    if (runtimeBridge.isBlockedComposeTarget(cell)) {
       return;
     }
 
@@ -252,7 +126,7 @@ export function installCanvasFeatures(deps) {
     var i;
 
     for (i = 0; i < result.length; i++) {
-      if (!deps.isBlockedComposeTarget(result[i])) {
+      if (!runtimeBridge.isBlockedComposeTarget(result[i])) {
         filtered.push(result[i]);
       }
     }
@@ -260,102 +134,35 @@ export function installCanvasFeatures(deps) {
     return filtered;
   };
 
-  ui.actions.addAction("electricalSymbols", function () {
-    deps.toggleWindow();
-  });
-  ui.actions.addAction("electricalBrowse", function () {
-    deps.openTemplateBrowserDialog();
-  });
-  ui.actions.addAction("electricalCreate", function () {
-    deps.openCreateFromLibraryDialog();
-  });
-  ui.actions.addAction("electricalEditInstance", function () {
-    deps.openEditInstanceDialog();
-  });
-  ui.actions.addAction("electricalComposeInstance", function () {
-    deps.enterInstanceComposeMode();
-  });
-  ui.actions.addAction("electricalInsertFrame", function () {
-    deps.openInsertFrameDialog();
-  });
-  ui.actions.addAction("electricalInsertCabinet", function () {
-    deps.openInsertCabinetDialog();
-  });
-  ui.actions.addAction("electricalReassignPort", function () {
-    deps.enterPortSwapMode();
-  });
-  ui.actions.addAction("electricalRefresh", function () {
-    deps.refreshSelection();
-  });
-  ui.actions.addAction("electricalExportSvg", function () {
-    try {
-      deps.openSvgExportDialog();
-    } catch (e) {
-      deps.showStatus(e.message || String(e), true);
-    }
-  });
-  ui.actions.addAction("electricalSaveBackend", function () {
-    try {
-      deps.openBackendSaveDialog();
-    } catch (e) {
-      deps.showStatus(e.message || String(e), true);
-    }
-  });
-  ui.actions.addAction("electricalNewBackend", function () {
-    try {
-      deps.resetBackendBinding();
-      deps.showStatus("已新建后端图纸会话，下一次保存将创建新图纸", false);
-    } catch (e) {
-      deps.showStatus(e.message || String(e), true);
-    }
-  });
-  ui.actions.addAction("electricalLoadBackend", function () {
-    try {
-      deps.openBackendLoadDialog();
-    } catch (e) {
-      deps.showStatus(e.message || String(e), true);
-    }
-  });
-  ui.actions.addAction("electricalRollbackBackend", function () {
-    try {
-      deps.openBackendRollbackDialog();
-    } catch (e) {
-      deps.showStatus(e.message || String(e), true);
-    }
-  });
-  ui.actions.addAction("electricalClearScreen", function () {
-    try {
-      deps.clearCurrentPage();
-    } catch (e) {
-      state.allowProtectedDelete = false;
-      deps.showStatus(e.message || String(e), true);
-    }
-  });
+  ui.actions.addAction("electricalSymbols", actions.electricalSymbols);
+  ui.actions.addAction("electricalBrowse", actions.electricalBrowse);
+  ui.actions.addAction("electricalCreate", actions.electricalCreate);
+  ui.actions.addAction("electricalEditInstance", actions.electricalEditInstance);
+  ui.actions.addAction(
+    "electricalComposeInstance",
+    actions.electricalComposeInstance,
+  );
+  ui.actions.addAction("electricalInsertFrame", actions.electricalInsertFrame);
+  ui.actions.addAction(
+    "electricalInsertCabinet",
+    actions.electricalInsertCabinet,
+  );
+  ui.actions.addAction("electricalReassignPort", actions.electricalReassignPort);
+  ui.actions.addAction("electricalRefresh", actions.electricalRefresh);
+  ui.actions.addAction("electricalExportSvg", actions.electricalExportSvg);
+  ui.actions.addAction("electricalSaveBackend", actions.electricalSaveBackend);
+  ui.actions.addAction("electricalNewBackend", actions.electricalNewBackend);
+  ui.actions.addAction("electricalLoadBackend", actions.electricalLoadBackend);
+  ui.actions.addAction(
+    "electricalRollbackBackend",
+    actions.electricalRollbackBackend,
+  );
+  ui.actions.addAction("electricalClearScreen", actions.electricalClearScreen);
 
   menu.funct = function (nextMenu, parent) {
     oldExtrasMenu.apply(this, arguments);
     ui.menus.addMenuItems(nextMenu, EXTRA_MENU_ACTIONS, parent);
   };
-
-  installTopActionBar({
-    ui,
-    createButton: deps.createButton,
-    items: ACTION_ITEMS,
-  });
-  ui.addListener("languageChanged", function () {
-    installTopActionBar({
-      ui,
-      createButton: deps.createButton,
-      items: ACTION_ITEMS,
-    });
-  });
-  ui.addListener("currentThemeChanged", function () {
-    installTopActionBar({
-      ui,
-      createButton: deps.createButton,
-      items: ACTION_ITEMS,
-    });
-  });
 
   graph.addMouseListener({
     mouseDown: function (sender, me) {
@@ -372,18 +179,18 @@ export function installCanvasFeatures(deps) {
       session.startPoint = null;
       session.dragCandidates = [];
 
-      if (deps.isBlockedComposeTarget(eventCell)) {
-        deps.refreshInstanceComposeOverlay();
+      if (runtimeBridge.isBlockedComposeTarget(eventCell)) {
+        runtimeBridge.refreshInstanceComposeOverlay();
         return;
       }
 
-      session.dragCandidates = deps.collectComposeDragCandidates(
+      session.dragCandidates = runtimeBridge.collectComposeDragCandidates(
         session.root,
         eventCell,
       );
 
       if (session.dragCandidates.length == 0) {
-        deps.refreshInstanceComposeOverlay();
+        runtimeBridge.refreshInstanceComposeOverlay();
         return;
       }
 
@@ -412,7 +219,7 @@ export function installCanvasFeatures(deps) {
 
       if (dx > 2 || dy > 2) {
         session.dragging = true;
-        deps.refreshInstanceComposeOverlay();
+        runtimeBridge.refreshInstanceComposeOverlay();
       }
     },
     mouseUp: function () {
@@ -426,25 +233,25 @@ export function installCanvasFeatures(deps) {
       session.dragging = false;
       session.startPoint = null;
       session.dragCandidates = [];
-      deps.refreshInstanceComposeOverlay();
+      runtimeBridge.refreshInstanceComposeOverlay();
     },
   });
   mxEvent.addListener(
     graph.container,
     "scroll",
-    deps.refreshInstanceComposeOverlay,
+    runtimeBridge.refreshInstanceComposeOverlay,
   );
-  graph.view.addListener(mxEvent.SCALE, deps.refreshInstanceComposeOverlay);
+  graph.view.addListener(mxEvent.SCALE, runtimeBridge.refreshInstanceComposeOverlay);
   graph.view.addListener(
     mxEvent.SCALE_AND_TRANSLATE,
-    deps.refreshInstanceComposeOverlay,
+    runtimeBridge.refreshInstanceComposeOverlay,
   );
   graph.view.addListener(
     mxEvent.TRANSLATE,
-    deps.refreshInstanceComposeOverlay,
+    runtimeBridge.refreshInstanceComposeOverlay,
   );
 
-  state.lastOperationSnapshot = deps.exportDiagramSnapshot();
-  model.addListener(mxEvent.CHANGE, deps.recordCanvasOperation);
-  model.addListener(mxEvent.CHANGE, deps.handleModelChange);
+  state.lastOperationSnapshot = app.domains.snapshot.exportDiagramSnapshot();
+  model.addListener(mxEvent.CHANGE, runtimeBridge.recordCanvasOperation);
+  model.addListener(mxEvent.CHANGE, runtimeBridge.handleModelChange);
 }

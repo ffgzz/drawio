@@ -12,7 +12,6 @@ import {
 export function openEditInstanceDialog(deps) {
   var ctx = deps.ctx;
   var graph = ctx.graph;
-  var model = ctx.model;
   var state = ctx.state;
   var root = deps.findElectricalRoot(graph.getSelectionCell());
 
@@ -463,26 +462,13 @@ export function openEditInstanceDialog(deps) {
   container.appendChild(buttons);
 
   var applyButton = deps.createButton("应用到图元", function () {
-    if (root.parent == null) {
-      updateEditorStatus("当前图元已不存在，无法应用修改", true);
-      return;
-    }
-
-    state.updatingModel = true;
-    model.beginUpdate();
-
     try {
-      deps.syncRoot(root, editorState.spec, editorState.spec.ports);
-      graph.setSelectionCell(root);
+      deps.applyInstanceSpec(root, editorState.spec);
     } catch (e) {
       updateEditorStatus(e.message || String(e), true);
       return;
-    } finally {
-      model.endUpdate();
-      state.updatingModel = false;
     }
 
-    deps.showStatus("已更新图元实例", false);
     updateEditorStatus("已更新图元实例", false);
 
     if (state.instanceWindow != null) {

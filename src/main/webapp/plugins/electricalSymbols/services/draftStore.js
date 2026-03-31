@@ -4,9 +4,8 @@
  */
 // 这里故意只处理草稿，不掺入模板图库逻辑。
 export function createDraftStore(deps) {
-  var ctx = deps.ctx;
-  var state = ctx.state;
-  var storageKey = ctx.constants.TEMPLATE_DRAFT_STORAGE_KEY;
+  var state = deps.state;
+  var storageKey = deps.storageKey;
   var trim = deps.trim;
   var cloneJson = deps.cloneJson;
 

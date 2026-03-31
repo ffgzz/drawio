@@ -5,8 +5,6 @@
 // 由于 gap 对话框是悬浮在画布附近的小窗，所以这里还负责计算弹窗位置。
 export function createCabinetDialogs(deps) {
   var ctx = deps.ctx;
-  var graph = ctx.graph;
-  var model = ctx.model;
   var state = ctx.state;
   var constants = ctx.constants;
   var trim = deps.trim;
@@ -161,29 +159,13 @@ export function createCabinetDialogs(deps) {
         portCount: countInput.value,
       });
 
-      state.updatingModel = true;
-      model.beginUpdate();
-
       try {
-        deps.relayoutCabinetByModel(cabinetModel);
+        deps.insertCabinet(cabinetModel);
       } catch (e) {
         deps.showStatus(e.message || String(e), true);
         deps.setCanvasStatus(e.message || String(e));
         return;
-      } finally {
-        model.endUpdate();
-        state.updatingModel = false;
       }
-
-      var segments = deps.findCabinetSegments(cabinetModel.logicalCabinetId);
-
-      if (segments.length > 0) {
-        graph.setSelectionCell(segments[0]);
-        graph.scrollCellToVisible(segments[0]);
-      }
-
-      deps.showStatus("已插入配电柜", false);
-      deps.setCanvasStatus("已插入配电柜");
       wnd.destroy();
     });
     submitButton.style.marginTop = "0";
@@ -272,21 +254,13 @@ export function createCabinetDialogs(deps) {
       }
 
       cabinetModel.gapRatios[gapIndex] = ratio;
-      state.updatingModel = true;
-      model.beginUpdate();
 
       try {
-        deps.relayoutCabinetByModel(cabinetModel);
+        deps.updateCabinetGap(cabinetModel);
       } catch (e) {
         error.innerText = e.message || String(e);
         return;
-      } finally {
-        model.endUpdate();
-        state.updatingModel = false;
       }
-
-      deps.showStatus("已更新端子间距", false);
-      deps.setCanvasStatus("已更新端子间距");
       wnd.destroy();
     });
     saveButton.style.marginTop = "0";

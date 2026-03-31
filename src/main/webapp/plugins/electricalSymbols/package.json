@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "build": "node_modules\\@esbuild\\win32-x64\\esbuild.exe index.js --bundle --format=iife --platform=browser --target=es2018 --outfile=..\\electricalSymbols.js --banner:js=\"/** Generated file. Edit sources in plugins/electricalSymbols/ instead. Built with npm run build from plugins/electricalSymbols/. */\"",
-    "watch": "node_modules\\@esbuild\\win32-x64\\esbuild.exe index.js --bundle --format=iife --platform=browser --target=es2018 --outfile=..\\electricalSymbols.js --banner:js=\"/** Generated file. Edit sources in plugins/electricalSymbols/ instead. Built with npm run build from plugins/electricalSymbols/. */\" --watch"
+    "watch": "node_modules\\@esbuild\\win32-x64\\esbuild.exe index.js --bundle --format=iife --platform=browser --target=es2018 --outfile=..\\electricalSymbols.js --banner:js=\"/** Generated file. Edit sources in plugins/electricalSymbols/ instead. Built with npm run build from plugins/electricalSymbols/. */\" --watch",
+    "verify:structure": "node scripts\\verify-structure.cjs"
   },
   "devDependencies": {
     "@esbuild/win32-x64": "^0.27.4",
