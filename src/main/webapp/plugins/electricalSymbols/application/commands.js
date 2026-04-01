@@ -3,6 +3,13 @@
  * 所有会直接改 graph/model 的命令统一收口到这里，UI 和 runtime 只调命令，不直接散写模型。
  */
 import { getApp } from "../core/appRuntime.js";
+import { cloneJson } from "../utils/base.js";
+import {
+  generateFrameGroupId,
+  setCanvasStatus,
+  showStatus,
+} from "../core/runtimeHelpers.js";
+import { selectionApi } from "./selection.js";
 
 function getDefaultParentChildren() {
   var app = getApp();
@@ -45,8 +52,8 @@ export function insertIntoGraph(spec) {
   }
 
   graph.scrollCellToVisible(graph.getSelectionCell());
-  app.showStatus("已插入图元", false);
-  app.setCanvasStatus("已插入图元");
+  showStatus("已插入图元", false);
+  setCanvasStatus("已插入图元");
 }
 
 export function refreshSelection() {
@@ -54,8 +61,8 @@ export function refreshSelection() {
   var graph = app.ctx.graph;
   var model = app.ctx.model;
   var state = app.ctx.state;
-  var root = app.selection.getSelectedRoot();
-  var cabinet = app.selection.getSelectedCabinetSegment();
+  var root = selectionApi.getSelectedRoot();
+  var cabinet = selectionApi.getSelectedCabinetSegment();
 
   if (cabinet != null) {
     try {
@@ -64,11 +71,11 @@ export function refreshSelection() {
       app.domains.cabinet.relayoutCabinetByModel(
         app.domains.cabinet.extractCabinetModel(cabinet),
       );
-      app.showStatus("配电柜已刷新", false);
-      app.setCanvasStatus("配电柜已刷新");
+      showStatus("配电柜已刷新", false);
+      setCanvasStatus("配电柜已刷新");
     } catch (e) {
-      app.showStatus(e.message || String(e), true);
-      app.setCanvasStatus(e.message || String(e));
+      showStatus(e.message || String(e), true);
+      setCanvasStatus(e.message || String(e));
     } finally {
       model.endUpdate();
       state.updatingModel = false;
@@ -78,7 +85,7 @@ export function refreshSelection() {
   }
 
   if (root == null) {
-    app.showStatus("请先选择一个电气图元", true);
+    showStatus("请先选择一个电气图元", true);
     return;
   }
 
@@ -88,14 +95,14 @@ export function refreshSelection() {
   try {
     app.domains.symbol.refreshRoot(root);
   } catch (e) {
-    app.showStatus(e.message || String(e), true);
+    showStatus(e.message || String(e), true);
     return;
   } finally {
     model.endUpdate();
     state.updatingModel = false;
   }
 
-  app.showStatus("电气图元已刷新", false);
+  showStatus("电气图元已刷新", false);
 }
 
 export function insertFrame(config, selectedFrame, existingFrames) {
@@ -111,7 +118,7 @@ export function insertFrame(config, selectedFrame, existingFrames) {
     var groupId =
       selectedFrame != null
         ? app.domains.frame.getFrameGroupId(selectedFrame)
-        : app.helpers.generateFrameGroupId();
+        : generateFrameGroupId();
     var nextPageNumber =
       selectedFrame != null
         ? app.domains.frame.getMaxFramePageNumberInGroup(groupId) + 1
@@ -120,7 +127,7 @@ export function insertFrame(config, selectedFrame, existingFrames) {
       groupId,
     });
 
-  state.frameConfig = app.utils.cloneJson(normalizedConfig);
+  state.frameConfig = cloneJson(normalizedConfig);
 
   if (selectedFrame != null) {
       var anchorFrame =
@@ -157,8 +164,8 @@ export function insertFrame(config, selectedFrame, existingFrames) {
   }
 
   graph.scrollCellToVisible(graph.getSelectionCell());
-  app.showStatus("已插入图框", false);
-  app.setCanvasStatus("已插入图框");
+  showStatus("已插入图框", false);
+  setCanvasStatus("已插入图框");
 }
 
 export function insertCabinet(cabinetModel) {
@@ -183,8 +190,8 @@ export function insertCabinet(cabinetModel) {
     graph.scrollCellToVisible(segments[0]);
   }
 
-  app.showStatus("已插入配电柜", false);
-  app.setCanvasStatus("已插入配电柜");
+  showStatus("已插入配电柜", false);
+  setCanvasStatus("已插入配电柜");
 }
 
 export function updateCabinetGap(cabinetModel) {
@@ -201,8 +208,8 @@ export function updateCabinetGap(cabinetModel) {
     state.updatingModel = false;
   }
 
-  app.showStatus("已更新端子间距", false);
-  app.setCanvasStatus("已更新端子间距");
+  showStatus("已更新端子间距", false);
+  setCanvasStatus("已更新端子间距");
 }
 
 export function applyInstanceSpec(root, spec) {
@@ -225,7 +232,7 @@ export function applyInstanceSpec(root, spec) {
     state.updatingModel = false;
   }
 
-  app.showStatus("已更新图元实例", false);
+  showStatus("已更新图元实例", false);
 }
 
 export function clearCurrentPage() {
@@ -235,7 +242,7 @@ export function clearCurrentPage() {
   var cells = getDefaultParentChildren();
 
   if (cells.length == 0) {
-    app.showStatus("当前页面没有可清除的内容", false);
+    showStatus("当前页面没有可清除的内容", false);
     return;
   }
 
@@ -267,7 +274,7 @@ export function clearCurrentPage() {
 
   try {
     graph.removeCells(cells, true);
-    app.showStatus("已清空当前页面", false);
+    showStatus("已清空当前页面", false);
   } finally {
     state.allowProtectedDelete = false;
   }

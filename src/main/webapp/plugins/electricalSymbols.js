@@ -299,21 +299,6 @@
     }
     return result;
   }
-  function createBaseUtils() {
-    return {
-      clamp,
-      cloneJson,
-      deepMerge,
-      generateUuid,
-      isObject,
-      stripFileExtension,
-      toFloat,
-      toInt,
-      toSlug,
-      trim,
-      uniqueStrings
-    };
-  }
 
   // utils/xml.js
   function createNode(tagName) {
@@ -367,22 +352,6 @@
       height: Math.max(20, Math.round(isNaN(height) ? 80 : height))
     };
   }
-  function createXmlUtils() {
-    var deps = arguments.length > 0 ? arguments[0] : null;
-    var trim2 = deps != null ? deps.trim : trim;
-    return {
-      cloneValue,
-      createMetaCell,
-      createNode,
-      extractSvgSize: function(svg, toFloat2) {
-        return extractSvgSize(svg, toFloat2, trim2);
-      },
-      getAttr,
-      validateSvg: function(svg) {
-        return validateSvg(svg, trim2);
-      }
-    };
-  }
 
   // core/appContext.js
   function createAppContext(ctx) {
@@ -433,124 +402,113 @@
   }
 
   // core/runtimeHelpers.js
-  function createRuntimeHelpers() {
-    var deps = arguments.length > 0 ? arguments[0] : {};
-    var ctx = deps.ctx;
-    var ui = ctx.ui;
-    var model = ctx.model;
-    var state = ctx.state;
-    var constants = deps.constants;
-    function resetPendingChangeRecords(baselineSnapshot) {
-      state.pendingChangeRecords = [];
-      state.nextChangeSequence = 1;
-      state.lastOperationSnapshot = baselineSnapshot != null ? deps.cloneJson(baselineSnapshot) : null;
-    }
-    function isElectricalRoot(cell) {
-      return deps.getAttr(cell, "pluginType") == constants.ROOT_TYPE;
-    }
-    function findElectricalRoot(cell) {
-      while (cell != null) {
-        if (isElectricalRoot(cell)) {
-          return cell;
-        }
-        cell = model.getParent(cell);
+  function getGraphApi() {
+    return getApp().graphApi;
+  }
+  function getConstants() {
+    return getApp().constants;
+  }
+  function getState() {
+    return getApp().ctx.state;
+  }
+  function resetPendingChangeRecords(baselineSnapshot) {
+    var state = getState();
+    state.pendingChangeRecords = [];
+    state.nextChangeSequence = 1;
+    state.lastOperationSnapshot = baselineSnapshot != null ? cloneJson(baselineSnapshot) : null;
+  }
+  function isElectricalRoot(cell) {
+    return getAttr(cell, "pluginType") == getConstants().ROOT_TYPE;
+  }
+  function findElectricalRoot(cell) {
+    var model = getGraphApi().model;
+    while (cell != null) {
+      if (isElectricalRoot(cell)) {
+        return cell;
       }
-      return null;
+      cell = model.getParent(cell);
     }
-    function isDrawingFrame(cell) {
-      return deps.getAttr(cell, "pluginType") == constants.FRAME_TYPE;
-    }
-    function isCabinetSegment(cell) {
-      return deps.getAttr(cell, "pluginType") == constants.CABINET_TYPE;
-    }
-    function isCabinetGap(cell) {
-      return deps.getAttr(cell, "pluginType") == constants.CABINET_GAP_TYPE;
-    }
-    function isPortHostRoot(cell) {
-      return isElectricalRoot(cell) || isCabinetSegment(cell);
-    }
-    function findPortHostRoot(cell) {
-      while (cell != null) {
-        if (deps.shouldExportGenericObject(cell)) {
-          return null;
-        }
-        if (isPortHostRoot(cell)) {
-          return cell;
-        }
-        cell = model.getParent(cell);
+    return null;
+  }
+  function isDrawingFrame(cell) {
+    return getAttr(cell, "pluginType") == getConstants().FRAME_TYPE;
+  }
+  function isCabinetSegment(cell) {
+    return getAttr(cell, "pluginType") == getConstants().CABINET_TYPE;
+  }
+  function isCabinetGap(cell) {
+    return getAttr(cell, "pluginType") == getConstants().CABINET_GAP_TYPE;
+  }
+  function isPortHostRoot(cell) {
+    return isElectricalRoot(cell) || isCabinetSegment(cell);
+  }
+  function findPortHostRoot(cell) {
+    var app = getApp();
+    var model = getGraphApi().model;
+    while (cell != null) {
+      if (app.domains != null && app.domains.snapshot != null && typeof app.domains.snapshot.shouldExportGenericObject === "function" && app.domains.snapshot.shouldExportGenericObject(cell)) {
+        return null;
       }
-      return null;
-    }
-    function normalizeMode(mode) {
-      mode = deps.trim(mode).toLowerCase();
-      return mode == "primary" || mode == "standby" ? mode : "";
-    }
-    function generateSymbolId(seed) {
-      var base = deps.toSlug(deps.stripFileExtension(seed)) || "electrical-symbol";
-      var shortUuid = deps.generateUuid().split("-")[0];
-      return base + "-" + shortUuid;
-    }
-    function generateInstanceId() {
-      return deps.generateUuid();
-    }
-    function generateFrameId() {
-      return deps.generateUuid();
-    }
-    function generateFrameGroupId() {
-      return deps.generateUuid();
-    }
-    function generateLogicalCabinetId() {
-      return deps.generateUuid();
-    }
-    function showStatus(message, isError) {
-      if (state.status != null) {
-        state.status.style.color = isError ? "#b3261e" : "#2e7d32";
-        state.status.innerText = message || "";
+      if (isPortHostRoot(cell)) {
+        return cell;
       }
+      cell = model.getParent(cell);
     }
-    function setCanvasStatus(message) {
-      var text = deps.trim(message);
-      if (text.length == 0) {
-        if (typeof ui.clearStatus === "function") {
-          ui.clearStatus();
-        }
-        return;
+    return null;
+  }
+  function normalizeMode(mode) {
+    mode = trim(mode).toLowerCase();
+    return mode == "primary" || mode == "standby" ? mode : "";
+  }
+  function generateSymbolId(seed) {
+    var base = toSlug(stripFileExtension(seed)) || "electrical-symbol";
+    var shortUuid = generateUuid().split("-")[0];
+    return base + "-" + shortUuid;
+  }
+  function generateInstanceId() {
+    return generateUuid();
+  }
+  function generateFrameId() {
+    return generateUuid();
+  }
+  function generateFrameGroupId() {
+    return generateUuid();
+  }
+  function generateLogicalCabinetId() {
+    return generateUuid();
+  }
+  function showStatus(message, isError) {
+    var state = getState();
+    if (state.status != null) {
+      state.status.style.color = isError ? "#b3261e" : "#2e7d32";
+      state.status.innerText = message || "";
+    }
+  }
+  function setCanvasStatus(message) {
+    var ui = getGraphApi().ui;
+    var text = trim(message);
+    if (text.length == 0) {
+      if (typeof ui.clearStatus === "function") {
+        ui.clearStatus();
       }
-      if (typeof ui.updateStatus === "function") {
-        ui.updateStatus(function() {
-          ui.editor.setStatus(mxUtils.htmlEntities(text));
-          if (typeof ui.setStatusText === "function") {
-            ui.setStatusText(ui.editor.getStatus());
-          }
-        });
-      } else if (ui.editor != null && typeof ui.editor.setStatus === "function") {
+      return;
+    }
+    if (typeof ui.updateStatus === "function") {
+      ui.updateStatus(function() {
         ui.editor.setStatus(mxUtils.htmlEntities(text));
-      }
+        if (typeof ui.setStatusText === "function") {
+          ui.setStatusText(ui.editor.getStatus());
+        }
+      });
+    } else if (ui.editor != null && typeof ui.editor.setStatus === "function") {
+      ui.editor.setStatus(mxUtils.htmlEntities(text));
     }
-    function nextItemId(prefix) {
-      var id = prefix + ":" + state.nextId;
-      state.nextId += 1;
-      return id;
-    }
-    return {
-      findElectricalRoot,
-      findPortHostRoot,
-      generateFrameGroupId,
-      generateFrameId,
-      generateInstanceId,
-      generateLogicalCabinetId,
-      generateSymbolId,
-      isCabinetGap,
-      isCabinetSegment,
-      isDrawingFrame,
-      isElectricalRoot,
-      isPortHostRoot,
-      nextItemId,
-      normalizeMode,
-      resetPendingChangeRecords,
-      setCanvasStatus,
-      showStatus
-    };
+  }
+  function nextItemId(prefix) {
+    var state = getState();
+    var id = prefix + ":" + state.nextId;
+    state.nextId += 1;
+    return id;
   }
 
   // ui/shared/buttonFactory.js
@@ -567,8 +525,7 @@
     return getApp().ctx.graph.getSelectionCell();
   }
   function getSelectedRoot() {
-    var app = getApp();
-    return app.helpers.findElectricalRoot(getSelectedCell());
+    return findElectricalRoot(getSelectedCell());
   }
   function getSelectedFrame() {
     var app = getApp();
@@ -579,9 +536,8 @@
     return app.domains.cabinet.findCabinetSegment(getSelectedCell());
   }
   function getSelectedCabinetGap() {
-    var app = getApp();
     var cell = getSelectedCell();
-    return app.helpers.isCabinetGap(cell) ? cell : null;
+    return isCabinetGap(cell) ? cell : null;
   }
   var selectionApi = {
     getSelectedCabinetGap,
@@ -627,16 +583,16 @@
       graph.setSelectionCells(graph.importCells([root], pt.x, pt.y));
     }
     graph.scrollCellToVisible(graph.getSelectionCell());
-    app.showStatus("\u5DF2\u63D2\u5165\u56FE\u5143", false);
-    app.setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u5143");
+    showStatus("\u5DF2\u63D2\u5165\u56FE\u5143", false);
+    setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u5143");
   }
   function refreshSelection() {
     var app = getApp();
     var graph = app.ctx.graph;
     var model = app.ctx.model;
     var state = app.ctx.state;
-    var root = app.selection.getSelectedRoot();
-    var cabinet = app.selection.getSelectedCabinetSegment();
+    var root = selectionApi.getSelectedRoot();
+    var cabinet = selectionApi.getSelectedCabinetSegment();
     if (cabinet != null) {
       try {
         state.updatingModel = true;
@@ -644,11 +600,11 @@
         app.domains.cabinet.relayoutCabinetByModel(
           app.domains.cabinet.extractCabinetModel(cabinet)
         );
-        app.showStatus("\u914D\u7535\u67DC\u5DF2\u5237\u65B0", false);
-        app.setCanvasStatus("\u914D\u7535\u67DC\u5DF2\u5237\u65B0");
+        showStatus("\u914D\u7535\u67DC\u5DF2\u5237\u65B0", false);
+        setCanvasStatus("\u914D\u7535\u67DC\u5DF2\u5237\u65B0");
       } catch (e) {
-        app.showStatus(e.message || String(e), true);
-        app.setCanvasStatus(e.message || String(e));
+        showStatus(e.message || String(e), true);
+        setCanvasStatus(e.message || String(e));
       } finally {
         model.endUpdate();
         state.updatingModel = false;
@@ -656,7 +612,7 @@
       return;
     }
     if (root == null) {
-      app.showStatus("\u8BF7\u5148\u9009\u62E9\u4E00\u4E2A\u7535\u6C14\u56FE\u5143", true);
+      showStatus("\u8BF7\u5148\u9009\u62E9\u4E00\u4E2A\u7535\u6C14\u56FE\u5143", true);
       return;
     }
     state.updatingModel = true;
@@ -664,13 +620,13 @@
     try {
       app.domains.symbol.refreshRoot(root);
     } catch (e) {
-      app.showStatus(e.message || String(e), true);
+      showStatus(e.message || String(e), true);
       return;
     } finally {
       model.endUpdate();
       state.updatingModel = false;
     }
-    app.showStatus("\u7535\u6C14\u56FE\u5143\u5DF2\u5237\u65B0", false);
+    showStatus("\u7535\u6C14\u56FE\u5143\u5DF2\u5237\u65B0", false);
   }
   function insertFrame(config, selectedFrame, existingFrames) {
     var app = getApp();
@@ -680,12 +636,12 @@
     var constants = app.ctx.constants;
     var normalizedConfig = app.domains.frame.normalizeFrameConfig(config || {});
     var frames = Array.isArray(existingFrames) ? existingFrames : app.domains.frame.getAllDrawingFrames();
-    var groupId = selectedFrame != null ? app.domains.frame.getFrameGroupId(selectedFrame) : app.helpers.generateFrameGroupId();
+    var groupId = selectedFrame != null ? app.domains.frame.getFrameGroupId(selectedFrame) : generateFrameGroupId();
     var nextPageNumber = selectedFrame != null ? app.domains.frame.getMaxFramePageNumberInGroup(groupId) + 1 : 1;
     var frame = app.domains.frame.createDrawingFrameCell(normalizedConfig, nextPageNumber, {
       groupId
     });
-    state.frameConfig = app.utils.cloneJson(normalizedConfig);
+    state.frameConfig = cloneJson(normalizedConfig);
     if (selectedFrame != null) {
       var anchorFrame = app.domains.frame.getRightmostFrameInGroup(groupId) || selectedFrame;
       var anchorGeometry = model.getGeometry(anchorFrame);
@@ -709,8 +665,8 @@
       graph.setSelectionCells(graph.importCells([frame], point.x, point.y));
     }
     graph.scrollCellToVisible(graph.getSelectionCell());
-    app.showStatus("\u5DF2\u63D2\u5165\u56FE\u6846", false);
-    app.setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u6846");
+    showStatus("\u5DF2\u63D2\u5165\u56FE\u6846", false);
+    setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u6846");
   }
   function insertCabinet(cabinetModel) {
     var app = getApp();
@@ -730,8 +686,8 @@
       graph.setSelectionCell(segments[0]);
       graph.scrollCellToVisible(segments[0]);
     }
-    app.showStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC", false);
-    app.setCanvasStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC");
+    showStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC", false);
+    setCanvasStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC");
   }
   function updateCabinetGap(cabinetModel) {
     var app = getApp();
@@ -745,8 +701,8 @@
       model.endUpdate();
       state.updatingModel = false;
     }
-    app.showStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD", false);
-    app.setCanvasStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD");
+    showStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD", false);
+    setCanvasStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD");
   }
   function applyInstanceSpec(root, spec) {
     var app = getApp();
@@ -765,7 +721,7 @@
       model.endUpdate();
       state.updatingModel = false;
     }
-    app.showStatus("\u5DF2\u66F4\u65B0\u56FE\u5143\u5B9E\u4F8B", false);
+    showStatus("\u5DF2\u66F4\u65B0\u56FE\u5143\u5B9E\u4F8B", false);
   }
   function clearCurrentPage() {
     var app = getApp();
@@ -773,7 +729,7 @@
     var state = app.ctx.state;
     var cells = getDefaultParentChildren();
     if (cells.length == 0) {
-      app.showStatus("\u5F53\u524D\u9875\u9762\u6CA1\u6709\u53EF\u6E05\u9664\u7684\u5185\u5BB9", false);
+      showStatus("\u5F53\u524D\u9875\u9762\u6CA1\u6709\u53EF\u6E05\u9664\u7684\u5185\u5BB9", false);
       return;
     }
     if (!mxUtils.confirm("\u786E\u8BA4\u6E05\u9664\u5F53\u524D\u9875\u9762\u6240\u6709\u5185\u5BB9\uFF1F")) {
@@ -795,7 +751,7 @@
     state.allowProtectedDelete = true;
     try {
       graph.removeCells(cells, true);
-      app.showStatus("\u5DF2\u6E05\u7A7A\u5F53\u524D\u9875\u9762", false);
+      showStatus("\u5DF2\u6E05\u7A7A\u5F53\u524D\u9875\u9762", false);
     } finally {
       state.allowProtectedDelete = false;
     }
@@ -809,102 +765,6 @@
     refreshSelection,
     updateCabinetGap
   };
-
-  // application/actions.js
-  function createActionApi() {
-    function execute(fn, resetDeleteFlag) {
-      var app = getApp();
-      try {
-        return fn();
-      } catch (e) {
-        if (resetDeleteFlag) {
-          app.ctx.state.allowProtectedDelete = false;
-        }
-        app.showStatus(e.message || String(e), true);
-        return null;
-      }
-    }
-    return {
-      electricalBrowse: function() {
-        return execute(function() {
-          return getApp().ui.openTemplateBrowserDialog();
-        });
-      },
-      electricalClearScreen: function() {
-        return execute(function() {
-          return getApp().commands.clearCurrentPage();
-        }, true);
-      },
-      electricalComposeInstance: function() {
-        return execute(function() {
-          return getApp().runtime.enterInstanceComposeMode();
-        });
-      },
-      electricalCreate: function() {
-        return execute(function() {
-          return getApp().ui.openCreateFromLibraryDialog();
-        });
-      },
-      electricalEditInstance: function() {
-        return execute(function() {
-          return getApp().ui.openEditInstanceDialog();
-        });
-      },
-      electricalExportSvg: function() {
-        return execute(function() {
-          return getApp().ui.openSvgExportDialog();
-        });
-      },
-      electricalInsertCabinet: function() {
-        return execute(function() {
-          return getApp().ui.openInsertCabinetDialog();
-        });
-      },
-      electricalInsertFrame: function() {
-        return execute(function() {
-          return getApp().ui.openInsertFrameDialog();
-        });
-      },
-      electricalLoadBackend: function() {
-        return execute(function() {
-          return getApp().ui.openBackendLoadDialog();
-        });
-      },
-      electricalNewBackend: function() {
-        return execute(function() {
-          var app = getApp();
-          var backend = app.services.backend;
-          backend.resetBackendBinding();
-          app.showStatus("\u5DF2\u65B0\u5EFA\u540E\u7AEF\u56FE\u7EB8\u4F1A\u8BDD\uFF0C\u4E0B\u4E00\u6B21\u4FDD\u5B58\u5C06\u521B\u5EFA\u65B0\u56FE\u7EB8", false);
-        });
-      },
-      electricalReassignPort: function() {
-        return execute(function() {
-          return getApp().runtime.enterPortSwapMode();
-        });
-      },
-      electricalRefresh: function() {
-        return execute(function() {
-          return getApp().commands.refreshSelection();
-        });
-      },
-      electricalRollbackBackend: function() {
-        return execute(function() {
-          return getApp().ui.openBackendRollbackDialog();
-        });
-      },
-      electricalSaveBackend: function() {
-        return execute(function() {
-          return getApp().ui.openBackendSaveDialog();
-        });
-      },
-      electricalSymbols: function() {
-        return execute(function() {
-          return getApp().ui.toggleWindow();
-        });
-      }
-    };
-  }
 
   // domain/specSchema.js
   function isSchemaLeafDescriptor(value) {
@@ -928,21 +788,21 @@
     }
     return result;
   }
-  function normalizeSchemaField(raw, nextItemId) {
+  function normalizeSchemaField(raw, nextItemId2) {
     var field = isObject(raw) ? cloneJson(raw) : {};
-    field.id = trim(field.id) || (typeof nextItemId === "function" ? nextItemId("field") : "");
+    field.id = trim(field.id) || (typeof nextItemId2 === "function" ? nextItemId2("field") : "");
     field.path = trim(field.path);
     field.type = normalizeSchemaType(field.type);
     field.required = !!field.required;
     field.enumValues = normalizeEnumOptions(field.enumValues);
     return field;
   }
-  function getDefaultSchemaFields(nextItemId) {
+  function getDefaultSchemaFields(nextItemId2) {
     return [
-      normalizeSchemaField({ path: "title", type: "string" }, nextItemId),
-      normalizeSchemaField({ path: "name", type: "string" }, nextItemId),
-      normalizeSchemaField({ path: "code", type: "string" }, nextItemId),
-      normalizeSchemaField({ path: "power", type: "string" }, nextItemId)
+      normalizeSchemaField({ path: "title", type: "string" }, nextItemId2),
+      normalizeSchemaField({ path: "name", type: "string" }, nextItemId2),
+      normalizeSchemaField({ path: "code", type: "string" }, nextItemId2),
+      normalizeSchemaField({ path: "power", type: "string" }, nextItemId2)
     ];
   }
   function hasSchemaPath(schema, path) {
@@ -985,12 +845,12 @@
     }
     current[parts[parts.length - 1]] = value;
   }
-  function buildSchemaFromFields(fields, nextItemId) {
+  function buildSchemaFromFields(fields, nextItemId2) {
     var schema = {};
     var seen = {};
     var i;
     for (i = 0; i < fields.length; i++) {
-      var field = normalizeSchemaField(fields[i], nextItemId);
+      var field = normalizeSchemaField(fields[i], nextItemId2);
       var path = trim(field.path);
       if (path.length == 0) {
         continue;
@@ -1013,7 +873,7 @@
     }
     return schema;
   }
-  function flattenSchemaFields(schema, prefix, result, nextItemId) {
+  function flattenSchemaFields(schema, prefix, result, nextItemId2) {
     var nextPrefix = trim(prefix);
     var key;
     if (!isObject(schema)) {
@@ -1032,11 +892,11 @@
                 required: value.required,
                 enumValues: value.enumValues
               },
-              nextItemId
+              nextItemId2
             )
           );
         } else if (isObject(value)) {
-          flattenSchemaFields(value, path, result, nextItemId);
+          flattenSchemaFields(value, path, result, nextItemId2);
         }
       }
     }
@@ -1286,233 +1146,240 @@
   }
 
   // domain/spec.js
-  function buildSpecDeps() {
+  function getSpecDeps() {
     var app = getApp();
     return {
-      trim: app.utils.trim,
-      isObject: app.utils.isObject,
-      cloneJson: app.utils.cloneJson,
-      validateSvg: app.utils.validateSvg,
-      generateSymbolId: app.helpers.generateSymbolId,
-      clamp: app.utils.clamp,
-      toInt: app.utils.toInt,
-      toFloat: app.utils.toFloat,
-      nextItemId: app.helpers.nextItemId,
-      normalizeMode: app.helpers.normalizeMode,
-      deepMerge: app.utils.deepMerge,
-      generateInstanceId: app.helpers.generateInstanceId
+      trim,
+      isObject,
+      cloneJson,
+      validateSvg,
+      generateSymbolId,
+      toInt,
+      nextItemId,
+      normalizeMode,
+      deepMerge,
+      generateInstanceId
     };
   }
-  function createSpecDomain() {
-    var deps = arguments.length > 0 ? arguments[0] : buildSpecDeps();
-    var trim2 = deps.trim;
-    function getVariantLayout(spec, variantKey) {
-      var layouts = normalizeVariantLayouts(spec.variantLayouts);
-      var key = trim2(variantKey);
-      if (key.length > 0 && layouts[key] != null) {
-        return {
-          ports: normalizePortLayout(layouts[key].ports),
-          labels: normalizeLabels(layouts[key].labels)
-        };
-      }
+  function getVariantLayout(spec, variantKey) {
+    var deps = getSpecDeps();
+    var layouts = normalizeVariantLayouts(spec.variantLayouts);
+    var key = deps.trim(variantKey);
+    if (key.length > 0 && layouts[key] != null) {
       return {
-        ports: normalizePortLayout(spec.ports),
-        labels: normalizeLabels(spec.labels)
+        ports: normalizePortLayout(layouts[key].ports),
+        labels: normalizeLabels(layouts[key].labels)
       };
-    }
-    function getActiveVariantKey(spec) {
-      var field = trim2(spec.variantField || "");
-      var value = trim2(getValueByPath(spec.data, field));
-      if (value.length == 0 && field == "mode") {
-        value = trim2(spec.device.mode);
-      }
-      return value;
-    }
-    function getActiveSvg(spec) {
-      var variantKey = getActiveVariantKey(spec);
-      if (variantKey.length > 0 && spec.svgVariants[variantKey] != null) {
-        return spec.svgVariants[variantKey];
-      }
-      return spec.svg;
-    }
-    function toSvgDataUri(spec) {
-      return "data:image/svg+xml," + encodeURIComponent(getActiveSvg(spec));
-    }
-    function toStyleImageUri(spec) {
-      return "data:image/svg+xml," + encodeURIComponent(getActiveSvg(spec));
-    }
-    function normalizeVariantLayouts(raw) {
-      var result = {};
-      var key;
-      if (!deps.isObject(raw)) {
-        return result;
-      }
-      for (key in raw) {
-        if (raw.hasOwnProperty(key) && trim2(key).length > 0) {
-          var entry = deps.isObject(raw[key]) ? raw[key] : {};
-          result[trim2(key)] = {
-            ports: normalizePortLayout(entry.ports),
-            labels: normalizeLabels(entry.labels)
-          };
-        }
-      }
-      return result;
-    }
-    function normalizeSpec(raw) {
-      if (!deps.isObject(raw)) {
-        throw new Error("JSON \u6839\u8282\u70B9\u5FC5\u987B\u662F\u5BF9\u8C61");
-      }
-      var device = deps.isObject(raw.device) ? raw.device : {};
-      var ports = raw.ports;
-      var variants = deps.isObject(raw.svgVariants) ? raw.svgVariants : {};
-      var size = deps.isObject(raw.size) ? raw.size : {};
-      var params = deps.isObject(device.params) ? deps.cloneJson(device.params) : {};
-      var schema = deps.isObject(raw.schema) ? deps.cloneJson(raw.schema) : {};
-      var data = deps.isObject(raw.data) ? deps.cloneJson(raw.data) : {};
-      var variantField = trim2(raw.variantField || "");
-      var spec = {
-        symbolId: trim2(raw.symbolId) || deps.generateSymbolId("symbol"),
-        templateName: trim2(raw.templateName) || trim2(raw.title) || trim2(device.name) || "\u7535\u6C14\u56FE\u5143",
-        title: trim2(raw.title) || trim2(device.name) || "\u7535\u6C14\u56FE\u5143",
-        svg: deps.validateSvg(raw.svg),
-        size: {
-          width: Math.max(20, deps.toInt(size.width, 120)),
-          height: Math.max(20, deps.toInt(size.height, 80))
-        },
-        device: {
-          name: trim2(device.name),
-          code: trim2(device.code),
-          power: trim2(device.power),
-          mode: deps.normalizeMode(device.mode),
-          params
-        },
-        ports: normalizePortLayout(ports),
-        labels: normalizeLabels(raw.labels),
-        schema,
-        data,
-        variantField,
-        svgVariants: {},
-        variantLayouts: normalizeVariantLayouts(raw.variantLayouts)
-      };
-      for (var variantKey in variants) {
-        if (variants.hasOwnProperty(variantKey) && trim2(variantKey).length > 0 && variants[variantKey] != null && trim2(variants[variantKey]).length > 0) {
-          spec.svgVariants[trim2(variantKey)] = deps.validateSvg(
-            variants[variantKey]
-          );
-        }
-      }
-      return spec;
-    }
-    function createEmptyTemplateSpec() {
-      return normalizeSpec({
-        symbolId: deps.generateSymbolId("symbol"),
-        templateName: "\u7535\u6C14\u56FE\u5143",
-        title: "\u7535\u6C14\u56FE\u5143",
-        svg: '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80"></svg>',
-        size: {
-          width: 120,
-          height: 80
-        },
-        device: {},
-        ports: [],
-        labels: [],
-        schema: {},
-        data: {},
-        variantField: "",
-        svgVariants: {},
-        variantLayouts: {}
-      });
-    }
-    function buildInstanceSpec(instanceData, template, sizeOverride) {
-      template = template != null ? normalizeSpec(deps.cloneJson(template)) : createEmptyTemplateSpec();
-      var mergedData = deps.deepMerge(
-        buildEmptyValueFromSchema(template.schema),
-        instanceData
-      );
-      var spec = deps.cloneJson(template);
-      var nameValue = getValueByPath(mergedData, "name") || getValueByPath(mergedData, "device.name");
-      var codeValue = getValueByPath(mergedData, "code") || getValueByPath(mergedData, "device.code");
-      var powerValue = getValueByPath(mergedData, "power") || getValueByPath(mergedData, "device.power");
-      var modeValue = getValueByPath(mergedData, "mode") || getValueByPath(mergedData, "device.mode");
-      var titleValue = getValueByPath(mergedData, "title");
-      var variantKey;
-      var layout;
-      spec.data = mergedData;
-      spec.symbolId = template.symbolId;
-      spec.instanceId = deps.generateInstanceId();
-      spec.title = trim2(titleValue) || trim2(nameValue) || template.title;
-      spec.size = {
-        width: Math.max(
-          20,
-          deps.toInt(
-            sizeOverride != null ? sizeOverride.width : null,
-            template.size.width
-          )
-        ),
-        height: Math.max(
-          20,
-          deps.toInt(
-            sizeOverride != null ? sizeOverride.height : null,
-            template.size.height
-          )
-        )
-      };
-      spec.device.name = trim2(nameValue);
-      spec.device.code = trim2(codeValue);
-      spec.device.power = trim2(powerValue);
-      spec.device.mode = deps.normalizeMode(modeValue);
-      variantKey = getActiveVariantKey(spec);
-      layout = getVariantLayout(template, variantKey);
-      spec.ports = layout.ports;
-      spec.labels = buildResolvedLabels(layout.labels, mergedData, getValueByPath);
-      return normalizeSpec(spec);
     }
     return {
-      buildEmptyValueFromSchema,
-      buildInstanceSpec,
-      buildPortLayout,
-      buildResolvedLabels: function(labels, instance) {
-        return buildResolvedLabels(labels, instance, getValueByPath);
-      },
-      buildSchemaFromFields: function(fields) {
-        return buildSchemaFromFields(fields, deps.nextItemId);
-      },
-      createEmptyTemplateSpec,
-      flattenSchemaFields: function(schema, prefix, result) {
-        return flattenSchemaFields(schema, prefix, result, deps.nextItemId);
-      },
-      getActiveSvg,
-      getActiveVariantKey,
-      getDefaultSchemaFields: function() {
-        return getDefaultSchemaFields(deps.nextItemId);
-      },
-      getValueByPath,
-      getVariantLayout,
-      hasSchemaPath,
-      isSchemaLeafDescriptor,
-      isValidFieldPath,
-      normalizeEnumOptions,
-      normalizeLabelAlign,
-      normalizeLabelItem,
-      normalizeLabels,
-      normalizePortDirection,
-      normalizePortIoMode,
-      normalizePortLayout,
-      normalizePortMarker,
-      normalizePortPoint,
-      normalizeSchemaField: function(raw) {
-        return normalizeSchemaField(raw, deps.nextItemId);
-      },
-      normalizeSchemaType,
-      normalizeSpec,
-      normalizeVariantLayouts,
-      parsePortLayout,
-      serializePortLayout,
-      setValueByPath,
-      toStyleImageUri,
-      toSvgDataUri
+      ports: normalizePortLayout(spec.ports),
+      labels: normalizeLabels(spec.labels)
     };
   }
+  function getActiveVariantKey(spec) {
+    var deps = getSpecDeps();
+    var field = deps.trim(spec.variantField || "");
+    var value = deps.trim(getValueByPath(spec.data, field));
+    if (value.length == 0 && field == "mode") {
+      value = deps.trim(spec.device.mode);
+    }
+    return value;
+  }
+  function getActiveSvg(spec) {
+    var variantKey = getActiveVariantKey(spec);
+    if (variantKey.length > 0 && spec.svgVariants[variantKey] != null) {
+      return spec.svgVariants[variantKey];
+    }
+    return spec.svg;
+  }
+  function toSvgDataUri(spec) {
+    return "data:image/svg+xml," + encodeURIComponent(getActiveSvg(spec));
+  }
+  function toStyleImageUri(spec) {
+    return "data:image/svg+xml," + encodeURIComponent(getActiveSvg(spec));
+  }
+  function normalizeVariantLayouts(raw) {
+    var deps = getSpecDeps();
+    var result = {};
+    var key;
+    if (!deps.isObject(raw)) {
+      return result;
+    }
+    for (key in raw) {
+      if (raw.hasOwnProperty(key) && deps.trim(key).length > 0) {
+        var entry = deps.isObject(raw[key]) ? raw[key] : {};
+        result[deps.trim(key)] = {
+          ports: normalizePortLayout(entry.ports),
+          labels: normalizeLabels(entry.labels)
+        };
+      }
+    }
+    return result;
+  }
+  function normalizeSpec(raw) {
+    var deps = getSpecDeps();
+    if (!deps.isObject(raw)) {
+      throw new Error("JSON \u6839\u8282\u70B9\u5FC5\u987B\u662F\u5BF9\u8C61");
+    }
+    var device = deps.isObject(raw.device) ? raw.device : {};
+    var ports = raw.ports;
+    var variants = deps.isObject(raw.svgVariants) ? raw.svgVariants : {};
+    var size = deps.isObject(raw.size) ? raw.size : {};
+    var params = deps.isObject(device.params) ? deps.cloneJson(device.params) : {};
+    var schema = deps.isObject(raw.schema) ? deps.cloneJson(raw.schema) : {};
+    var data = deps.isObject(raw.data) ? deps.cloneJson(raw.data) : {};
+    var variantField = deps.trim(raw.variantField || "");
+    var spec = {
+      symbolId: deps.trim(raw.symbolId) || deps.generateSymbolId("symbol"),
+      templateName: deps.trim(raw.templateName) || deps.trim(raw.title) || deps.trim(device.name) || "\u7535\u6C14\u56FE\u5143",
+      title: deps.trim(raw.title) || deps.trim(device.name) || "\u7535\u6C14\u56FE\u5143",
+      svg: deps.validateSvg(raw.svg),
+      size: {
+        width: Math.max(20, deps.toInt(size.width, 120)),
+        height: Math.max(20, deps.toInt(size.height, 80))
+      },
+      device: {
+        name: deps.trim(device.name),
+        code: deps.trim(device.code),
+        power: deps.trim(device.power),
+        mode: deps.normalizeMode(device.mode),
+        params
+      },
+      ports: normalizePortLayout(ports),
+      labels: normalizeLabels(raw.labels),
+      schema,
+      data,
+      variantField,
+      svgVariants: {},
+      variantLayouts: normalizeVariantLayouts(raw.variantLayouts)
+    };
+    for (var variantKey in variants) {
+      if (variants.hasOwnProperty(variantKey) && deps.trim(variantKey).length > 0 && variants[variantKey] != null && deps.trim(variants[variantKey]).length > 0) {
+        spec.svgVariants[deps.trim(variantKey)] = deps.validateSvg(variants[variantKey]);
+      }
+    }
+    return spec;
+  }
+  function createEmptyTemplateSpec() {
+    var deps = getSpecDeps();
+    return normalizeSpec({
+      symbolId: deps.generateSymbolId("symbol"),
+      templateName: "\u7535\u6C14\u56FE\u5143",
+      title: "\u7535\u6C14\u56FE\u5143",
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80"></svg>',
+      size: {
+        width: 120,
+        height: 80
+      },
+      device: {},
+      ports: [],
+      labels: [],
+      schema: {},
+      data: {},
+      variantField: "",
+      svgVariants: {},
+      variantLayouts: {}
+    });
+  }
+  function buildInstanceSpec(instanceData, template, sizeOverride) {
+    var deps = getSpecDeps();
+    template = template != null ? normalizeSpec(deps.cloneJson(template)) : createEmptyTemplateSpec();
+    var mergedData = deps.deepMerge(
+      buildEmptyValueFromSchema(template.schema),
+      instanceData
+    );
+    var spec = deps.cloneJson(template);
+    var nameValue = getValueByPath(mergedData, "name") || getValueByPath(mergedData, "device.name");
+    var codeValue = getValueByPath(mergedData, "code") || getValueByPath(mergedData, "device.code");
+    var powerValue = getValueByPath(mergedData, "power") || getValueByPath(mergedData, "device.power");
+    var modeValue = getValueByPath(mergedData, "mode") || getValueByPath(mergedData, "device.mode");
+    var titleValue = getValueByPath(mergedData, "title");
+    var variantKey;
+    var layout;
+    spec.data = mergedData;
+    spec.symbolId = template.symbolId;
+    spec.instanceId = deps.generateInstanceId();
+    spec.title = deps.trim(titleValue) || deps.trim(nameValue) || template.title;
+    spec.size = {
+      width: Math.max(
+        20,
+        deps.toInt(
+          sizeOverride != null ? sizeOverride.width : null,
+          template.size.width
+        )
+      ),
+      height: Math.max(
+        20,
+        deps.toInt(
+          sizeOverride != null ? sizeOverride.height : null,
+          template.size.height
+        )
+      )
+    };
+    spec.device.name = deps.trim(nameValue);
+    spec.device.code = deps.trim(codeValue);
+    spec.device.power = deps.trim(powerValue);
+    spec.device.mode = deps.normalizeMode(modeValue);
+    variantKey = getActiveVariantKey(spec);
+    layout = getVariantLayout(template, variantKey);
+    spec.ports = layout.ports;
+    spec.labels = buildResolvedLabels(layout.labels, mergedData, getValueByPath);
+    return normalizeSpec(spec);
+  }
+  function buildResolvedLabels2(labels, instance) {
+    return buildResolvedLabels(labels, instance, getValueByPath);
+  }
+  function buildSchemaFromFields2(fields) {
+    var deps = getSpecDeps();
+    return buildSchemaFromFields(fields, deps.nextItemId);
+  }
+  function flattenSchemaFields2(schema, prefix, result) {
+    var deps = getSpecDeps();
+    return flattenSchemaFields(schema, prefix, result, deps.nextItemId);
+  }
+  function getDefaultSchemaFields2() {
+    var deps = getSpecDeps();
+    return getDefaultSchemaFields(deps.nextItemId);
+  }
+  function normalizeSchemaField2(raw) {
+    var deps = getSpecDeps();
+    return normalizeSchemaField(raw, deps.nextItemId);
+  }
+  var specDomainApi = {
+    buildEmptyValueFromSchema,
+    buildInstanceSpec,
+    buildPortLayout,
+    buildResolvedLabels: buildResolvedLabels2,
+    buildSchemaFromFields: buildSchemaFromFields2,
+    createEmptyTemplateSpec,
+    flattenSchemaFields: flattenSchemaFields2,
+    getActiveSvg,
+    getActiveVariantKey,
+    getDefaultSchemaFields: getDefaultSchemaFields2,
+    getValueByPath,
+    getVariantLayout,
+    hasSchemaPath,
+    isSchemaLeafDescriptor,
+    isValidFieldPath,
+    normalizeEnumOptions,
+    normalizeLabelAlign,
+    normalizeLabelItem,
+    normalizeLabels,
+    normalizePortDirection,
+    normalizePortIoMode,
+    normalizePortLayout,
+    normalizePortMarker,
+    normalizePortPoint,
+    normalizeSchemaField: normalizeSchemaField2,
+    normalizeSchemaType,
+    normalizeSpec,
+    normalizeVariantLayouts,
+    parsePortLayout,
+    serializePortLayout,
+    setValueByPath,
+    toStyleImageUri,
+    toSvgDataUri
+  };
 
   // domain/symbolCore.js
   function buildSymbolCoreDeps() {
@@ -1520,52 +1387,51 @@
     return {
       toStyleImageUri: app.domains.spec.toStyleImageUri,
       ROOT_TYPE: app.constants.ROOT_TYPE,
-      trim: app.utils.trim,
+      trim,
       serializePortLayout: app.domains.spec.serializePortLayout,
       normalizeLabels: app.domains.spec.normalizeLabels
     };
   }
-  function createSymbolCore() {
-    var deps = arguments.length > 0 ? arguments[0] : buildSymbolCoreDeps();
-    function makeRootStyle() {
-      return "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;";
-    }
-    function makeBodyStyle(spec) {
-      return "shape=image;image=" + deps.toStyleImageUri(spec) + ";imageAspect=0;aspect=fixed;html=1;strokeColor=none;fillColor=none;part=1;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;cloneable=0;deletable=0;pointerEvents=0;";
-    }
-    function makeLabelStyle(align) {
-      return "text;part=1;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=" + align + ";verticalAlign=middle;spacing=2;rotatable=0;connectable=0;";
-    }
-    function applyValueMetadata(node, spec, layout) {
-      node.setAttribute("pluginType", deps.ROOT_TYPE);
-      node.setAttribute("symbolId", spec.symbolId);
-      node.setAttribute("instanceId", deps.trim(spec.instanceId));
-      node.setAttribute("title", spec.title);
-      node.setAttribute("label", "");
-      node.setAttribute("deviceName", spec.device.name);
-      node.setAttribute("deviceCode", spec.device.code);
-      node.setAttribute("devicePower", spec.device.power);
-      node.setAttribute("mode", spec.device.mode);
-      node.setAttribute("variantField", deps.trim(spec.variantField || "mode"));
-      node.setAttribute("paramsJson", JSON.stringify(spec.device.params || {}));
-      node.setAttribute("portsJson", deps.serializePortLayout(layout));
-      node.setAttribute("portLayout", deps.serializePortLayout(layout));
-      node.setAttribute(
-        "labelsJson",
-        JSON.stringify(deps.normalizeLabels(spec.labels))
-      );
-      node.setAttribute("schemaJson", JSON.stringify(spec.schema || {}));
-      node.setAttribute("dataJson", JSON.stringify(spec.data || {}));
-      node.setAttribute("symbolPayload", JSON.stringify(spec));
-      return node;
-    }
-    return {
-      applyValueMetadata,
-      makeBodyStyle,
-      makeLabelStyle,
-      makeRootStyle
-    };
+  function getSymbolCoreDeps() {
+    return buildSymbolCoreDeps();
   }
+  function makeRootStyle() {
+    return "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;";
+  }
+  function makeBodyStyle(spec) {
+    var deps = getSymbolCoreDeps();
+    return "shape=image;image=" + deps.toStyleImageUri(spec) + ";imageAspect=0;aspect=fixed;html=1;strokeColor=none;fillColor=none;part=1;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;cloneable=0;deletable=0;pointerEvents=0;";
+  }
+  function makeLabelStyle(align) {
+    return "text;part=1;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=" + align + ";verticalAlign=middle;spacing=2;rotatable=0;connectable=0;";
+  }
+  function applyValueMetadata(node, spec, layout) {
+    var deps = getSymbolCoreDeps();
+    node.setAttribute("pluginType", deps.ROOT_TYPE);
+    node.setAttribute("symbolId", spec.symbolId);
+    node.setAttribute("instanceId", deps.trim(spec.instanceId));
+    node.setAttribute("title", spec.title);
+    node.setAttribute("label", "");
+    node.setAttribute("deviceName", spec.device.name);
+    node.setAttribute("deviceCode", spec.device.code);
+    node.setAttribute("devicePower", spec.device.power);
+    node.setAttribute("mode", spec.device.mode);
+    node.setAttribute("variantField", deps.trim(spec.variantField || "mode"));
+    node.setAttribute("paramsJson", JSON.stringify(spec.device.params || {}));
+    node.setAttribute("portsJson", deps.serializePortLayout(layout));
+    node.setAttribute("portLayout", deps.serializePortLayout(layout));
+    node.setAttribute("labelsJson", JSON.stringify(deps.normalizeLabels(spec.labels)));
+    node.setAttribute("schemaJson", JSON.stringify(spec.schema || {}));
+    node.setAttribute("dataJson", JSON.stringify(spec.data || {}));
+    node.setAttribute("symbolPayload", JSON.stringify(spec));
+    return node;
+  }
+  var symbolCoreApi = {
+    applyValueMetadata,
+    makeBodyStyle,
+    makeLabelStyle,
+    makeRootStyle
+  };
 
   // domain/symbolGraph.js
   function buildSymbolGraphDeps() {
@@ -1579,17 +1445,17 @@
       BODY_KIND: app.constants.BODY_KIND,
       LABEL_TAG: app.constants.LABEL_TAG,
       LABEL_KIND: app.constants.LABEL_KIND,
-      trim: app.utils.trim,
-      isObject: app.utils.isObject,
-      normalizeMode: app.helpers.normalizeMode,
+      trim,
+      isObject,
+      normalizeMode,
       normalizeSpec: app.domains.spec.normalizeSpec,
       normalizePortLayout: app.domains.spec.normalizePortLayout,
       normalizeLabels: app.domains.spec.normalizeLabels,
       parsePortLayout: app.domains.spec.parsePortLayout,
-      getAttr: app.utils.getAttr,
-      createNode: app.utils.createNode,
-      createMetaCell: app.utils.createMetaCell,
-      cloneValue: app.utils.cloneValue,
+      getAttr,
+      createNode,
+      createMetaCell,
+      cloneValue,
       toStyleImageUri: app.domains.spec.toStyleImageUri,
       serializePortLayout: app.domains.spec.serializePortLayout,
       buildPortLayout: app.domains.spec.buildPortLayout,
@@ -1599,7 +1465,7 @@
   function createSymbolDomain() {
     var deps = arguments.length > 0 ? arguments[0] : buildSymbolGraphDeps();
     var model = deps.model;
-    var core = createSymbolCore(deps);
+    var core = symbolCoreApi;
     function addChild(root, child) {
       var index = arguments.length > 2 ? arguments[2] : null;
       if (root.parent != null) {
@@ -1914,8 +1780,6 @@
   function buildFrameDeps() {
     var app = getApp();
     var constants = app.constants;
-    var utils = app.utils;
-    var helpers = app.helpers;
     var graphApi = app.graphApi;
     return {
       graph: graphApi.graph,
@@ -1928,16 +1792,16 @@
       frameMarginRatio: constants.FRAME_MARGIN_RATIO,
       defaultWidth: constants.FRAME_DEFAULT_WIDTH,
       defaultHeight: constants.FRAME_DEFAULT_HEIGHT,
-      trim: utils.trim,
-      toInt: utils.toInt,
-      isObject: utils.isObject,
-      getAttr: utils.getAttr,
-      createNode: utils.createNode,
-      createMetaCell: utils.createMetaCell,
-      generateFrameId: helpers.generateFrameId,
-      isDrawingFrame: helpers.isDrawingFrame,
-      showStatus: app.showStatus,
-      setCanvasStatus: app.setCanvasStatus
+      trim,
+      toInt,
+      isObject,
+      getAttr,
+      createNode,
+      createMetaCell,
+      generateFrameId,
+      isDrawingFrame,
+      showStatus,
+      setCanvasStatus
     };
   }
   function createFrameDomain() {
@@ -3182,17 +3046,17 @@
       CABINET_BODY_KIND: app.constants.CABINET_BODY_KIND,
       CABINET_GAP_KIND: app.constants.CABINET_GAP_KIND,
       FRAME_MARGIN_RATIO: app.constants.FRAME_MARGIN_RATIO,
-      trim: app.utils.trim,
-      toInt: app.utils.toInt,
-      isObject: app.utils.isObject,
-      cloneJson: app.utils.cloneJson,
-      createNode: app.utils.createNode,
-      getAttr: app.utils.getAttr,
-      uniqueStrings: app.utils.uniqueStrings,
-      isCabinetGap: app.helpers.isCabinetGap,
-      isDrawingFrame: app.helpers.isDrawingFrame,
-      isCabinetSegment: app.helpers.isCabinetSegment,
-      isElectricalRoot: app.helpers.isElectricalRoot,
+      trim,
+      toInt,
+      isObject,
+      cloneJson,
+      createNode,
+      getAttr,
+      uniqueStrings,
+      isCabinetGap,
+      isDrawingFrame,
+      isCabinetSegment,
+      isElectricalRoot,
       extractSpec: app.domains.symbol.extractSpec,
       getFrameConfig: app.domains.frame.getFrameConfig,
       getFramePageNumber: app.domains.frame.getFramePageNumber,
@@ -3202,7 +3066,7 @@
       findCabinetSegments: app.domains.cabinet.findCabinetSegments,
       getPortMetaById: app.domains.connectionConstraints.getPortMetaById,
       findDrawingFrame: app.domains.frame.findDrawingFrame,
-      findPortHostRoot: app.helpers.findPortHostRoot,
+      findPortHostRoot,
       parsePortLayout: app.domains.spec.parsePortLayout,
       getAllDrawingFrames: app.domains.frame.getAllDrawingFrames,
       exitInstanceComposeMode: function(clearStatus) {
@@ -3222,7 +3086,7 @@
       relayoutCabinetByModel: app.domains.cabinet.relayoutCabinetByModel,
       normalizeSpec: app.domains.spec.normalizeSpec,
       buildSymbolCell: app.domains.symbol.buildSymbolCell,
-      resetPendingChangeRecords: app.helpers.resetPendingChangeRecords
+      resetPendingChangeRecords
     };
   }
   function createSnapshotDomain() {
@@ -3961,22 +3825,22 @@
   }
 
   // runtime/connectionConstraints.js
-  function buildConstraintDeps() {
+  function getConstraintDeps() {
     var app = getApp();
     var ctx = app.ctx;
     return {
       ctx,
-      trim: app.utils.trim,
-      clamp: app.utils.clamp,
+      trim,
+      clamp,
       parsePortLayout: app.domains.spec.parsePortLayout,
-      getAttr: app.utils.getAttr,
+      getAttr,
       buildPortLayout: app.domains.spec.buildPortLayout,
-      findPortHostRoot: app.helpers.findPortHostRoot,
+      findPortHostRoot,
       normalizePortDirection: app.domains.spec.normalizePortDirection,
       normalizePortIoMode: app.domains.spec.normalizePortIoMode,
-      isDrawingFrame: app.helpers.isDrawingFrame,
-      isCabinetSegment: app.helpers.isCabinetSegment,
-      isCabinetGap: app.helpers.isCabinetGap,
+      isDrawingFrame,
+      isCabinetSegment,
+      isCabinetGap,
       findDrawingFrame: app.domains.frame.findDrawingFrame,
       getCellAbsoluteGeometry: function(cell) {
         return app.domains.cabinet.getCellAbsoluteGeometry(cell);
@@ -3986,490 +3850,435 @@
       }
     };
   }
-  function createConnectionConstraints() {
-    var deps = arguments.length > 0 ? arguments[0] : buildConstraintDeps();
+  function getConstraintRuntime() {
+    var deps = getConstraintDeps();
     var ctx = deps.ctx;
     var graph = ctx.graph;
-    var model = ctx.model;
-    var state = ctx.state;
-    var oldGetAllConnectionConstraints = graph.getAllConnectionConstraints;
-    var oldSetConnectionConstraint = graph.setConnectionConstraint;
-    var oldValidateConnection = graph.connectionHandler.validateConnection;
-    function getElectricalConstraints(cell) {
-      var root = deps.findPortHostRoot(cell);
-      var layout;
-      var constraints = [];
-      var i;
-      if (root == null) {
-        return null;
-      }
-      layout = deps.buildPortLayout(
-        { ports: deps.parsePortLayout(deps.getAttr(root, "portsJson")) },
-        deps.parsePortLayout(deps.getAttr(root, "portLayout"))
+    return {
+      deps,
+      graph,
+      model: ctx.model,
+      state: ctx.state,
+      oldGetAllConnectionConstraints: graph.getAllConnectionConstraints,
+      oldSetConnectionConstraint: graph.setConnectionConstraint,
+      oldValidateConnection: graph.connectionHandler.validateConnection
+    };
+  }
+  function getElectricalConstraints(cell) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var root = deps.findPortHostRoot(cell);
+    var layout;
+    var constraints = [];
+    var i;
+    if (root == null) {
+      return null;
+    }
+    layout = deps.buildPortLayout(
+      { ports: deps.parsePortLayout(deps.getAttr(root, "portsJson")) },
+      deps.parsePortLayout(deps.getAttr(root, "portLayout"))
+    );
+    for (i = 0; i < layout.length; i++) {
+      var point = layout[i];
+      constraints.push(
+        new mxConnectionConstraint(
+          new mxPoint(point.x, point.y),
+          false,
+          point.id || "port:" + i
+        )
       );
-      for (i = 0; i < layout.length; i++) {
-        var point = layout[i];
-        constraints.push(
-          new mxConnectionConstraint(
-            new mxPoint(point.x, point.y),
-            false,
-            point.id || "port:" + i
-          )
-        );
-      }
-      return constraints;
     }
-    function getPortMetaByConstraint(root, constraint) {
-      var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
-      var name = constraint != null ? deps.trim(constraint.name) : "";
-      var i;
-      for (i = 0; i < ports.length; i++) {
-        if (deps.trim(ports[i].id) == name) {
-          return ports[i];
-        }
-      }
-      return null;
-    }
-    function getPortMetaById(root, portId) {
-      var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
-      var target = deps.trim(portId);
-      var i;
-      for (i = 0; i < ports.length; i++) {
-        if (deps.trim(ports[i].id) == target) {
-          return ports[i];
-        }
-      }
-      return null;
-    }
-    function mapPortDirectionToConstraint(direction) {
-      switch (deps.normalizePortDirection(direction)) {
-        case "left":
-          return "west";
-        case "right":
-          return "east";
-        case "up":
-          return "north";
-        case "down":
-          return "south";
-        default:
-          return "";
+    return constraints;
+  }
+  function getPortMetaByConstraint(root, constraint) {
+    var deps = getConstraintRuntime().deps;
+    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
+    var name = constraint != null ? deps.trim(constraint.name) : "";
+    var i;
+    for (i = 0; i < ports.length; i++) {
+      if (deps.trim(ports[i].id) == name) {
+        return ports[i];
       }
     }
-    function validatePortIoMode(sourcePort, targetPort) {
-      if (sourcePort != null && deps.normalizePortIoMode(sourcePort.ioMode) == "in") {
-        return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u5165\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u8D77\u70B9";
+    return null;
+  }
+  function getPortMetaById(root, portId) {
+    var deps = getConstraintRuntime().deps;
+    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
+    var target = deps.trim(portId);
+    var i;
+    for (i = 0; i < ports.length; i++) {
+      if (deps.trim(ports[i].id) == target) {
+        return ports[i];
       }
-      if (targetPort != null && deps.normalizePortIoMode(targetPort.ioMode) == "out") {
-        return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u51FA\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u7EC8\u70B9";
-      }
-      return null;
     }
-    function applyNativeConnectionConstraint(edge, terminal, source, constraint) {
-      oldSetConnectionConstraint.call(graph, edge, terminal, source, constraint);
+    return null;
+  }
+  function mapPortDirectionToConstraint(direction) {
+    var normalizePortDirection2 = getConstraintRuntime().deps.normalizePortDirection;
+    switch (normalizePortDirection2(direction)) {
+      case "left":
+        return "west";
+      case "right":
+        return "east";
+      case "up":
+        return "north";
+      case "down":
+        return "south";
+      default:
+        return "";
     }
-    function isMovableConnectedTerminal(cell) {
-      return cell != null && model.isVertex(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isCabinetGap(cell);
+  }
+  function validatePortIoMode(sourcePort, targetPort) {
+    var normalizePortIoMode2 = getConstraintRuntime().deps.normalizePortIoMode;
+    if (sourcePort != null && normalizePortIoMode2(sourcePort.ioMode) == "in") {
+      return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u5165\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u8D77\u70B9";
     }
-    function clampCellGeometryToFrame(geometry, frame) {
-      var frameGeometry = model.getGeometry(frame);
-      var nextGeometry = geometry.clone();
-      var padding = 12;
-      var minX = padding;
-      var minY = padding;
-      var maxX = Math.max(minX, frameGeometry.width - geometry.width - padding);
-      var maxY = Math.max(minY, frameGeometry.height - geometry.height - padding);
-      nextGeometry.x = deps.clamp(nextGeometry.x, minX, maxX);
-      nextGeometry.y = deps.clamp(nextGeometry.y, minY, maxY);
-      return nextGeometry;
+    if (targetPort != null && normalizePortIoMode2(targetPort.ioMode) == "out") {
+      return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u51FA\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u7EC8\u70B9";
     }
-    function moveCellToFrameByDelta(cell, targetFrame, deltaX, deltaY) {
-      if (!isMovableConnectedTerminal(cell) || targetFrame == null) {
-        return;
-      }
-      var geometry = model.getGeometry(cell);
-      if (geometry == null) {
-        return;
-      }
-      var currentFrame = deps.findDrawingFrame(cell);
-      var absolute = deps.getCellAbsoluteGeometry(cell);
-      var targetFrameGeometry = model.getGeometry(targetFrame);
-      var nextGeometry = geometry.clone();
-      var nextAbsoluteX = absolute.x + deltaX;
-      var nextAbsoluteY = absolute.y + deltaY;
-      if (currentFrame != targetFrame) {
-        model.add(targetFrame, cell);
-      }
-      nextGeometry.x = nextAbsoluteX - targetFrameGeometry.x;
-      nextGeometry.y = nextAbsoluteY - targetFrameGeometry.y;
-      nextGeometry = clampCellGeometryToFrame(nextGeometry, targetFrame);
-      model.setGeometry(cell, nextGeometry);
+    return null;
+  }
+  function applyNativeConnectionConstraint(edge, terminal, source, constraint) {
+    var runtime = getConstraintRuntime();
+    runtime.oldSetConnectionConstraint.call(
+      runtime.graph,
+      edge,
+      terminal,
+      source,
+      constraint
+    );
+  }
+  function isMovableConnectedTerminal(cell) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    return cell != null && model.isVertex(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isCabinetGap(cell);
+  }
+  function clampCellGeometryToFrame(geometry, frame) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var frameGeometry = model.getGeometry(frame);
+    var nextGeometry = geometry.clone();
+    var padding = 12;
+    var minX = padding;
+    var minY = padding;
+    var maxX = Math.max(minX, frameGeometry.width - geometry.width - padding);
+    var maxY = Math.max(minY, frameGeometry.height - geometry.height - padding);
+    nextGeometry.x = deps.clamp(nextGeometry.x, minX, maxX);
+    nextGeometry.y = deps.clamp(nextGeometry.y, minY, maxY);
+    return nextGeometry;
+  }
+  function moveCellToFrameByDelta(cell, targetFrame, deltaX, deltaY) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    if (!isMovableConnectedTerminal(cell) || targetFrame == null) {
+      return;
     }
-    function collectConnectedMovableGroup(startCell) {
-      var queue = [];
-      var vertexMap = {};
-      var edgeMap = {};
-      var vertices = [];
-      var edges = [];
-      var i;
-      if (!isMovableConnectedTerminal(startCell)) {
-        return {
-          vertices,
-          edges
-        };
-      }
-      queue.push(startCell);
-      while (queue.length > 0) {
-        var cell = queue.shift();
-        var cellId = mxObjectIdentity.get(cell);
-        if (vertexMap[cellId]) {
-          continue;
-        }
-        vertexMap[cellId] = true;
-        vertices.push(cell);
-        for (i = 0; i < model.getEdgeCount(cell); i++) {
-          var edge = model.getEdgeAt(cell, i);
-          var edgeId = mxObjectIdentity.get(edge);
-          var source = model.getTerminal(edge, true);
-          var target = model.getTerminal(edge, false);
-          var other = source == cell ? target : source;
-          if (!edgeMap[edgeId]) {
-            edgeMap[edgeId] = true;
-            edges.push(edge);
-          }
-          if (isMovableConnectedTerminal(other)) {
-            queue.push(other);
-          }
-        }
-      }
+    var geometry = model.getGeometry(cell);
+    if (geometry == null) {
+      return;
+    }
+    var currentFrame = deps.findDrawingFrame(cell);
+    var absolute = deps.getCellAbsoluteGeometry(cell);
+    var targetFrameGeometry = model.getGeometry(targetFrame);
+    var nextGeometry = geometry.clone();
+    var nextAbsoluteX = absolute.x + deltaX;
+    var nextAbsoluteY = absolute.y + deltaY;
+    if (currentFrame != targetFrame) {
+      model.add(targetFrame, cell);
+    }
+    nextGeometry.x = nextAbsoluteX - targetFrameGeometry.x;
+    nextGeometry.y = nextAbsoluteY - targetFrameGeometry.y;
+    nextGeometry = clampCellGeometryToFrame(nextGeometry, targetFrame);
+    model.setGeometry(cell, nextGeometry);
+  }
+  function collectConnectedMovableGroup(startCell) {
+    var model = getConstraintRuntime().model;
+    var queue = [];
+    var vertexMap = {};
+    var edgeMap = {};
+    var vertices = [];
+    var edges = [];
+    var i;
+    if (!isMovableConnectedTerminal(startCell)) {
       return {
         vertices,
         edges
       };
     }
-    function getCellsAbsoluteBounds(cells) {
-      var bounds = null;
-      var i;
-      for (i = 0; i < cells.length; i++) {
-        var geometry = deps.getCellAbsoluteGeometry(cells[i]);
-        if (bounds == null) {
-          bounds = {
-            x: geometry.x,
-            y: geometry.y,
-            width: geometry.width,
-            height: geometry.height
-          };
-        } else {
-          var minX = Math.min(bounds.x, geometry.x);
-          var minY = Math.min(bounds.y, geometry.y);
-          var maxX = Math.max(
-            bounds.x + bounds.width,
-            geometry.x + geometry.width
-          );
-          var maxY = Math.max(
-            bounds.y + bounds.height,
-            geometry.y + geometry.height
-          );
-          bounds.x = minX;
-          bounds.y = minY;
-          bounds.width = maxX - minX;
-          bounds.height = maxY - minY;
+    queue.push(startCell);
+    while (queue.length > 0) {
+      var cell = queue.shift();
+      var cellId = mxObjectIdentity.get(cell);
+      if (vertexMap[cellId]) {
+        continue;
+      }
+      vertexMap[cellId] = true;
+      vertices.push(cell);
+      for (i = 0; i < model.getEdgeCount(cell); i++) {
+        var edge = model.getEdgeAt(cell, i);
+        var edgeId = mxObjectIdentity.get(edge);
+        var source = model.getTerminal(edge, true);
+        var target = model.getTerminal(edge, false);
+        var other = source == cell ? target : source;
+        if (!edgeMap[edgeId]) {
+          edgeMap[edgeId] = true;
+          edges.push(edge);
+        }
+        if (isMovableConnectedTerminal(other)) {
+          queue.push(other);
         }
       }
-      return bounds;
     }
-    function adjustGroupDeltaToFrame(vertices, targetFrame, deltaX, deltaY) {
-      var bounds = getCellsAbsoluteBounds(vertices);
-      var frameGeometry = model.getGeometry(targetFrame);
-      var padding = 12;
-      if (bounds == null || frameGeometry == null) {
-        return {
-          x: deltaX,
-          y: deltaY
+    return {
+      vertices,
+      edges
+    };
+  }
+  function getCellsAbsoluteBounds(cells) {
+    var getCellAbsoluteGeometry = getConstraintRuntime().deps.getCellAbsoluteGeometry;
+    var bounds = null;
+    var i;
+    for (i = 0; i < cells.length; i++) {
+      var geometry = getCellAbsoluteGeometry(cells[i]);
+      if (bounds == null) {
+        bounds = {
+          x: geometry.x,
+          y: geometry.y,
+          width: geometry.width,
+          height: geometry.height
         };
+      } else {
+        var minX = Math.min(bounds.x, geometry.x);
+        var minY = Math.min(bounds.y, geometry.y);
+        var maxX = Math.max(
+          bounds.x + bounds.width,
+          geometry.x + geometry.width
+        );
+        var maxY = Math.max(
+          bounds.y + bounds.height,
+          geometry.y + geometry.height
+        );
+        bounds.x = minX;
+        bounds.y = minY;
+        bounds.width = maxX - minX;
+        bounds.height = maxY - minY;
       }
-      var nextX = bounds.x + deltaX;
-      var nextY = bounds.y + deltaY;
-      var minX = frameGeometry.x + padding;
-      var minY = frameGeometry.y + padding;
-      var maxX = frameGeometry.x + frameGeometry.width - padding;
-      var maxY = frameGeometry.y + frameGeometry.height - padding;
-      if (nextX < minX) {
-        deltaX += minX - nextX;
-        nextX = minX;
-      }
-      if (nextY < minY) {
-        deltaY += minY - nextY;
-        nextY = minY;
-      }
-      if (nextX + bounds.width > maxX) {
-        deltaX -= nextX + bounds.width - maxX;
-      }
-      if (nextY + bounds.height > maxY) {
-        deltaY -= nextY + bounds.height - maxY;
-      }
+    }
+    return bounds;
+  }
+  function adjustGroupDeltaToFrame(vertices, targetFrame, deltaX, deltaY) {
+    var model = getConstraintRuntime().model;
+    var bounds = getCellsAbsoluteBounds(vertices);
+    var frameGeometry = model.getGeometry(targetFrame);
+    var padding = 12;
+    if (bounds == null || frameGeometry == null) {
       return {
         x: deltaX,
         y: deltaY
       };
     }
-    function shiftEdgePointsByDelta(edge, deltaX, deltaY) {
-      var geometry = model.getGeometry(edge);
-      var points;
-      var i;
-      if (geometry == null || geometry.points == null || geometry.points.length == 0) {
-        return;
-      }
+    var nextX = bounds.x + deltaX;
+    var nextY = bounds.y + deltaY;
+    var minX = frameGeometry.x + padding;
+    var minY = frameGeometry.y + padding;
+    var maxX = frameGeometry.x + frameGeometry.width - padding;
+    var maxY = frameGeometry.y + frameGeometry.height - padding;
+    if (nextX < minX) {
+      deltaX += minX - nextX;
+      nextX = minX;
+    }
+    if (nextY < minY) {
+      deltaY += minY - nextY;
+      nextY = minY;
+    }
+    if (nextX + bounds.width > maxX) {
+      deltaX -= nextX + bounds.width - maxX;
+    }
+    if (nextY + bounds.height > maxY) {
+      deltaY -= nextY + bounds.height - maxY;
+    }
+    return {
+      x: deltaX,
+      y: deltaY
+    };
+  }
+  function shiftEdgePointsByDelta(edge, deltaX, deltaY) {
+    var model = getConstraintRuntime().model;
+    var geometry = model.getGeometry(edge);
+    var points;
+    var i;
+    if (geometry == null || geometry.points == null || geometry.points.length == 0) {
+      return;
+    }
+    geometry = geometry.clone();
+    points = [];
+    for (i = 0; i < geometry.points.length; i++) {
+      points.push(
+        new mxPoint(
+          geometry.points[i].x + deltaX,
+          geometry.points[i].y + deltaY
+        )
+      );
+    }
+    geometry.points = points;
+    model.setGeometry(edge, geometry);
+  }
+  function clearEdgePoints(edge) {
+    var model = getConstraintRuntime().model;
+    var geometry = model.getGeometry(edge);
+    if (geometry != null && geometry.points != null && geometry.points.length > 0) {
       geometry = geometry.clone();
-      points = [];
-      for (i = 0; i < geometry.points.length; i++) {
-        points.push(
-          new mxPoint(
-            geometry.points[i].x + deltaX,
-            geometry.points[i].y + deltaY
-          )
-        );
-      }
-      geometry.points = points;
+      geometry.points = null;
       model.setGeometry(edge, geometry);
     }
-    function clearEdgePoints(edge) {
-      var geometry = model.getGeometry(edge);
-      if (geometry != null && geometry.points != null && geometry.points.length > 0) {
-        geometry = geometry.clone();
-        geometry.points = null;
-        model.setGeometry(edge, geometry);
-      }
+  }
+  function moveConnectedGroupToCabinetPort(edge, source, oldRoot, oldPortId, newRoot, newPort) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var state = runtime.state;
+    var otherTerminal = model.getTerminal(edge, !source);
+    var oldPort = getPortMetaById(oldRoot, oldPortId);
+    var targetFrame = deps.findDrawingFrame(newRoot);
+    var group;
+    var delta;
+    var movedMap = {};
+    var i;
+    if (state.updatingModel || !deps.isCabinetSegment(oldRoot) || !deps.isCabinetSegment(newRoot) || oldPort == null || newPort == null || !isMovableConnectedTerminal(otherTerminal) || targetFrame == null) {
+      return;
     }
-    function moveConnectedGroupToCabinetPort(edge, source, oldRoot, oldPortId, newRoot, newPort) {
-      var otherTerminal = model.getTerminal(edge, !source);
-      var oldPort = getPortMetaById(oldRoot, oldPortId);
-      var targetFrame = deps.findDrawingFrame(newRoot);
-      var group;
-      var delta;
-      var movedMap = {};
-      var i;
-      if (state.updatingModel || !deps.isCabinetSegment(oldRoot) || !deps.isCabinetSegment(newRoot) || oldPort == null || newPort == null || !isMovableConnectedTerminal(otherTerminal) || targetFrame == null) {
+    group = collectConnectedMovableGroup(otherTerminal);
+    if (group.vertices.length == 0) {
+      return;
+    }
+    delta = adjustGroupDeltaToFrame(
+      group.vertices,
+      targetFrame,
+      deps.getPortAbsolutePosition(newRoot, newPort).x - deps.getPortAbsolutePosition(oldRoot, oldPort).x,
+      deps.getPortAbsolutePosition(newRoot, newPort).y - deps.getPortAbsolutePosition(oldRoot, oldPort).y
+    );
+    if (Math.abs(delta.x) < 1e-4 && Math.abs(delta.y) < 1e-4) {
+      return;
+    }
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      for (i = 0; i < group.vertices.length; i++) {
+        var vertex = group.vertices[i];
+        var key = mxObjectIdentity.get(vertex);
+        if (!movedMap[key]) {
+          movedMap[key] = true;
+          moveCellToFrameByDelta(vertex, targetFrame, delta.x, delta.y);
+        }
+      }
+      for (i = 0; i < group.edges.length; i++) {
+        var groupEdge = group.edges[i];
+        var sourceTerminal = model.getTerminal(groupEdge, true);
+        var targetTerminal = model.getTerminal(groupEdge, false);
+        var sourceMoved = movedMap[mxObjectIdentity.get(sourceTerminal)] === true;
+        var targetMoved = movedMap[mxObjectIdentity.get(targetTerminal)] === true;
+        if (sourceMoved && targetMoved) {
+          shiftEdgePointsByDelta(groupEdge, delta.x, delta.y);
+        } else {
+          clearEdgePoints(groupEdge);
+        }
+      }
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+  }
+  function installGraphBehavior(extraDeps) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var model = runtime.model;
+    graph.getAllConnectionConstraints = function(terminal, source) {
+      var root = deps.findPortHostRoot(terminal != null ? terminal.cell : null);
+      if (root != null) {
+        return getElectricalConstraints(root);
+      }
+      return runtime.oldGetAllConnectionConstraints.apply(this, arguments);
+    };
+    graph.setConnectionConstraint = function(edge, terminal, source, constraint) {
+      if (edge == null) {
+        runtime.oldSetConnectionConstraint.apply(this, arguments);
         return;
       }
-      group = collectConnectedMovableGroup(otherTerminal);
-      if (group.vertices.length == 0) {
-        return;
-      }
-      delta = adjustGroupDeltaToFrame(
-        group.vertices,
-        targetFrame,
-        deps.getPortAbsolutePosition(newRoot, newPort).x - deps.getPortAbsolutePosition(oldRoot, oldPort).x,
-        deps.getPortAbsolutePosition(newRoot, newPort).y - deps.getPortAbsolutePosition(oldRoot, oldPort).y
+      var previousStyle = model.getStyle(edge) || "";
+      var previousPortId = deps.trim(
+        mxUtils.getValue(
+          previousStyle,
+          source ? "sourcePortId" : "targetPortId",
+          ""
+        )
       );
-      if (Math.abs(delta.x) < 1e-4 && Math.abs(delta.y) < 1e-4) {
+      var previousRoot = deps.findPortHostRoot(model.getTerminal(edge, source));
+      runtime.oldSetConnectionConstraint.apply(this, arguments);
+      var root = deps.findPortHostRoot(terminal);
+      if (root == null || edge == null) {
         return;
       }
-      state.updatingModel = true;
-      model.beginUpdate();
-      try {
-        for (i = 0; i < group.vertices.length; i++) {
-          var vertex = group.vertices[i];
-          var key = mxObjectIdentity.get(vertex);
-          if (!movedMap[key]) {
-            movedMap[key] = true;
-            moveCellToFrameByDelta(vertex, targetFrame, delta.x, delta.y);
-          }
-        }
-        for (i = 0; i < group.edges.length; i++) {
-          var groupEdge = group.edges[i];
-          var sourceTerminal = model.getTerminal(groupEdge, true);
-          var targetTerminal = model.getTerminal(groupEdge, false);
-          var sourceMoved = movedMap[mxObjectIdentity.get(sourceTerminal)] === true;
-          var targetMoved = movedMap[mxObjectIdentity.get(targetTerminal)] === true;
-          if (sourceMoved && targetMoved) {
-            shiftEdgePointsByDelta(groupEdge, delta.x, delta.y);
-          } else {
-            clearEdgePoints(groupEdge);
-          }
-        }
-      } finally {
-        model.endUpdate();
-        state.updatingModel = false;
+      var port = getPortMetaByConstraint(root, constraint);
+      extraDeps.applyEdgePortConstraintMetadata(edge, root, source, constraint);
+      if (previousRoot != null && root != null && previousPortId.length > 0 && port != null && deps.trim(port.id).length > 0 && (previousRoot != root || previousPortId != deps.trim(port.id))) {
+        moveConnectedGroupToCabinetPort(
+          edge,
+          source,
+          previousRoot,
+          previousPortId,
+          root,
+          port
+        );
       }
-    }
-    function installGraphBehavior(extraDeps) {
-      graph.getAllConnectionConstraints = function(terminal, source) {
-        var root = deps.findPortHostRoot(terminal != null ? terminal.cell : null);
-        if (root != null) {
-          return getElectricalConstraints(root);
-        }
-        return oldGetAllConnectionConstraints.apply(this, arguments);
-      };
-      graph.setConnectionConstraint = function(edge, terminal, source, constraint) {
-        if (edge == null) {
-          oldSetConnectionConstraint.apply(this, arguments);
-          return;
-        }
-        var previousStyle = model.getStyle(edge) || "";
-        var previousPortId = deps.trim(
-          mxUtils.getValue(
-            previousStyle,
-            source ? "sourcePortId" : "targetPortId",
-            ""
-          )
-        );
-        var previousRoot = deps.findPortHostRoot(model.getTerminal(edge, source));
-        oldSetConnectionConstraint.apply(this, arguments);
-        var root = deps.findPortHostRoot(terminal);
-        if (root == null || edge == null) {
-          return;
-        }
-        var port = getPortMetaByConstraint(root, constraint);
-        extraDeps.applyEdgePortConstraintMetadata(edge, root, source, constraint);
-        if (previousRoot != null && root != null && previousPortId.length > 0 && port != null && deps.trim(port.id).length > 0 && (previousRoot != root || previousPortId != deps.trim(port.id))) {
-          moveConnectedGroupToCabinetPort(
-            edge,
-            source,
-            previousRoot,
-            previousPortId,
-            root,
-            port
-          );
-        }
-      };
-      graph.connectionHandler.validateConnection = function(source, target) {
-        var error = oldValidateConnection.apply(this, arguments);
-        var sourceRoot;
-        var targetRoot;
-        var sourcePort;
-        var targetPort;
-        if (error != null) {
-          extraDeps.setCanvasStatus(error);
-          return error;
-        }
-        sourceRoot = deps.findPortHostRoot(source);
-        targetRoot = deps.findPortHostRoot(target);
-        if (sourceRoot == null && targetRoot == null) {
-          return null;
-        }
-        sourcePort = getPortMetaByConstraint(sourceRoot, this.sourceConstraint);
-        targetPort = getPortMetaByConstraint(
-          targetRoot,
-          this.constraintHandler != null ? this.constraintHandler.currentConstraint : null
-        );
-        error = validatePortIoMode(sourcePort, targetPort);
+    };
+    graph.connectionHandler.validateConnection = function(source, target) {
+      var error = runtime.oldValidateConnection.apply(this, arguments);
+      var sourceRoot;
+      var targetRoot;
+      var sourcePort;
+      var targetPort;
+      if (error != null) {
         extraDeps.setCanvasStatus(error);
         return error;
-      };
-      graph.connectionHandler.addListener(mxEvent.RESET, function() {
-        extraDeps.setCanvasStatus("");
-      });
-      graph.connectionHandler.addListener(mxEvent.CONNECT, function() {
-        extraDeps.setCanvasStatus("");
-      });
-    }
-    return {
-      applyNativeConnectionConstraint,
-      clearEdgePoints,
-      getElectricalConstraints,
-      getPortMetaByConstraint,
-      getPortMetaById,
-      isMovableConnectedTerminal,
-      installGraphBehavior,
-      mapPortDirectionToConstraint,
-      moveCellToFrameByDelta,
-      moveConnectedGroupToCabinetPort
+      }
+      sourceRoot = deps.findPortHostRoot(source);
+      targetRoot = deps.findPortHostRoot(target);
+      if (sourceRoot == null && targetRoot == null) {
+        return null;
+      }
+      sourcePort = getPortMetaByConstraint(sourceRoot, this.sourceConstraint);
+      targetPort = getPortMetaByConstraint(
+        targetRoot,
+        this.constraintHandler != null ? this.constraintHandler.currentConstraint : null
+      );
+      error = validatePortIoMode(sourcePort, targetPort);
+      extraDeps.setCanvasStatus(error);
+      return error;
     };
+    graph.connectionHandler.addListener(mxEvent.RESET, function() {
+      extraDeps.setCanvasStatus("");
+    });
+    graph.connectionHandler.addListener(mxEvent.CONNECT, function() {
+      extraDeps.setCanvasStatus("");
+    });
   }
-
-  // services/draftStore.js
-  function createDraftStore() {
-    var deps = arguments.length > 0 ? arguments[0] : {};
-    var state = deps.state;
-    var storageKey = deps.storageKey;
-    var trim2 = deps.trim;
-    var cloneJson2 = deps.cloneJson;
-    function getDraftStorage() {
-      try {
-        return window.localStorage;
-      } catch (e) {
-        return null;
-      }
-    }
-    function clearDraftSaveTimer() {
-      if (state.draftSaveTimer != null) {
-        window.clearTimeout(state.draftSaveTimer);
-        state.draftSaveTimer = null;
-      }
-    }
-    function buildEditorDraftSnapshot() {
-      return {
-        symbolId: state.symbolIdInput != null ? trim2(state.symbolIdInput.value) : "",
-        symbolIdTouched: !!state.symbolIdTouched,
-        templateName: state.templateNameInput != null ? trim2(state.templateNameInput.value) : "",
-        templateWidth: state.templateWidthInput != null ? trim2(state.templateWidthInput.value) : "",
-        templateHeight: state.templateHeightInput != null ? trim2(state.templateHeightInput.value) : "",
-        uploadedPrimarySvg: state.uploadedPrimarySvg || "",
-        uploadedPrimarySvgName: state.uploadedPrimarySvgName || "",
-        uploadedPrimarySvgSize: state.uploadedPrimarySvgSize || null,
-        variantEnabled: !!state.variantEnabled,
-        variantField: state.variantFieldInput != null ? trim2(state.variantFieldInput.value) : "",
-        previewVariantId: trim2(state.previewVariantId),
-        schemaFields: cloneJson2(state.schemaFields || []),
-        variantItems: cloneJson2(state.variantItems || []),
-        currentSpec: state.currentSpec != null ? cloneJson2(state.currentSpec) : null
-      };
-    }
-    function saveEditorDraftNow() {
-      var storage = getDraftStorage();
-      clearDraftSaveTimer();
-      if (storage == null) {
-        return;
-      }
-      try {
-        storage.setItem(storageKey, JSON.stringify(buildEditorDraftSnapshot()));
-      } catch (e) {
-      }
-    }
-    function scheduleEditorDraftSave() {
-      clearDraftSaveTimer();
-      state.draftSaveTimer = window.setTimeout(saveEditorDraftNow, 180);
-    }
-    function loadEditorDraft() {
-      var storage = getDraftStorage();
-      var raw;
-      if (storage == null) {
-        return null;
-      }
-      try {
-        raw = storage.getItem(storageKey);
-      } catch (e) {
-        return null;
-      }
-      if (trim2(raw).length == 0) {
-        return null;
-      }
-      try {
-        return JSON.parse(raw);
-      } catch (e) {
-        return null;
-      }
-    }
-    function clearEditorDraft() {
-      var storage = getDraftStorage();
-      clearDraftSaveTimer();
-      if (storage == null) {
-        return;
-      }
-      try {
-        storage.removeItem(storageKey);
-      } catch (e) {
-      }
-    }
-    return {
-      buildEditorDraftSnapshot,
-      clearDraftSaveTimer,
-      clearEditorDraft,
-      loadEditorDraft,
-      saveEditorDraftNow,
-      scheduleEditorDraftSave
-    };
-  }
+  var connectionConstraintsApi = {
+    applyNativeConnectionConstraint,
+    clearEdgePoints,
+    getElectricalConstraints,
+    getPortMetaByConstraint,
+    getPortMetaById,
+    isMovableConnectedTerminal,
+    installGraphBehavior,
+    mapPortDirectionToConstraint,
+    moveCellToFrameByDelta,
+    moveConnectedGroupToCabinetPort
+  };
 
   // services/libraryGraphCodec.js
   function createLibraryEntry(graph, buildSymbolCell, spec) {
@@ -4493,12 +4302,12 @@
       spec: cloneJson(spec)
     };
   }
-  function getLibraryEntrySpec(ui, image, normalizeSpec, isElectricalRoot, extractSpec) {
+  function getLibraryEntrySpec(ui, image, normalizeSpec2, isElectricalRoot2, extractSpec) {
     var xml;
     var cells;
     var i;
     if (image != null && isObject(image.spec)) {
-      return normalizeSpec(cloneJson(image.spec));
+      return normalizeSpec2(cloneJson(image.spec));
     }
     if (image == null || image.xml == null) {
       throw new Error("\u6A21\u677F\u6761\u76EE\u7F3A\u5C11 xml");
@@ -4509,7 +4318,7 @@
     }
     cells = ui.stringToCells(xml);
     for (i = 0; i < cells.length; i++) {
-      if (isElectricalRoot(cells[i])) {
+      if (isElectricalRoot2(cells[i])) {
         return extractSpec(cells[i]);
       }
     }
@@ -4581,117 +4390,627 @@
   }
 
   // services/libraryStore.js
-  function createLibraryStore() {
-    var deps = arguments.length > 0 ? arguments[0] : {};
+  function buildLibraryStoreDeps() {
+    var app = getApp();
+    var graphApi = app.graphApi;
+    var appContext = app.appContext;
+    return {
+      ui: graphApi.ui,
+      graph: graphApi.graph,
+      state: appContext.getState(),
+      libraryTitle: app.constants.LIBRARY_TITLE,
+      normalizeSpec: app.domains.spec.normalizeSpec,
+      isElectricalRoot,
+      extractSpec: app.domains.symbol.extractSpec,
+      buildSymbolCell: app.domains.symbol.buildSymbolCell,
+      showStatus
+    };
+  }
+  function getLibraryDeps() {
+    return buildLibraryStoreDeps();
+  }
+  function getLibraryEntrySpecCompat(image) {
+    var deps = getLibraryDeps();
+    return getLibraryEntrySpec(
+      deps.ui,
+      image,
+      deps.normalizeSpec,
+      deps.isElectricalRoot,
+      deps.extractSpec
+    );
+  }
+  function isTemplateNameTaken(name, ignoreSymbolId) {
+    var deps = getLibraryDeps();
+    var target = trim(name);
+    var ignoreId = trim(ignoreSymbolId);
+    var i;
     var state = deps.state;
-    function getLibraryEntrySpecCompat(image) {
-      return getLibraryEntrySpec(
-        deps.ui,
-        image,
-        deps.normalizeSpec,
-        deps.isElectricalRoot,
-        deps.extractSpec
-      );
+    if (target.length == 0) {
+      return false;
     }
-    function isTemplateNameTaken(name, ignoreSymbolId) {
-      var target = trim(name);
-      var ignoreId = trim(ignoreSymbolId);
-      var i;
-      if (target.length == 0) {
-        return false;
+    for (i = 0; i < state.libraryImages.length; i++) {
+      try {
+        var spec = getLibraryEntrySpecCompat(state.libraryImages[i]);
+        if (trim(spec.templateName || spec.title) == target && trim(spec.symbolId) != ignoreId) {
+          return true;
+        }
+      } catch (e) {
       }
-      for (i = 0; i < state.libraryImages.length; i++) {
+    }
+    return false;
+  }
+  function addToLibrary(spec, onSaved) {
+    var deps = getLibraryDeps();
+    loadStoredLibrary(deps.ui, deps.state, deps.libraryTitle, function(images) {
+      var next = images.slice();
+      var entry = createLibraryEntry(deps.graph, deps.buildSymbolCell, spec);
+      var index = findLibraryEntryIndex(next, spec.symbolId, getLibraryEntrySpecCompat);
+      var i;
+      for (i = 0; i < next.length; i++) {
         try {
-          var spec = getLibraryEntrySpecCompat(state.libraryImages[i]);
-          if (trim(spec.templateName || spec.title) == target && trim(spec.symbolId) != ignoreId) {
-            return true;
+          var currentSpec = getLibraryEntrySpecCompat(next[i]);
+          if (trim(currentSpec.templateName || currentSpec.title) == trim(spec.templateName || spec.title) && trim(currentSpec.symbolId) != trim(spec.symbolId)) {
+            deps.showStatus("\u56FE\u5143\u7C7B\u578B\u540D\u79F0\u4E0D\u80FD\u91CD\u590D", true);
+            return;
           }
         } catch (e) {
         }
       }
-      return false;
-    }
-    function addToLibrary(spec, onSaved) {
-      loadStoredLibrary(deps.ui, deps.state, deps.libraryTitle, function(images) {
-        var next = images.slice();
-        var entry = createLibraryEntry(deps.graph, deps.buildSymbolCell, spec);
-        var index = findLibraryEntryIndex(next, spec.symbolId, getLibraryEntrySpecCompat);
-        var i;
-        for (i = 0; i < next.length; i++) {
-          try {
-            var currentSpec = getLibraryEntrySpecCompat(next[i]);
-            if (trim(currentSpec.templateName || currentSpec.title) == trim(spec.templateName || spec.title) && trim(currentSpec.symbolId) != trim(spec.symbolId)) {
-              deps.showStatus("\u56FE\u5143\u7C7B\u578B\u540D\u79F0\u4E0D\u80FD\u91CD\u590D", true);
-              return;
-            }
-          } catch (e) {
-          }
-        }
-        if (index >= 0) {
-          next[index] = entry;
-        } else {
-          next.push(entry);
-        }
-        saveLibraryImages(deps.ui, deps.state, deps.libraryTitle, next, function() {
-          deps.showStatus(index >= 0 ? "\u5DF2\u66F4\u65B0\u56FE\u5E93\u6A21\u677F" : "\u5DF2\u52A0\u5165\u56FE\u5E93", false);
-          if (typeof onSaved === "function") {
-            onSaved();
-          }
-        });
-      });
-    }
-    function removeTemplateFromLibrary(symbolId, onRemoved) {
-      loadStoredLibrary(deps.ui, deps.state, deps.libraryTitle, function(images) {
-        var next = [];
-        var removed = false;
-        var i;
-        for (i = 0; i < images.length; i++) {
-          try {
-            if (trim(getLibraryEntrySpecCompat(images[i]).symbolId) == trim(symbolId)) {
-              removed = true;
-              continue;
-            }
-          } catch (e) {
-          }
-          next.push(images[i]);
-        }
-        if (!removed) {
-          deps.showStatus("\u672A\u627E\u5230\u8981\u5220\u9664\u7684\u56FE\u5143\u6A21\u677F", true);
-          return;
-        }
-        saveLibraryImages(deps.ui, deps.state, deps.libraryTitle, next, function() {
-          deps.showStatus("\u5DF2\u5220\u9664\u56FE\u5143\u6A21\u677F", false);
-          if (typeof onRemoved === "function") {
-            onRemoved(next);
-          }
-        });
-      });
-    }
-    return {
-      addToLibrary,
-      getLibraryEntrySpec: getLibraryEntrySpecCompat,
-      isTemplateNameTaken,
-      loadStoredLibrary: function(callback, openInSidebar) {
-        return loadStoredLibrary(
-          deps.ui,
-          deps.state,
-          deps.libraryTitle,
-          callback,
-          openInSidebar
-        );
-      },
-      removeTemplateFromLibrary,
-      saveLibraryImages: function(images, callback) {
-        return saveLibraryImages(
-          deps.ui,
-          deps.state,
-          deps.libraryTitle,
-          images,
-          callback
-        );
+      if (index >= 0) {
+        next[index] = entry;
+      } else {
+        next.push(entry);
       }
+      saveLibraryImages(deps.ui, deps.state, deps.libraryTitle, next, function() {
+        deps.showStatus(index >= 0 ? "\u5DF2\u66F4\u65B0\u56FE\u5E93\u6A21\u677F" : "\u5DF2\u52A0\u5165\u56FE\u5E93", false);
+        if (typeof onSaved === "function") {
+          onSaved();
+        }
+      });
+    });
+  }
+  function removeTemplateFromLibrary(symbolId, onRemoved) {
+    var deps = getLibraryDeps();
+    loadStoredLibrary(deps.ui, deps.state, deps.libraryTitle, function(images) {
+      var next = [];
+      var removed = false;
+      var i;
+      for (i = 0; i < images.length; i++) {
+        try {
+          if (trim(getLibraryEntrySpecCompat(images[i]).symbolId) == trim(symbolId)) {
+            removed = true;
+            continue;
+          }
+        } catch (e) {
+        }
+        next.push(images[i]);
+      }
+      if (!removed) {
+        deps.showStatus("\u672A\u627E\u5230\u8981\u5220\u9664\u7684\u56FE\u5143\u6A21\u677F", true);
+        return;
+      }
+      saveLibraryImages(deps.ui, deps.state, deps.libraryTitle, next, function() {
+        deps.showStatus("\u5DF2\u5220\u9664\u56FE\u5143\u6A21\u677F", false);
+        if (typeof onRemoved === "function") {
+          onRemoved(next);
+        }
+      });
+    });
+  }
+  function loadStoredLibraryCompat(callback, openInSidebar) {
+    var deps = getLibraryDeps();
+    return loadStoredLibrary(
+      deps.ui,
+      deps.state,
+      deps.libraryTitle,
+      callback,
+      openInSidebar
+    );
+  }
+  function saveLibraryImagesCompat(images, callback) {
+    var deps = getLibraryDeps();
+    return saveLibraryImages(
+      deps.ui,
+      deps.state,
+      deps.libraryTitle,
+      images,
+      callback
+    );
+  }
+  var libraryStoreApi = {
+    addToLibrary,
+    getLibraryEntrySpec: getLibraryEntrySpecCompat,
+    isTemplateNameTaken,
+    loadStoredLibrary: loadStoredLibraryCompat,
+    removeTemplateFromLibrary,
+    saveLibraryImages: saveLibraryImagesCompat
+  };
+
+  // ui/exportSvgDialog.js
+  function buildExportDialogDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      toInt,
+      createButton: createPluginButton,
+      showStatus
     };
   }
+  function openSvgExportDialog() {
+    var deps = arguments.length > 0 ? arguments[0] : buildExportDialogDeps();
+    var ui = deps.ctx.ui;
+    var graph = deps.ctx.graph;
+    function getDiagramExportBounds() {
+      var bounds = graph.getGraphBounds();
+      var viewScale = graph.view.scale || 1;
+      if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
+        throw new Error("\u753B\u5E03\u4E0A\u6CA1\u6709\u53EF\u5BFC\u51FA\u7684\u56FE\u5F62");
+      }
+      return {
+        width: Math.max(1, Math.ceil(bounds.width / viewScale)),
+        height: Math.max(1, Math.ceil(bounds.height / viewScale))
+      };
+    }
+    function createSvgExportCode(width, height) {
+      var exportBounds2 = getDiagramExportBounds();
+      var targetWidth = Math.max(1, deps.toInt(width, exportBounds2.width));
+      var targetHeight = Math.max(1, deps.toInt(height, exportBounds2.height));
+      var scale = Math.min(
+        targetWidth / exportBounds2.width,
+        targetHeight / exportBounds2.height
+      );
+      var svgRoot = graph.getSvg(
+        null,
+        scale,
+        0,
+        false,
+        null,
+        true,
+        null,
+        null,
+        null,
+        null,
+        true,
+        null
+      );
+      if (graph.shadowVisible) {
+        graph.addSvgShadow(svgRoot);
+      }
+      if (graph.mathEnabled) {
+        Editor.prototype.addMathCss(svgRoot);
+      }
+      svgRoot.setAttribute("width", String(targetWidth));
+      svgRoot.setAttribute("height", String(targetHeight));
+      svgRoot.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      return mxUtils.getXml(svgRoot);
+    }
+    function downloadSvgCode(svgCode) {
+      var blob = new Blob([svgCode], { type: "image/svg+xml;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var link = document.createElement("a");
+      link.href = url;
+      link.download = "diagram-export.svg";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.setTimeout(function() {
+        URL.revokeObjectURL(url);
+      }, 0);
+    }
+    var exportBounds = getDiagramExportBounds();
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.boxSizing = "border-box";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
+    var formRow = document.createElement("div");
+    formRow.style.display = "flex";
+    formRow.style.alignItems = "center";
+    formRow.style.gap = "8px";
+    formRow.style.flexWrap = "wrap";
+    div.appendChild(formRow);
+    var widthLabel = document.createElement("div");
+    widthLabel.innerText = "\u5BBD";
+    formRow.appendChild(widthLabel);
+    var widthInput = document.createElement("input");
+    widthInput.setAttribute("type", "number");
+    widthInput.setAttribute("min", "1");
+    widthInput.style.width = "120px";
+    widthInput.value = String(exportBounds.width);
+    formRow.appendChild(widthInput);
+    var heightLabel = document.createElement("div");
+    heightLabel.innerText = "\u9AD8";
+    formRow.appendChild(heightLabel);
+    var heightInput = document.createElement("input");
+    heightInput.setAttribute("type", "number");
+    heightInput.setAttribute("min", "1");
+    heightInput.style.width = "120px";
+    heightInput.value = String(exportBounds.height);
+    formRow.appendChild(heightInput);
+    var refreshButton = deps.createButton("\u5237\u65B0SVG\u4EE3\u7801", function() {
+      try {
+        textarea.value = createSvgExportCode(widthInput.value, heightInput.value);
+      } catch (e) {
+        deps.showStatus(e.message || String(e), true);
+      }
+    });
+    refreshButton.style.marginTop = "0";
+    refreshButton.style.marginRight = "0";
+    formRow.appendChild(refreshButton);
+    var textarea = document.createElement("textarea");
+    textarea.spellcheck = false;
+    textarea.style.width = "100%";
+    textarea.style.flex = "1 1 auto";
+    textarea.style.minHeight = "320px";
+    textarea.style.marginTop = "10px";
+    textarea.style.boxSizing = "border-box";
+    div.appendChild(textarea);
+    var buttons = document.createElement("div");
+    buttons.style.marginTop = "10px";
+    buttons.style.flex = "0 0 auto";
+    div.appendChild(buttons);
+    var copyButton = deps.createButton("\u590D\u5236SVG\u4EE3\u7801", function() {
+      ui.writeTextToClipboard(
+        textarea.value,
+        function(e) {
+          ui.handleError(e);
+        },
+        function() {
+          ui.alert("\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F");
+        }
+      );
+    });
+    copyButton.style.marginTop = "0";
+    buttons.appendChild(copyButton);
+    var downloadButton = deps.createButton("\u4E0B\u8F7DSVG", function() {
+      try {
+        var svgCode = createSvgExportCode(widthInput.value, heightInput.value);
+        textarea.value = svgCode;
+        downloadSvgCode(svgCode);
+        wnd.destroy();
+      } catch (e) {
+        deps.showStatus(e.message || String(e), true);
+      }
+    });
+    downloadButton.style.marginTop = "0";
+    buttons.appendChild(downloadButton);
+    textarea.value = createSvgExportCode(exportBounds.width, exportBounds.height);
+    var wnd = new mxWindow("\u5BFC\u51FASVG", div, 160, 120, 720, 560, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(true);
+    wnd.setScrollable(true);
+    wnd.setVisible(true);
+  }
+
+  // ui/frameDialog.js
+  function buildFrameDialogDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      cloneJson,
+      normalizeFrameConfig: app.domains.frame.normalizeFrameConfig,
+      findDrawingFrame: app.domains.frame.findDrawingFrame,
+      getAllDrawingFrames: app.domains.frame.getAllDrawingFrames,
+      createButton: createPluginButton,
+      getFrameGroupId: app.domains.frame.getFrameGroupId,
+      generateFrameGroupId,
+      getMaxFramePageNumberInGroup: app.domains.frame.getMaxFramePageNumberInGroup,
+      createDrawingFrameCell: app.domains.frame.createDrawingFrameCell,
+      getRightmostFrameInGroup: app.domains.frame.getRightmostFrameInGroup,
+      addTopLevelCell: app.domains.frame.addTopLevelCell,
+      getLeftmostFrame: app.domains.frame.getLeftmostFrame,
+      getBottommostFrame: app.domains.frame.getBottommostFrame,
+      insertFrame: commandApi.insertFrame,
+      showStatus,
+      setCanvasStatus
+    };
+  }
+  function openInsertFrameDialog() {
+    var deps = arguments.length > 0 ? arguments[0] : buildFrameDialogDeps();
+    var ctx = deps.ctx;
+    var graph = ctx.graph;
+    var state = ctx.state;
+    var defaultConfig = deps.normalizeFrameConfig(state.frameConfig || {});
+    var selectedFrame = deps.findDrawingFrame(graph.getSelectionCell());
+    var existingFrames = deps.getAllDrawingFrames();
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.gap = "10px";
+    div.style.boxSizing = "border-box";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    var row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "8px";
+    div.appendChild(row);
+    var widthLabel = document.createElement("div");
+    widthLabel.innerText = "\u5BBD";
+    row.appendChild(widthLabel);
+    var widthInput = document.createElement("input");
+    widthInput.setAttribute("type", "number");
+    widthInput.setAttribute("min", "320");
+    widthInput.style.width = "140px";
+    widthInput.value = String(defaultConfig.width);
+    row.appendChild(widthInput);
+    var heightLabel = document.createElement("div");
+    heightLabel.innerText = "\u9AD8";
+    row.appendChild(heightLabel);
+    var heightInput = document.createElement("input");
+    heightInput.setAttribute("type", "number");
+    heightInput.setAttribute("min", "240");
+    heightInput.style.width = "140px";
+    heightInput.value = String(defaultConfig.height);
+    row.appendChild(heightInput);
+    var hint = document.createElement("div");
+    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+    hint.style.fontSize = "12px";
+    hint.innerText = selectedFrame != null ? "\u5DF2\u9009\u4E2D\u56FE\u6846\u7EC4\uFF1A\u65B0\u56FE\u6846\u4F1A\u7EED\u63A5\u5230\u5F53\u524D\u7EC4\u53F3\u4FA7\uFF1B\u672A\u9009\u4E2D\u56FE\u6846\u65F6\u4F1A\u5728\u73B0\u6709\u7EC4\u4E0B\u65B9\u65B0\u5EFA\u4E00\u7EC4\u3002" : existingFrames.length > 0 ? "\u5F53\u524D\u672A\u9009\u4E2D\u56FE\u6846\uFF1A\u65B0\u56FE\u6846\u4F1A\u5728\u73B0\u6709\u56FE\u6846\u7EC4\u4E0B\u65B9\u65B0\u5EFA\u4E00\u7EC4\u3002\u9009\u4E2D\u67D0\u4E2A\u56FE\u6846\u540E\u518D\u63D2\u5165\uFF0C\u53EF\u7EED\u63A5\u5230\u8BE5\u7EC4\u53F3\u4FA7\u3002" : "\u9996\u6B21\u8BBE\u7F6E\u7684\u5C3A\u5BF8\u4F1A\u4F5C\u4E3A\u540E\u7EED\u81EA\u52A8\u5206\u9875\u56FE\u6846\u7684\u9ED8\u8BA4\u5C3A\u5BF8\u3002";
+    div.appendChild(hint);
+    var buttons = document.createElement("div");
+    div.appendChild(buttons);
+    var wnd = new mxWindow("\u63D2\u5165\u56FE\u6846", div, 180, 140, 420, 170, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(false);
+    wnd.setScrollable(false);
+    var submitButton = deps.createButton("\u63D2\u5165\u56FE\u6846", function() {
+      var config = deps.normalizeFrameConfig({
+        width: widthInput.value,
+        height: heightInput.value
+      });
+      deps.insertFrame(config, selectedFrame, existingFrames);
+      wnd.destroy();
+    });
+    submitButton.style.marginTop = "0";
+    buttons.appendChild(submitButton);
+    wnd.setVisible(true);
+  }
+
+  // ui/cabinetDialog.js
+  function buildCabinetDialogDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      trim,
+      clamp,
+      toInt,
+      toFloat,
+      createButton: createPluginButton,
+      getActiveFrame: app.domains.frame.getActiveFrame,
+      getAttr,
+      normalizeCabinetModel: app.domains.cabinet.normalizeCabinetModel,
+      generateLogicalCabinetId,
+      insertCabinet: commandApi.insertCabinet,
+      updateCabinetGap: commandApi.updateCabinetGap,
+      showStatus,
+      setCanvasStatus,
+      findCabinetSegment: app.domains.cabinet.findCabinetSegment,
+      extractCabinetModel: app.domains.cabinet.extractCabinetModel
+    };
+  }
+  function getCabinetDialogDeps() {
+    return buildCabinetDialogDeps();
+  }
+  function getGapDialogPosition(nativeEvent, width, height) {
+    var deps = getCabinetDialogDeps();
+    var fallback = { x: 220, y: 180 };
+    if (nativeEvent == null) {
+      return fallback;
+    }
+    var offsetX = 36;
+    var offsetY = -24;
+    var rawEvent = typeof nativeEvent.getEvent == "function" ? nativeEvent.getEvent() : nativeEvent;
+    var pageX = mxEvent.getClientX(rawEvent) + (window.pageXOffset || document.documentElement.scrollLeft || 0);
+    var pageY = mxEvent.getClientY(rawEvent) + (window.pageYOffset || document.documentElement.scrollTop || 0);
+    var viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1280;
+    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 720;
+    var minX = (window.pageXOffset || document.documentElement.scrollLeft || 0) + 12;
+    var minY = (window.pageYOffset || document.documentElement.scrollTop || 0) + 12;
+    var maxX = (window.pageXOffset || document.documentElement.scrollLeft || 0) + viewportWidth - width - 12;
+    var maxY = (window.pageYOffset || document.documentElement.scrollTop || 0) + viewportHeight - height - 12;
+    var x = pageX + offsetX;
+    var y = pageY + offsetY;
+    if (x > maxX) {
+      x = pageX - width - offsetX;
+    }
+    if (y > maxY) {
+      y = maxY;
+    }
+    return {
+      x: deps.clamp(x, minX, Math.max(minX, maxX)),
+      y: deps.clamp(y, minY, Math.max(minY, maxY))
+    };
+  }
+  function closeGapDialogWindow() {
+    var deps = getCabinetDialogDeps();
+    var ctx = deps.ctx;
+    var state = ctx.state;
+    if (state.gapDialogWindow != null) {
+      var wnd = state.gapDialogWindow;
+      state.gapDialogWindow = null;
+      wnd.destroy();
+    }
+  }
+  function openInsertCabinetDialog() {
+    var deps = getCabinetDialogDeps();
+    var ctx = deps.ctx;
+    var constants = ctx.constants;
+    var trim2 = deps.trim;
+    var frame = deps.getActiveFrame(true);
+    if (frame == null) {
+      return;
+    }
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.gap = "10px";
+    div.style.boxSizing = "border-box";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    var nameRow = document.createElement("div");
+    nameRow.style.display = "grid";
+    nameRow.style.gridTemplateColumns = "90px 1fr";
+    nameRow.style.alignItems = "center";
+    nameRow.style.gap = "8px";
+    div.appendChild(nameRow);
+    var nameLabel = document.createElement("div");
+    nameLabel.innerText = "\u540D\u79F0";
+    nameRow.appendChild(nameLabel);
+    var nameInput = document.createElement("input");
+    nameInput.setAttribute("type", "text");
+    nameInput.value = "\u914D\u7535\u67DC";
+    nameRow.appendChild(nameInput);
+    var configRow = document.createElement("div");
+    configRow.style.display = "grid";
+    configRow.style.gridTemplateColumns = "90px 120px 90px 120px";
+    configRow.style.alignItems = "center";
+    configRow.style.gap = "8px";
+    div.appendChild(configRow);
+    var widthLabel = document.createElement("div");
+    widthLabel.innerText = "\u67DC\u5BBD";
+    configRow.appendChild(widthLabel);
+    var widthInput = document.createElement("input");
+    widthInput.setAttribute("type", "number");
+    widthInput.setAttribute("min", "30");
+    widthInput.value = String(constants.CABINET_DEFAULT_WIDTH);
+    configRow.appendChild(widthInput);
+    var countLabel = document.createElement("div");
+    countLabel.innerText = "\u53F3\u4FA7\u7AEF\u5B50\u6570";
+    configRow.appendChild(countLabel);
+    var countInput = document.createElement("input");
+    countInput.setAttribute("type", "number");
+    countInput.setAttribute("min", "2");
+    countInput.value = String(constants.CABINET_DEFAULT_PORT_COUNT);
+    configRow.appendChild(countInput);
+    var hint = document.createElement("div");
+    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+    hint.style.fontSize = "12px";
+    hint.innerText = "\u4EC5\u751F\u6210\u4E13\u7528\u914D\u7535\u67DC\u4E3B\u4F53\u548C\u53F3\u4FA7\u8FDE\u63A5\u70B9\uFF0C\u95F4\u8DDD\u540E\u7EED\u901A\u8FC7\u53F3\u4FA7\u70ED\u70B9\u7F16\u8F91\u3002";
+    div.appendChild(hint);
+    var buttons = document.createElement("div");
+    div.appendChild(buttons);
+    var wnd = new mxWindow("\u63D2\u5165\u914D\u7535\u67DC", div, 200, 160, 460, 190, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(false);
+    wnd.setScrollable(false);
+    var submitButton = deps.createButton("\u63D2\u5165\u914D\u7535\u67DC", function() {
+      var cabinetModel = deps.normalizeCabinetModel({
+        logicalCabinetId: deps.generateLogicalCabinetId(),
+        originFrameId: trim2(deps.getAttr(frame, "frameId")),
+        title: trim2(nameInput.value) || "\u914D\u7535\u67DC",
+        cabinetWidth: widthInput.value,
+        portCount: countInput.value
+      });
+      try {
+        deps.insertCabinet(cabinetModel);
+      } catch (e) {
+        deps.showStatus(e.message || String(e), true);
+        deps.setCanvasStatus(e.message || String(e));
+        return;
+      }
+      wnd.destroy();
+    });
+    submitButton.style.marginTop = "0";
+    buttons.appendChild(submitButton);
+    wnd.setVisible(true);
+  }
+  function openCabinetGapDialog(gapCell, nativeEvent) {
+    var deps = getCabinetDialogDeps();
+    var ctx = deps.ctx;
+    var state = ctx.state;
+    var segment = deps.findCabinetSegment(gapCell);
+    var gapIndex = deps.toInt(deps.getAttr(gapCell, "gapIndex"), -1);
+    if (segment == null || gapIndex < 0) {
+      return;
+    }
+    closeGapDialogWindow();
+    var cabinetModel = deps.extractCabinetModel(segment);
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.gap = "10px";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.boxSizing = "border-box";
+    var label = document.createElement("div");
+    label.innerText = "\u8F93\u5165 0 \u5230 1 \u4E4B\u95F4\u7684\u6BD4\u4F8B\u503C";
+    div.appendChild(label);
+    var input = document.createElement("input");
+    input.setAttribute("type", "number");
+    input.setAttribute("min", "0");
+    input.setAttribute("max", "1");
+    input.setAttribute("step", "0.01");
+    input.value = String(cabinetModel.gapRatios[gapIndex] || 0);
+    div.appendChild(input);
+    var error = document.createElement("div");
+    error.style.minHeight = "18px";
+    error.style.fontSize = "12px";
+    error.style.color = "#b3261e";
+    div.appendChild(error);
+    var buttons = document.createElement("div");
+    div.appendChild(buttons);
+    var dialogWidth = 320;
+    var dialogHeight = 170;
+    var dialogPosition = getGapDialogPosition(nativeEvent, dialogWidth, dialogHeight);
+    var wnd = new mxWindow(
+      "\u8BBE\u7F6E\u7AEF\u5B50\u95F4\u8DDD",
+      div,
+      dialogPosition.x,
+      dialogPosition.y,
+      dialogWidth,
+      dialogHeight,
+      true,
+      true
+    );
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(false);
+    wnd.setScrollable(false);
+    wnd.addListener(mxEvent.DESTROY, function() {
+      if (state.gapDialogWindow == wnd) {
+        state.gapDialogWindow = null;
+      }
+    });
+    state.gapDialogWindow = wnd;
+    var saveButton = deps.createButton("\u4FDD\u5B58", function() {
+      var ratio = deps.toFloat(input.value, NaN);
+      if (isNaN(ratio) || ratio < 0 || ratio > 1) {
+        error.innerText = "\u8BF7\u8F93\u5165 0 \u5230 1 \u4E4B\u95F4\u7684\u6570\u503C";
+        return;
+      }
+      cabinetModel.gapRatios[gapIndex] = ratio;
+      try {
+        deps.updateCabinetGap(cabinetModel);
+      } catch (e) {
+        error.innerText = e.message || String(e);
+        return;
+      }
+      wnd.destroy();
+    });
+    saveButton.style.marginTop = "0";
+    buttons.appendChild(saveButton);
+    wnd.setVisible(true);
+  }
+  var cabinetDialogsApi = {
+    closeGapDialogWindow,
+    getGapDialogPosition,
+    openCabinetGapDialog,
+    openInsertCabinetDialog
+  };
 
   // services/backendSession.js
   function normalizeBackendBaseUrl(url, constants) {
@@ -4749,21 +5068,21 @@
     } catch (e) {
     }
   }
-  function syncBackendState(state, constants, diagramId, version, snapshot, title, normalizeSnapshotGenericIds2, resetPendingChangeRecords, exportDiagramSnapshot) {
+  function syncBackendState(state, constants, diagramId, version, snapshot, title, normalizeSnapshotGenericIds2, resetPendingChangeRecords2, exportDiagramSnapshot) {
     snapshot = normalizeSnapshotGenericIds2(snapshot);
     state.backendDiagramId = trim(diagramId);
     state.backendDiagramTitle = trim(title || state.backendDiagramTitle);
     state.backendDiagramVersion = Math.max(0, toInt(version, 0));
     state.backendLastSnapshot = snapshot != null ? cloneJson(snapshot) : null;
-    resetPendingChangeRecords(snapshot != null ? snapshot : exportDiagramSnapshot());
+    resetPendingChangeRecords2(snapshot != null ? snapshot : exportDiagramSnapshot());
     saveBackendSession(state, constants, normalizeSnapshotGenericIds2);
   }
-  function resetBackendBinding(state, constants, normalizeSnapshotGenericIds2, resetPendingChangeRecords, exportDiagramSnapshot) {
+  function resetBackendBinding(state, constants, normalizeSnapshotGenericIds2, resetPendingChangeRecords2, exportDiagramSnapshot) {
     state.backendDiagramId = "";
     state.backendDiagramTitle = "";
     state.backendDiagramVersion = 0;
     state.backendLastSnapshot = null;
-    resetPendingChangeRecords(exportDiagramSnapshot());
+    resetPendingChangeRecords2(exportDiagramSnapshot());
     saveBackendSession(state, constants, normalizeSnapshotGenericIds2);
   }
 
@@ -4933,952 +5252,515 @@
   }
 
   // services/backend.js
-  function createBackendService() {
-    var deps = arguments.length > 0 ? arguments[0] : {};
+  function buildBackendServiceDeps() {
+    var app = getApp();
     return {
-      getDiagramHistoryFromBackend: function(diagramId) {
-        return getDiagramHistoryFromBackend(
-          deps.state,
-          function(url) {
-            return normalizeBackendBaseUrl(url, deps.constants);
-          },
-          diagramId
-        );
-      },
-      listDiagramsFromBackend: function() {
-        return listDiagramsFromBackend(deps.state, function(url) {
-          return normalizeBackendBaseUrl(url, deps.constants);
-        });
-      },
-      loadBackendSession: function() {
-        return loadBackendSession(
-          deps.state,
-          deps.constants,
-          deps.normalizeSnapshotGenericIds
-        );
-      },
-      loadDiagramFromBackend: function(diagramId) {
-        return loadDiagramFromBackend(deps.state, {
-          normalizeBackendBaseUrl: function(url) {
-            return normalizeBackendBaseUrl(url, deps.constants);
-          },
-          restoreDiagramSnapshot: deps.restoreDiagramSnapshot,
-          showStatus: deps.showStatus,
-          syncBackendState: function(targetDiagramId, version, snapshot, title) {
-            return syncBackendState(
-              deps.state,
-              deps.constants,
-              targetDiagramId,
-              version,
-              snapshot,
-              title,
-              deps.normalizeSnapshotGenericIds,
-              deps.resetPendingChangeRecords,
-              deps.exportDiagramSnapshot
-            );
-          }
-        }, diagramId);
-      },
-      normalizeBackendBaseUrl: function(url) {
+      state: app.appContext.getState(),
+      constants: app.constants,
+      normalizeSnapshotGenericIds: app.domains.snapshot.normalizeSnapshotGenericIds,
+      exportDiagramSnapshot: app.domains.snapshot.exportDiagramSnapshot,
+      resetPendingChangeRecords,
+      computeSnapshotChanges: app.domains.snapshot.computeSnapshotChanges,
+      collectChangeObjectIds: app.domains.snapshot.collectChangeObjectIds,
+      showStatus,
+      restoreDiagramSnapshot: app.domains.snapshot.restoreDiagramSnapshot
+    };
+  }
+  function getBackendDeps() {
+    return buildBackendServiceDeps();
+  }
+  function normalizeBackendBaseUrlCompat(url) {
+    var deps = getBackendDeps();
+    return normalizeBackendBaseUrl(url, deps.constants);
+  }
+  function syncBackendStateCompat(diagramId, version, snapshot, title) {
+    var deps = getBackendDeps();
+    return syncBackendState(
+      deps.state,
+      deps.constants,
+      diagramId,
+      version,
+      snapshot,
+      title,
+      deps.normalizeSnapshotGenericIds,
+      deps.resetPendingChangeRecords,
+      deps.exportDiagramSnapshot
+    );
+  }
+  function loadBackendSessionCompat() {
+    var deps = getBackendDeps();
+    return loadBackendSession(
+      deps.state,
+      deps.constants,
+      deps.normalizeSnapshotGenericIds
+    );
+  }
+  function saveBackendSessionCompat() {
+    var deps = getBackendDeps();
+    return saveBackendSession(
+      deps.state,
+      deps.constants,
+      deps.normalizeSnapshotGenericIds
+    );
+  }
+  function listDiagramsFromBackendCompat() {
+    var deps = getBackendDeps();
+    return listDiagramsFromBackend(deps.state, function(url) {
+      return normalizeBackendBaseUrl(url, deps.constants);
+    });
+  }
+  function getDiagramHistoryFromBackendCompat(diagramId) {
+    var deps = getBackendDeps();
+    return getDiagramHistoryFromBackend(
+      deps.state,
+      function(url) {
         return normalizeBackendBaseUrl(url, deps.constants);
       },
-      requestBackendJson,
-      resetBackendBinding: function() {
-        return resetBackendBinding(
-          deps.state,
-          deps.constants,
-          deps.normalizeSnapshotGenericIds,
-          deps.resetPendingChangeRecords,
-          deps.exportDiagramSnapshot
-        );
-      },
-      rollbackDiagramToVersion: function(targetVersion) {
-        return rollbackDiagramToVersion(deps.state, {
-          normalizeBackendBaseUrl: function(url) {
-            return normalizeBackendBaseUrl(url, deps.constants);
-          },
-          restoreDiagramSnapshot: deps.restoreDiagramSnapshot,
-          showStatus: deps.showStatus,
-          syncBackendState: function(diagramId, version, snapshot, title) {
-            return syncBackendState(
-              deps.state,
-              deps.constants,
-              diagramId,
-              version,
-              snapshot,
-              title,
-              deps.normalizeSnapshotGenericIds,
-              deps.resetPendingChangeRecords,
-              deps.exportDiagramSnapshot
-            );
-          }
-        }, targetVersion);
-      },
-      saveBackendSession: function() {
-        return saveBackendSession(
-          deps.state,
-          deps.constants,
-          deps.normalizeSnapshotGenericIds
-        );
-      },
-      saveDiagramToBackend: function(title) {
-        return saveDiagramToBackend(deps.state, {
-          normalizeBackendBaseUrl: function(url) {
-            return normalizeBackendBaseUrl(url, deps.constants);
-          },
-          normalizeSnapshotGenericIds: deps.normalizeSnapshotGenericIds,
-          exportDiagramSnapshot: deps.exportDiagramSnapshot,
-          resetPendingChangeRecords: deps.resetPendingChangeRecords,
-          computeSnapshotChanges: deps.computeSnapshotChanges,
-          collectChangeObjectIds: deps.collectChangeObjectIds,
-          showStatus: deps.showStatus,
-          restoreDiagramSnapshot: deps.restoreDiagramSnapshot,
-          saveBackendSession: function() {
-            return saveBackendSession(
-              deps.state,
-              deps.constants,
-              deps.normalizeSnapshotGenericIds
-            );
-          },
-          syncBackendState: function(diagramId, version, snapshot, nextTitle) {
-            return syncBackendState(
-              deps.state,
-              deps.constants,
-              diagramId,
-              version,
-              snapshot,
-              nextTitle,
-              deps.normalizeSnapshotGenericIds,
-              deps.resetPendingChangeRecords,
-              deps.exportDiagramSnapshot
-            );
-          }
-        }, title);
-      },
-      syncBackendState: function(diagramId, version, snapshot, title) {
-        return syncBackendState(
-          deps.state,
-          deps.constants,
-          diagramId,
-          version,
-          snapshot,
-          title,
-          deps.normalizeSnapshotGenericIds,
-          deps.resetPendingChangeRecords,
-          deps.exportDiagramSnapshot
-        );
-      }
-    };
+      diagramId
+    );
   }
-
-  // ui/exportSvgDialog.js
-  function buildExportDialogDeps() {
-    var app = getApp();
-    return {
-      ctx: app.ctx,
-      toInt: app.utils.toInt,
-      createButton: app.utils.createButton,
-      showStatus: app.showStatus
-    };
-  }
-  function openSvgExportDialog() {
-    var deps = arguments.length > 0 ? arguments[0] : buildExportDialogDeps();
-    var ui = deps.ctx.ui;
-    var graph = deps.ctx.graph;
-    function getDiagramExportBounds() {
-      var bounds = graph.getGraphBounds();
-      var viewScale = graph.view.scale || 1;
-      if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
-        throw new Error("\u753B\u5E03\u4E0A\u6CA1\u6709\u53EF\u5BFC\u51FA\u7684\u56FE\u5F62");
-      }
-      return {
-        width: Math.max(1, Math.ceil(bounds.width / viewScale)),
-        height: Math.max(1, Math.ceil(bounds.height / viewScale))
-      };
-    }
-    function createSvgExportCode(width, height) {
-      var exportBounds2 = getDiagramExportBounds();
-      var targetWidth = Math.max(1, deps.toInt(width, exportBounds2.width));
-      var targetHeight = Math.max(1, deps.toInt(height, exportBounds2.height));
-      var scale = Math.min(
-        targetWidth / exportBounds2.width,
-        targetHeight / exportBounds2.height
-      );
-      var svgRoot = graph.getSvg(
-        null,
-        scale,
-        0,
-        false,
-        null,
-        true,
-        null,
-        null,
-        null,
-        null,
-        true,
-        null
-      );
-      if (graph.shadowVisible) {
-        graph.addSvgShadow(svgRoot);
-      }
-      if (graph.mathEnabled) {
-        Editor.prototype.addMathCss(svgRoot);
-      }
-      svgRoot.setAttribute("width", String(targetWidth));
-      svgRoot.setAttribute("height", String(targetHeight));
-      svgRoot.setAttribute("preserveAspectRatio", "xMidYMid meet");
-      return mxUtils.getXml(svgRoot);
-    }
-    function downloadSvgCode(svgCode) {
-      var blob = new Blob([svgCode], { type: "image/svg+xml;charset=utf-8" });
-      var url = URL.createObjectURL(blob);
-      var link = document.createElement("a");
-      link.href = url;
-      link.download = "diagram-export.svg";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.setTimeout(function() {
-        URL.revokeObjectURL(url);
-      }, 0);
-    }
-    var exportBounds = getDiagramExportBounds();
-    var div = document.createElement("div");
-    div.style.padding = "12px";
-    div.style.width = "100%";
-    div.style.height = "100%";
-    div.style.boxSizing = "border-box";
-    div.style.display = "flex";
-    div.style.flexDirection = "column";
-    div.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
-    var formRow = document.createElement("div");
-    formRow.style.display = "flex";
-    formRow.style.alignItems = "center";
-    formRow.style.gap = "8px";
-    formRow.style.flexWrap = "wrap";
-    div.appendChild(formRow);
-    var widthLabel = document.createElement("div");
-    widthLabel.innerText = "\u5BBD";
-    formRow.appendChild(widthLabel);
-    var widthInput = document.createElement("input");
-    widthInput.setAttribute("type", "number");
-    widthInput.setAttribute("min", "1");
-    widthInput.style.width = "120px";
-    widthInput.value = String(exportBounds.width);
-    formRow.appendChild(widthInput);
-    var heightLabel = document.createElement("div");
-    heightLabel.innerText = "\u9AD8";
-    formRow.appendChild(heightLabel);
-    var heightInput = document.createElement("input");
-    heightInput.setAttribute("type", "number");
-    heightInput.setAttribute("min", "1");
-    heightInput.style.width = "120px";
-    heightInput.value = String(exportBounds.height);
-    formRow.appendChild(heightInput);
-    var refreshButton = deps.createButton("\u5237\u65B0SVG\u4EE3\u7801", function() {
-      try {
-        textarea.value = createSvgExportCode(widthInput.value, heightInput.value);
-      } catch (e) {
-        deps.showStatus(e.message || String(e), true);
-      }
-    });
-    refreshButton.style.marginTop = "0";
-    refreshButton.style.marginRight = "0";
-    formRow.appendChild(refreshButton);
-    var textarea = document.createElement("textarea");
-    textarea.spellcheck = false;
-    textarea.style.width = "100%";
-    textarea.style.flex = "1 1 auto";
-    textarea.style.minHeight = "320px";
-    textarea.style.marginTop = "10px";
-    textarea.style.boxSizing = "border-box";
-    div.appendChild(textarea);
-    var buttons = document.createElement("div");
-    buttons.style.marginTop = "10px";
-    buttons.style.flex = "0 0 auto";
-    div.appendChild(buttons);
-    var copyButton = deps.createButton("\u590D\u5236SVG\u4EE3\u7801", function() {
-      ui.writeTextToClipboard(
-        textarea.value,
-        function(e) {
-          ui.handleError(e);
+  function loadDiagramFromBackendCompat(diagramId) {
+    var deps = getBackendDeps();
+    return loadDiagramFromBackend(
+      deps.state,
+      {
+        normalizeBackendBaseUrl: function(url) {
+          return normalizeBackendBaseUrl(url, deps.constants);
         },
-        function() {
-          ui.alert("\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F");
+        restoreDiagramSnapshot: deps.restoreDiagramSnapshot,
+        showStatus: deps.showStatus,
+        syncBackendState: function(targetDiagramId, version, snapshot, title) {
+          return syncBackendState(
+            deps.state,
+            deps.constants,
+            targetDiagramId,
+            version,
+            snapshot,
+            title,
+            deps.normalizeSnapshotGenericIds,
+            deps.resetPendingChangeRecords,
+            deps.exportDiagramSnapshot
+          );
         }
-      );
-    });
-    copyButton.style.marginTop = "0";
-    buttons.appendChild(copyButton);
-    var downloadButton = deps.createButton("\u4E0B\u8F7DSVG", function() {
-      try {
-        var svgCode = createSvgExportCode(widthInput.value, heightInput.value);
-        textarea.value = svgCode;
-        downloadSvgCode(svgCode);
-        wnd.destroy();
-      } catch (e) {
-        deps.showStatus(e.message || String(e), true);
-      }
-    });
-    downloadButton.style.marginTop = "0";
-    buttons.appendChild(downloadButton);
-    textarea.value = createSvgExportCode(exportBounds.width, exportBounds.height);
-    var wnd = new mxWindow("\u5BFC\u51FASVG", div, 160, 120, 720, 560, true, true);
-    wnd.destroyOnClose = true;
-    wnd.setClosable(true);
-    wnd.setMaximizable(false);
-    wnd.setResizable(true);
-    wnd.setScrollable(true);
-    wnd.setVisible(true);
+      },
+      diagramId
+    );
   }
-
-  // ui/frameDialog.js
-  function buildFrameDialogDeps() {
-    var app = getApp();
-    return {
-      ctx: app.ctx,
-      cloneJson: app.utils.cloneJson,
-      normalizeFrameConfig: app.domains.frame.normalizeFrameConfig,
-      findDrawingFrame: app.domains.frame.findDrawingFrame,
-      getAllDrawingFrames: app.domains.frame.getAllDrawingFrames,
-      createButton: app.utils.createButton,
-      getFrameGroupId: app.domains.frame.getFrameGroupId,
-      generateFrameGroupId: app.helpers.generateFrameGroupId,
-      getMaxFramePageNumberInGroup: app.domains.frame.getMaxFramePageNumberInGroup,
-      createDrawingFrameCell: app.domains.frame.createDrawingFrameCell,
-      getRightmostFrameInGroup: app.domains.frame.getRightmostFrameInGroup,
-      addTopLevelCell: app.domains.frame.addTopLevelCell,
-      getLeftmostFrame: app.domains.frame.getLeftmostFrame,
-      getBottommostFrame: app.domains.frame.getBottommostFrame,
-      insertFrame: app.commands.insertFrame,
-      showStatus: app.showStatus,
-      setCanvasStatus: app.setCanvasStatus
-    };
+  function resetBackendBindingCompat() {
+    var deps = getBackendDeps();
+    return resetBackendBinding(
+      deps.state,
+      deps.constants,
+      deps.normalizeSnapshotGenericIds,
+      deps.resetPendingChangeRecords,
+      deps.exportDiagramSnapshot
+    );
   }
-  function openInsertFrameDialog() {
-    var deps = arguments.length > 0 ? arguments[0] : buildFrameDialogDeps();
-    var ctx = deps.ctx;
-    var graph = ctx.graph;
-    var state = ctx.state;
-    var defaultConfig = deps.normalizeFrameConfig(state.frameConfig || {});
-    var selectedFrame = deps.findDrawingFrame(graph.getSelectionCell());
-    var existingFrames = deps.getAllDrawingFrames();
-    var div = document.createElement("div");
-    div.style.padding = "12px";
-    div.style.display = "flex";
-    div.style.flexDirection = "column";
-    div.style.gap = "10px";
-    div.style.boxSizing = "border-box";
-    div.style.width = "100%";
-    div.style.height = "100%";
-    var row = document.createElement("div");
-    row.style.display = "flex";
-    row.style.alignItems = "center";
-    row.style.gap = "8px";
-    div.appendChild(row);
-    var widthLabel = document.createElement("div");
-    widthLabel.innerText = "\u5BBD";
-    row.appendChild(widthLabel);
-    var widthInput = document.createElement("input");
-    widthInput.setAttribute("type", "number");
-    widthInput.setAttribute("min", "320");
-    widthInput.style.width = "140px";
-    widthInput.value = String(defaultConfig.width);
-    row.appendChild(widthInput);
-    var heightLabel = document.createElement("div");
-    heightLabel.innerText = "\u9AD8";
-    row.appendChild(heightLabel);
-    var heightInput = document.createElement("input");
-    heightInput.setAttribute("type", "number");
-    heightInput.setAttribute("min", "240");
-    heightInput.style.width = "140px";
-    heightInput.value = String(defaultConfig.height);
-    row.appendChild(heightInput);
-    var hint = document.createElement("div");
-    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
-    hint.style.fontSize = "12px";
-    hint.innerText = selectedFrame != null ? "\u5DF2\u9009\u4E2D\u56FE\u6846\u7EC4\uFF1A\u65B0\u56FE\u6846\u4F1A\u7EED\u63A5\u5230\u5F53\u524D\u7EC4\u53F3\u4FA7\uFF1B\u672A\u9009\u4E2D\u56FE\u6846\u65F6\u4F1A\u5728\u73B0\u6709\u7EC4\u4E0B\u65B9\u65B0\u5EFA\u4E00\u7EC4\u3002" : existingFrames.length > 0 ? "\u5F53\u524D\u672A\u9009\u4E2D\u56FE\u6846\uFF1A\u65B0\u56FE\u6846\u4F1A\u5728\u73B0\u6709\u56FE\u6846\u7EC4\u4E0B\u65B9\u65B0\u5EFA\u4E00\u7EC4\u3002\u9009\u4E2D\u67D0\u4E2A\u56FE\u6846\u540E\u518D\u63D2\u5165\uFF0C\u53EF\u7EED\u63A5\u5230\u8BE5\u7EC4\u53F3\u4FA7\u3002" : "\u9996\u6B21\u8BBE\u7F6E\u7684\u5C3A\u5BF8\u4F1A\u4F5C\u4E3A\u540E\u7EED\u81EA\u52A8\u5206\u9875\u56FE\u6846\u7684\u9ED8\u8BA4\u5C3A\u5BF8\u3002";
-    div.appendChild(hint);
-    var buttons = document.createElement("div");
-    div.appendChild(buttons);
-    var wnd = new mxWindow("\u63D2\u5165\u56FE\u6846", div, 180, 140, 420, 170, true, true);
-    wnd.destroyOnClose = true;
-    wnd.setClosable(true);
-    wnd.setMaximizable(false);
-    wnd.setResizable(false);
-    wnd.setScrollable(false);
-    var submitButton = deps.createButton("\u63D2\u5165\u56FE\u6846", function() {
-      var config = deps.normalizeFrameConfig({
-        width: widthInput.value,
-        height: heightInput.value
-      });
-      deps.insertFrame(config, selectedFrame, existingFrames);
-      wnd.destroy();
-    });
-    submitButton.style.marginTop = "0";
-    buttons.appendChild(submitButton);
-    wnd.setVisible(true);
-  }
-
-  // ui/cabinetDialog.js
-  function buildCabinetDialogDeps() {
-    var app = getApp();
-    return {
-      ctx: app.ctx,
-      trim: app.utils.trim,
-      clamp: app.utils.clamp,
-      toInt: app.utils.toInt,
-      toFloat: app.utils.toFloat,
-      createButton: app.utils.createButton,
-      getActiveFrame: app.domains.frame.getActiveFrame,
-      getAttr: app.utils.getAttr,
-      normalizeCabinetModel: app.domains.cabinet.normalizeCabinetModel,
-      generateLogicalCabinetId: app.helpers.generateLogicalCabinetId,
-      relayoutCabinetByModel: app.domains.cabinet.relayoutCabinetByModel,
-      findCabinetSegments: app.domains.cabinet.findCabinetSegments,
-      insertCabinet: app.commands.insertCabinet,
-      updateCabinetGap: app.commands.updateCabinetGap,
-      showStatus: app.showStatus,
-      setCanvasStatus: app.setCanvasStatus,
-      findCabinetSegment: app.domains.cabinet.findCabinetSegment,
-      extractCabinetModel: app.domains.cabinet.extractCabinetModel
-    };
-  }
-  function createCabinetDialogs() {
-    var deps = arguments.length > 0 ? arguments[0] : buildCabinetDialogDeps();
-    var ctx = deps.ctx;
-    var state = ctx.state;
-    var constants = ctx.constants;
-    var trim2 = deps.trim;
-    function getGapDialogPosition(nativeEvent, width, height) {
-      var fallback = { x: 220, y: 180 };
-      if (nativeEvent == null) {
-        return fallback;
-      }
-      var offsetX = 36;
-      var offsetY = -24;
-      var rawEvent = typeof nativeEvent.getEvent == "function" ? nativeEvent.getEvent() : nativeEvent;
-      var pageX = mxEvent.getClientX(rawEvent) + (window.pageXOffset || document.documentElement.scrollLeft || 0);
-      var pageY = mxEvent.getClientY(rawEvent) + (window.pageYOffset || document.documentElement.scrollTop || 0);
-      var viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1280;
-      var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 720;
-      var minX = (window.pageXOffset || document.documentElement.scrollLeft || 0) + 12;
-      var minY = (window.pageYOffset || document.documentElement.scrollTop || 0) + 12;
-      var maxX = (window.pageXOffset || document.documentElement.scrollLeft || 0) + viewportWidth - width - 12;
-      var maxY = (window.pageYOffset || document.documentElement.scrollTop || 0) + viewportHeight - height - 12;
-      var x = pageX + offsetX;
-      var y = pageY + offsetY;
-      if (x > maxX) {
-        x = pageX - width - offsetX;
-      }
-      if (y > maxY) {
-        y = maxY;
-      }
-      return {
-        x: deps.clamp(x, minX, Math.max(minX, maxX)),
-        y: deps.clamp(y, minY, Math.max(minY, maxY))
-      };
-    }
-    function closeGapDialogWindow() {
-      if (state.gapDialogWindow != null) {
-        var wnd = state.gapDialogWindow;
-        state.gapDialogWindow = null;
-        wnd.destroy();
-      }
-    }
-    function openInsertCabinetDialog() {
-      var frame = deps.getActiveFrame(true);
-      if (frame == null) {
-        return;
-      }
-      var div = document.createElement("div");
-      div.style.padding = "12px";
-      div.style.display = "flex";
-      div.style.flexDirection = "column";
-      div.style.gap = "10px";
-      div.style.boxSizing = "border-box";
-      div.style.width = "100%";
-      div.style.height = "100%";
-      var nameRow = document.createElement("div");
-      nameRow.style.display = "grid";
-      nameRow.style.gridTemplateColumns = "90px 1fr";
-      nameRow.style.alignItems = "center";
-      nameRow.style.gap = "8px";
-      div.appendChild(nameRow);
-      var nameLabel = document.createElement("div");
-      nameLabel.innerText = "\u540D\u79F0";
-      nameRow.appendChild(nameLabel);
-      var nameInput = document.createElement("input");
-      nameInput.setAttribute("type", "text");
-      nameInput.value = "\u914D\u7535\u67DC";
-      nameRow.appendChild(nameInput);
-      var configRow = document.createElement("div");
-      configRow.style.display = "grid";
-      configRow.style.gridTemplateColumns = "90px 120px 90px 120px";
-      configRow.style.alignItems = "center";
-      configRow.style.gap = "8px";
-      div.appendChild(configRow);
-      var widthLabel = document.createElement("div");
-      widthLabel.innerText = "\u67DC\u5BBD";
-      configRow.appendChild(widthLabel);
-      var widthInput = document.createElement("input");
-      widthInput.setAttribute("type", "number");
-      widthInput.setAttribute("min", "30");
-      widthInput.value = String(constants.CABINET_DEFAULT_WIDTH);
-      configRow.appendChild(widthInput);
-      var countLabel = document.createElement("div");
-      countLabel.innerText = "\u53F3\u4FA7\u7AEF\u5B50\u6570";
-      configRow.appendChild(countLabel);
-      var countInput = document.createElement("input");
-      countInput.setAttribute("type", "number");
-      countInput.setAttribute("min", "2");
-      countInput.value = String(constants.CABINET_DEFAULT_PORT_COUNT);
-      configRow.appendChild(countInput);
-      var hint = document.createElement("div");
-      hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
-      hint.style.fontSize = "12px";
-      hint.innerText = "\u4EC5\u751F\u6210\u4E13\u7528\u914D\u7535\u67DC\u4E3B\u4F53\u548C\u53F3\u4FA7\u8FDE\u63A5\u70B9\uFF0C\u95F4\u8DDD\u540E\u7EED\u901A\u8FC7\u53F3\u4FA7\u70ED\u70B9\u7F16\u8F91\u3002";
-      div.appendChild(hint);
-      var buttons = document.createElement("div");
-      div.appendChild(buttons);
-      var wnd = new mxWindow("\u63D2\u5165\u914D\u7535\u67DC", div, 200, 160, 460, 190, true, true);
-      wnd.destroyOnClose = true;
-      wnd.setClosable(true);
-      wnd.setMaximizable(false);
-      wnd.setResizable(false);
-      wnd.setScrollable(false);
-      var submitButton = deps.createButton("\u63D2\u5165\u914D\u7535\u67DC", function() {
-        var cabinetModel = deps.normalizeCabinetModel({
-          logicalCabinetId: deps.generateLogicalCabinetId(),
-          originFrameId: trim2(deps.getAttr(frame, "frameId")),
-          title: trim2(nameInput.value) || "\u914D\u7535\u67DC",
-          cabinetWidth: widthInput.value,
-          portCount: countInput.value
-        });
-        try {
-          deps.insertCabinet(cabinetModel);
-        } catch (e) {
-          deps.showStatus(e.message || String(e), true);
-          deps.setCanvasStatus(e.message || String(e));
-          return;
+  function rollbackDiagramToVersionCompat(targetVersion) {
+    var deps = getBackendDeps();
+    return rollbackDiagramToVersion(
+      deps.state,
+      {
+        normalizeBackendBaseUrl: function(url) {
+          return normalizeBackendBaseUrl(url, deps.constants);
+        },
+        restoreDiagramSnapshot: deps.restoreDiagramSnapshot,
+        showStatus: deps.showStatus,
+        syncBackendState: function(diagramId, version, snapshot, title) {
+          return syncBackendState(
+            deps.state,
+            deps.constants,
+            diagramId,
+            version,
+            snapshot,
+            title,
+            deps.normalizeSnapshotGenericIds,
+            deps.resetPendingChangeRecords,
+            deps.exportDiagramSnapshot
+          );
         }
-        wnd.destroy();
-      });
-      submitButton.style.marginTop = "0";
-      buttons.appendChild(submitButton);
-      wnd.setVisible(true);
-    }
-    function openCabinetGapDialog(gapCell, nativeEvent) {
-      var segment = deps.findCabinetSegment(gapCell);
-      var gapIndex = deps.toInt(deps.getAttr(gapCell, "gapIndex"), -1);
-      if (segment == null || gapIndex < 0) {
-        return;
-      }
-      closeGapDialogWindow();
-      var cabinetModel = deps.extractCabinetModel(segment);
-      var div = document.createElement("div");
-      div.style.padding = "12px";
-      div.style.display = "flex";
-      div.style.flexDirection = "column";
-      div.style.gap = "10px";
-      div.style.width = "100%";
-      div.style.height = "100%";
-      div.style.boxSizing = "border-box";
-      var label = document.createElement("div");
-      label.innerText = "\u8F93\u5165 0 \u5230 1 \u4E4B\u95F4\u7684\u6BD4\u4F8B\u503C";
-      div.appendChild(label);
-      var input = document.createElement("input");
-      input.setAttribute("type", "number");
-      input.setAttribute("min", "0");
-      input.setAttribute("max", "1");
-      input.setAttribute("step", "0.01");
-      input.value = String(cabinetModel.gapRatios[gapIndex] || 0);
-      div.appendChild(input);
-      var error = document.createElement("div");
-      error.style.minHeight = "18px";
-      error.style.fontSize = "12px";
-      error.style.color = "#b3261e";
-      div.appendChild(error);
-      var buttons = document.createElement("div");
-      div.appendChild(buttons);
-      var dialogWidth = 320;
-      var dialogHeight = 170;
-      var dialogPosition = getGapDialogPosition(
-        nativeEvent,
-        dialogWidth,
-        dialogHeight
-      );
-      var wnd = new mxWindow(
-        "\u8BBE\u7F6E\u7AEF\u5B50\u95F4\u8DDD",
-        div,
-        dialogPosition.x,
-        dialogPosition.y,
-        dialogWidth,
-        dialogHeight,
-        true,
-        true
-      );
-      wnd.destroyOnClose = true;
-      wnd.setClosable(true);
-      wnd.setMaximizable(false);
-      wnd.setResizable(false);
-      wnd.setScrollable(false);
-      wnd.addListener(mxEvent.DESTROY, function() {
-        if (state.gapDialogWindow == wnd) {
-          state.gapDialogWindow = null;
-        }
-      });
-      state.gapDialogWindow = wnd;
-      var saveButton = deps.createButton("\u4FDD\u5B58", function() {
-        var ratio = deps.toFloat(input.value, NaN);
-        if (isNaN(ratio) || ratio < 0 || ratio > 1) {
-          error.innerText = "\u8BF7\u8F93\u5165 0 \u5230 1 \u4E4B\u95F4\u7684\u6570\u503C";
-          return;
-        }
-        cabinetModel.gapRatios[gapIndex] = ratio;
-        try {
-          deps.updateCabinetGap(cabinetModel);
-        } catch (e) {
-          error.innerText = e.message || String(e);
-          return;
-        }
-        wnd.destroy();
-      });
-      saveButton.style.marginTop = "0";
-      buttons.appendChild(saveButton);
-      wnd.setVisible(true);
-    }
-    return {
-      closeGapDialogWindow,
-      getGapDialogPosition,
-      openCabinetGapDialog,
-      openInsertCabinetDialog
-    };
+      },
+      targetVersion
+    );
   }
+  function saveDiagramToBackendCompat(title) {
+    var deps = getBackendDeps();
+    return saveDiagramToBackend(
+      deps.state,
+      {
+        normalizeBackendBaseUrl: function(url) {
+          return normalizeBackendBaseUrl(url, deps.constants);
+        },
+        normalizeSnapshotGenericIds: deps.normalizeSnapshotGenericIds,
+        exportDiagramSnapshot: deps.exportDiagramSnapshot,
+        resetPendingChangeRecords: deps.resetPendingChangeRecords,
+        computeSnapshotChanges: deps.computeSnapshotChanges,
+        collectChangeObjectIds: deps.collectChangeObjectIds,
+        showStatus: deps.showStatus,
+        restoreDiagramSnapshot: deps.restoreDiagramSnapshot,
+        saveBackendSession: function() {
+          return saveBackendSession(
+            deps.state,
+            deps.constants,
+            deps.normalizeSnapshotGenericIds
+          );
+        },
+        syncBackendState: function(diagramId, version, snapshot, nextTitle) {
+          return syncBackendState(
+            deps.state,
+            deps.constants,
+            diagramId,
+            version,
+            snapshot,
+            nextTitle,
+            deps.normalizeSnapshotGenericIds,
+            deps.resetPendingChangeRecords,
+            deps.exportDiagramSnapshot
+          );
+        }
+      },
+      title
+    );
+  }
+  var backendServiceApi = {
+    getDiagramHistoryFromBackend: getDiagramHistoryFromBackendCompat,
+    listDiagramsFromBackend: listDiagramsFromBackendCompat,
+    loadBackendSession: loadBackendSessionCompat,
+    loadDiagramFromBackend: loadDiagramFromBackendCompat,
+    normalizeBackendBaseUrl: normalizeBackendBaseUrlCompat,
+    requestBackendJson,
+    resetBackendBinding: resetBackendBindingCompat,
+    rollbackDiagramToVersion: rollbackDiagramToVersionCompat,
+    saveBackendSession: saveBackendSessionCompat,
+    saveDiagramToBackend: saveDiagramToBackendCompat,
+    syncBackendState: syncBackendStateCompat
+  };
 
   // ui/backendDialogs.js
   function buildBackendDialogDeps() {
     var app = getApp();
     return {
       ctx: app.ctx,
-      backend: app.services.backend,
-      trim: app.utils.trim,
-      showStatus: app.showStatus,
-      createButton: app.utils.createButton,
-      isObject: app.utils.isObject,
-      toInt: app.utils.toInt
+      backend: backendServiceApi,
+      trim,
+      showStatus,
+      createButton: createPluginButton,
+      isObject,
+      toInt
     };
   }
-  function createBackendDialogs() {
-    var deps = arguments.length > 0 ? arguments[0] : buildBackendDialogDeps();
+  function getBackendDialogDeps() {
+    return buildBackendDialogDeps();
+  }
+  function createLabeledInputRow(container, labelText, input) {
+    var row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "100px 1fr";
+    row.style.alignItems = "center";
+    row.style.gap = "8px";
+    row.style.marginBottom = "8px";
+    container.appendChild(row);
+    var label = document.createElement("div");
+    label.innerText = labelText;
+    row.appendChild(label);
+    input.style.width = "100%";
+    input.style.boxSizing = "border-box";
+    row.appendChild(input);
+  }
+  async function openBackendSaveDialog() {
+    var deps = getBackendDialogDeps();
     var ctx = deps.ctx;
     var state = ctx.state;
     var trim2 = deps.trim;
-    function createLabeledInputRow(container, labelText, input) {
-      var row = document.createElement("div");
-      row.style.display = "grid";
-      row.style.gridTemplateColumns = "100px 1fr";
-      row.style.alignItems = "center";
-      row.style.gap = "8px";
-      row.style.marginBottom = "8px";
-      container.appendChild(row);
-      var label = document.createElement("div");
-      label.innerText = labelText;
-      row.appendChild(label);
-      input.style.width = "100%";
-      input.style.boxSizing = "border-box";
-      row.appendChild(input);
-    }
-    async function openBackendSaveDialog() {
-      if (trim2(state.backendDiagramId).length > 0) {
-        try {
-          await deps.backend.saveDiagramToBackend(
-            state.backendDiagramTitle || "\u672A\u547D\u540D\u56FE\u7EB8"
-          );
-        } catch (e) {
-          var payload = e.payload || {};
-          if (payload != null && payload.latestVersion != null && Array.isArray(payload.conflictingObjectIds)) {
-            deps.showStatus(
-              "\u4FDD\u5B58\u51B2\u7A81\uFF0C\u6700\u65B0\u7248\u672C\uFF1A" + payload.latestVersion + "\uFF0C\u51B2\u7A81\u5BF9\u8C61\uFF1A" + payload.conflictingObjectIds.join(", "),
-              true
-            );
-          } else {
-            deps.showStatus(e.message || String(e), true);
-          }
-        }
-        return;
-      }
-      var div = document.createElement("div");
-      div.style.padding = "12px";
-      div.style.width = "100%";
-      div.style.height = "100%";
-      div.style.boxSizing = "border-box";
-      div.style.display = "flex";
-      div.style.flexDirection = "column";
-      var title = document.createElement("div");
-      title.style.fontWeight = "bold";
-      title.style.marginBottom = "8px";
-      title.innerText = "\u4FDD\u5B58\u5F53\u524D\u56FE\u7EB8\u5230\u540E\u7AEF";
-      div.appendChild(title);
-      var titleInput = document.createElement("input");
-      titleInput.value = state.backendDiagramTitle || "\u672A\u547D\u540D\u56FE\u7EB8";
-      createLabeledInputRow(div, "\u56FE\u7EB8\u6807\u9898", titleInput);
-      var note = document.createElement("div");
-      note.style.fontSize = "12px";
-      note.style.color = "#666";
-      note.style.marginBottom = "10px";
-      note.innerText = "\u9996\u6B21\u4FDD\u5B58\u4F1A\u5728\u540E\u7AEF\u521B\u5EFA\u4E00\u5F20\u65B0\u56FE\uFF0C\u540E\u7EED\u4FDD\u5B58\u5C06\u76F4\u63A5\u8986\u76D6\u5230\u540C\u4E00\u56FE\u7EB8\u7248\u672C\u94FE\u3002";
-      div.appendChild(note);
-      var buttons = document.createElement("div");
-      div.appendChild(buttons);
-      var wnd = new mxWindow("\u4FDD\u5B58\u5230\u540E\u7AEF", div, 180, 120, 440, 190, true, true);
-      wnd.destroyOnClose = true;
-      wnd.setClosable(true);
-      wnd.setMaximizable(false);
-      wnd.setResizable(true);
-      wnd.setScrollable(true);
-      var saveButton = deps.createButton("\u4FDD\u5B58", async function() {
-        try {
-          state.backendDiagramTitle = trim2(titleInput.value) || "\u672A\u547D\u540D\u56FE\u7EB8";
-          deps.backend.saveBackendSession();
-          await deps.backend.saveDiagramToBackend(state.backendDiagramTitle);
-          wnd.destroy();
-        } catch (e) {
-          var payload2 = e.payload || {};
-          if (payload2 != null && payload2.latestVersion != null && Array.isArray(payload2.conflictingObjectIds)) {
-            deps.showStatus(
-              "\u4FDD\u5B58\u51B2\u7A81\uFF0C\u6700\u65B0\u7248\u672C\uFF1A" + payload2.latestVersion + "\uFF0C\u51B2\u7A81\u5BF9\u8C61\uFF1A" + payload2.conflictingObjectIds.join(", "),
-              true
-            );
-          } else {
-            deps.showStatus(e.message || String(e), true);
-          }
-        }
-      });
-      saveButton.style.marginTop = "0";
-      buttons.appendChild(saveButton);
-      wnd.setVisible(true);
-    }
-    async function openBackendLoadDialog() {
-      if (trim2(state.backendDiagramId).length > 0) {
-        try {
-          await deps.backend.loadDiagramFromBackend(state.backendDiagramId);
-        } catch (e) {
-          deps.showStatus(e.message || String(e), true);
-        }
-        return;
-      }
-      var div = document.createElement("div");
-      div.style.padding = "12px";
-      div.style.width = "100%";
-      div.style.height = "100%";
-      div.style.boxSizing = "border-box";
-      div.style.display = "flex";
-      div.style.flexDirection = "column";
-      var title = document.createElement("div");
-      title.style.fontWeight = "bold";
-      title.style.marginBottom = "8px";
-      title.innerText = "\u9009\u62E9\u8981\u52A0\u8F7D\u7684\u56FE\u7EB8";
-      div.appendChild(title);
-      var select = document.createElement("select");
-      select.style.width = "100%";
-      select.style.boxSizing = "border-box";
-      select.style.marginBottom = "10px";
-      div.appendChild(select);
-      var note = document.createElement("div");
-      note.style.fontSize = "12px";
-      note.style.color = "#666";
-      note.style.marginBottom = "10px";
-      note.innerText = "\u52A0\u8F7D\u4F1A\u5148\u6E05\u7A7A\u5F53\u524D\u9875\u9762\uFF0C\u518D\u6309\u540E\u7AEF\u5FEB\u7167\u5B8C\u6574\u6062\u590D\u3002";
-      div.appendChild(note);
-      var buttons = document.createElement("div");
-      div.appendChild(buttons);
-      var wnd = new mxWindow("\u4ECE\u540E\u7AEF\u52A0\u8F7D", div, 220, 140, 520, 220, true, true);
-      wnd.destroyOnClose = true;
-      wnd.setClosable(true);
-      wnd.setMaximizable(false);
-      wnd.setResizable(true);
-      wnd.setScrollable(true);
-      var loadButton = deps.createButton("\u52A0\u8F7D", async function() {
-        try {
-          var diagramId = select.options.length > 0 ? select.options[select.selectedIndex].value : "";
-          var titleText = select.options.length > 0 ? trim2(
-            select.options[select.selectedIndex].getAttribute("data-title")
-          ) || select.options[select.selectedIndex].innerText : "";
-          await deps.backend.loadDiagramFromBackend(diagramId);
-          state.backendDiagramTitle = titleText;
-          deps.backend.saveBackendSession();
-          wnd.destroy();
-        } catch (e) {
-          deps.showStatus(e.message || String(e), true);
-        }
-      });
-      loadButton.style.marginTop = "0";
-      buttons.appendChild(loadButton);
-      var refreshButton = deps.createButton("\u5237\u65B0\u5217\u8868", function() {
-        select.innerHTML = "";
-        note.innerText = "\u6B63\u5728\u4ECE\u540E\u7AEF\u8BFB\u53D6\u56FE\u7EB8\u5217\u8868...";
-        deps.backend.listDiagramsFromBackend().then(function(payload) {
-          var diagrams = Array.isArray(payload.diagrams) ? payload.diagrams : [];
-          diagrams.forEach(function(diagram) {
-            var option = document.createElement("option");
-            option.value = diagram.diagramId;
-            var titleText = trim2(diagram.title) || "\u56FE\u7EB8 " + diagram.diagramId.slice(0, 8);
-            option.innerText = titleText + " | v" + diagram.latestVersion + (diagram.updatedAt != null ? " | " + String(diagram.updatedAt).replace("T", " ").slice(0, 19) : "");
-            option.setAttribute("data-title", titleText);
-            if (trim2(state.backendDiagramId) == trim2(diagram.diagramId)) {
-              option.selected = true;
-            }
-            select.appendChild(option);
-          });
-          note.innerText = diagrams.length == 0 ? "\u540E\u7AEF\u8FD8\u6CA1\u6709\u53EF\u52A0\u8F7D\u7684\u56FE\u7EB8\u3002" : "\u8BF7\u9009\u62E9\u4E00\u5F20\u56FE\u7EB8\u8FDB\u884C\u52A0\u8F7D\u3002";
-        }).catch(function(error) {
-          note.innerText = "\u8BFB\u53D6\u56FE\u7EB8\u5217\u8868\u5931\u8D25";
-          deps.showStatus(error.message || String(error), true);
-        });
-      });
-      refreshButton.style.marginTop = "0";
-      refreshButton.style.marginLeft = "8px";
-      buttons.appendChild(refreshButton);
-      wnd.setVisible(true);
-      refreshButton.click();
-    }
-    async function openBackendRollbackDialog() {
-      var diagramId = trim2(state.backendDiagramId);
-      if (diagramId.length == 0) {
-        deps.showStatus("\u8BF7\u5148\u4FDD\u5B58\u56FE\u7EB8\u5230\u540E\u7AEF\uFF0C\u518D\u6267\u884C\u7248\u672C\u56DE\u6EDA", true);
-        return;
-      }
-      var div = document.createElement("div");
-      div.style.padding = "12px";
-      div.style.width = "100%";
-      div.style.height = "100%";
-      div.style.boxSizing = "border-box";
-      div.style.display = "flex";
-      div.style.flexDirection = "column";
-      var title = document.createElement("div");
-      title.style.fontWeight = "bold";
-      title.style.marginBottom = "8px";
-      title.innerText = "\u7248\u672C\u56DE\u6EDA";
-      div.appendChild(title);
-      var note = document.createElement("div");
-      note.style.fontSize = "12px";
-      note.style.color = "#666";
-      note.style.marginBottom = "10px";
-      note.innerText = "\u8BF7\u9009\u62E9\u4E00\u4E2A\u5386\u53F2\u7248\u672C\u8FDB\u884C\u56DE\u6EDA\uFF0C\u56DE\u6EDA\u4F1A\u751F\u6210\u4E00\u4E2A\u65B0\u7684\u7248\u672C\u3002";
-      div.appendChild(note);
-      var list = document.createElement("div");
-      list.style.flex = "1 1 auto";
-      list.style.overflow = "auto";
-      list.style.border = "1px solid #ddd";
-      list.style.padding = "8px";
-      list.style.background = Editor.isDarkMode() ? "#2b2b2b" : "#fff";
-      div.appendChild(list);
-      var wnd = new mxWindow("\u7248\u672C\u56DE\u6EDA", div, 240, 160, 560, 420, true, true);
-      wnd.destroyOnClose = true;
-      wnd.setClosable(true);
-      wnd.setMaximizable(false);
-      wnd.setResizable(true);
-      wnd.setScrollable(true);
-      function renderHistory(payload) {
-        list.innerHTML = "";
-        var commits = payload != null && Array.isArray(payload.commits) ? payload.commits.slice() : [];
-        var versionItems = [
-          {
-            version: 0,
-            actorId: "",
-            commitType: "initial",
-            createdAt: "",
-            rollbackTargetVersion: null
-          }
-        ].concat(
-          commits.map(function(commit) {
-            var rollbackTargetVersion = null;
-            if (trim2(commit.commitType) === "rollback" && Array.isArray(commit.changes)) {
-              for (var changeIndex = 0; changeIndex < commit.changes.length; changeIndex++) {
-                var change = commit.changes[changeIndex];
-                if (change != null && change.objectId === "__rollback__" && deps.isObject(change.after) && change.after.version != null) {
-                  rollbackTargetVersion = Math.max(
-                    0,
-                    deps.toInt(change.after.version, 0)
-                  );
-                  break;
-                }
-              }
-            }
-            return {
-              version: Math.max(0, deps.toInt(commit.resultVersion, 0)),
-              actorId: trim2(commit.actorId),
-              commitType: trim2(commit.commitType) || "normal",
-              createdAt: trim2(commit.createdAt),
-              rollbackTargetVersion
-            };
-          })
-        );
-        versionItems.sort(function(a, b) {
-          return b.version - a.version;
-        });
-        if (versionItems.length == 0) {
-          var empty = document.createElement("div");
-          empty.style.color = "#666";
-          empty.innerText = "\u6682\u65E0\u53EF\u56DE\u6EDA\u7684\u7248\u672C\u5386\u53F2\u3002";
-          list.appendChild(empty);
-          return;
-        }
-        versionItems.forEach(function(item) {
-          var row = document.createElement("div");
-          row.style.display = "flex";
-          row.style.alignItems = "center";
-          row.style.justifyContent = "space-between";
-          row.style.gap = "12px";
-          row.style.padding = "8px 0";
-          row.style.borderBottom = "1px solid #eee";
-          list.appendChild(row);
-          var meta = document.createElement("div");
-          meta.style.flex = "1 1 auto";
-          row.appendChild(meta);
-          var versionText = document.createElement("div");
-          versionText.style.fontWeight = "bold";
-          versionText.innerText = "v" + String(item.version) + (item.version === state.backendDiagramVersion ? "\uFF08\u5F53\u524D\uFF09" : "");
-          meta.appendChild(versionText);
-          var detail = document.createElement("div");
-          detail.style.fontSize = "12px";
-          detail.style.color = "#666";
-          detail.innerText = (item.commitType === "rollback" ? "\u56DE\u6EDA\u63D0\u4EA4" + (item.rollbackTargetVersion != null ? "\uFF08\u56DE\u6EDA\u5230 v" + String(item.rollbackTargetVersion) + "\uFF09" : "") : item.commitType === "initial" ? "\u521D\u59CB\u7248\u672C" : "\u666E\u901A\u63D0\u4EA4") + (item.actorId.length > 0 ? " | " + item.actorId : "") + (item.createdAt.length > 0 ? " | " + item.createdAt.replace("T", " ").slice(0, 19) : "");
-          meta.appendChild(detail);
-          var rollbackButton = deps.createButton("\u56DE\u6EDA\u5230\u6B64\u7248\u672C", async function() {
-            if (!mxUtils.confirm(
-              "\u786E\u5B9A\u56DE\u6EDA\u5230\u7248\u672C v" + String(item.version) + " \u5417\uFF1F\u5F53\u524D\u753B\u5E03\u5185\u5BB9\u4F1A\u88AB\u8BE5\u7248\u672C\u8986\u76D6\u3002"
-            )) {
-              return;
-            }
-            try {
-              await deps.backend.rollbackDiagramToVersion(item.version);
-              wnd.destroy();
-            } catch (e) {
-              deps.showStatus(e.message || String(e), true);
-            }
-          });
-          rollbackButton.style.marginTop = "0";
-          rollbackButton.disabled = item.version === state.backendDiagramVersion;
-          row.appendChild(rollbackButton);
-        });
-      }
-      wnd.setVisible(true);
-      list.innerText = "\u6B63\u5728\u8BFB\u53D6\u7248\u672C\u5386\u53F2...";
+    if (trim2(state.backendDiagramId).length > 0) {
       try {
-        renderHistory(await deps.backend.getDiagramHistoryFromBackend(diagramId));
+        await deps.backend.saveDiagramToBackend(state.backendDiagramTitle || "\u672A\u547D\u540D\u56FE\u7EB8");
       } catch (e) {
-        list.innerText = "\u8BFB\u53D6\u7248\u672C\u5386\u53F2\u5931\u8D25";
+        var payload = e.payload || {};
+        if (payload != null && payload.latestVersion != null && Array.isArray(payload.conflictingObjectIds)) {
+          deps.showStatus(
+            "\u4FDD\u5B58\u51B2\u7A81\uFF0C\u6700\u65B0\u7248\u672C\uFF1A" + payload.latestVersion + "\uFF0C\u51B2\u7A81\u5BF9\u8C61\uFF1A" + payload.conflictingObjectIds.join(", "),
+            true
+          );
+        } else {
+          deps.showStatus(e.message || String(e), true);
+        }
+      }
+      return;
+    }
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.boxSizing = "border-box";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    var title = document.createElement("div");
+    title.style.fontWeight = "bold";
+    title.style.marginBottom = "8px";
+    title.innerText = "\u4FDD\u5B58\u5F53\u524D\u56FE\u7EB8\u5230\u540E\u7AEF";
+    div.appendChild(title);
+    var titleInput = document.createElement("input");
+    titleInput.value = state.backendDiagramTitle || "\u672A\u547D\u540D\u56FE\u7EB8";
+    createLabeledInputRow(div, "\u56FE\u7EB8\u6807\u9898", titleInput);
+    var note = document.createElement("div");
+    note.style.fontSize = "12px";
+    note.style.color = "#666";
+    note.style.marginBottom = "10px";
+    note.innerText = "\u9996\u6B21\u4FDD\u5B58\u4F1A\u5728\u540E\u7AEF\u521B\u5EFA\u4E00\u5F20\u65B0\u56FE\uFF0C\u540E\u7EED\u4FDD\u5B58\u5C06\u76F4\u63A5\u8986\u76D6\u5230\u540C\u4E00\u56FE\u7EB8\u7248\u672C\u94FE\u3002";
+    div.appendChild(note);
+    var buttons = document.createElement("div");
+    div.appendChild(buttons);
+    var wnd = new mxWindow("\u4FDD\u5B58\u5230\u540E\u7AEF", div, 180, 120, 440, 190, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(true);
+    wnd.setScrollable(true);
+    var saveButton = deps.createButton("\u4FDD\u5B58", async function() {
+      try {
+        state.backendDiagramTitle = trim2(titleInput.value) || "\u672A\u547D\u540D\u56FE\u7EB8";
+        deps.backend.saveBackendSession();
+        await deps.backend.saveDiagramToBackend(state.backendDiagramTitle);
+        wnd.destroy();
+      } catch (e) {
+        var payload2 = e.payload || {};
+        if (payload2 != null && payload2.latestVersion != null && Array.isArray(payload2.conflictingObjectIds)) {
+          deps.showStatus(
+            "\u4FDD\u5B58\u51B2\u7A81\uFF0C\u6700\u65B0\u7248\u672C\uFF1A" + payload2.latestVersion + "\uFF0C\u51B2\u7A81\u5BF9\u8C61\uFF1A" + payload2.conflictingObjectIds.join(", "),
+            true
+          );
+        } else {
+          deps.showStatus(e.message || String(e), true);
+        }
+      }
+    });
+    saveButton.style.marginTop = "0";
+    buttons.appendChild(saveButton);
+    wnd.setVisible(true);
+  }
+  async function openBackendLoadDialog() {
+    var deps = getBackendDialogDeps();
+    var ctx = deps.ctx;
+    var state = ctx.state;
+    var trim2 = deps.trim;
+    if (trim2(state.backendDiagramId).length > 0) {
+      try {
+        await deps.backend.loadDiagramFromBackend(state.backendDiagramId);
+      } catch (e) {
         deps.showStatus(e.message || String(e), true);
       }
+      return;
     }
-    return {
-      openBackendLoadDialog,
-      openBackendRollbackDialog,
-      openBackendSaveDialog
-    };
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.boxSizing = "border-box";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    var title = document.createElement("div");
+    title.style.fontWeight = "bold";
+    title.style.marginBottom = "8px";
+    title.innerText = "\u9009\u62E9\u8981\u52A0\u8F7D\u7684\u56FE\u7EB8";
+    div.appendChild(title);
+    var select = document.createElement("select");
+    select.style.width = "100%";
+    select.style.boxSizing = "border-box";
+    select.style.marginBottom = "10px";
+    div.appendChild(select);
+    var note = document.createElement("div");
+    note.style.fontSize = "12px";
+    note.style.color = "#666";
+    note.style.marginBottom = "10px";
+    note.innerText = "\u52A0\u8F7D\u4F1A\u5148\u6E05\u7A7A\u5F53\u524D\u9875\u9762\uFF0C\u518D\u6309\u540E\u7AEF\u5FEB\u7167\u5B8C\u6574\u6062\u590D\u3002";
+    div.appendChild(note);
+    var buttons = document.createElement("div");
+    div.appendChild(buttons);
+    var wnd = new mxWindow("\u4ECE\u540E\u7AEF\u52A0\u8F7D", div, 220, 140, 520, 220, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(true);
+    wnd.setScrollable(true);
+    var loadButton = deps.createButton("\u52A0\u8F7D", async function() {
+      try {
+        var diagramId = select.options.length > 0 ? select.options[select.selectedIndex].value : "";
+        var titleText = select.options.length > 0 ? trim2(select.options[select.selectedIndex].getAttribute("data-title")) || select.options[select.selectedIndex].innerText : "";
+        await deps.backend.loadDiagramFromBackend(diagramId);
+        state.backendDiagramTitle = titleText;
+        deps.backend.saveBackendSession();
+        wnd.destroy();
+      } catch (e) {
+        deps.showStatus(e.message || String(e), true);
+      }
+    });
+    loadButton.style.marginTop = "0";
+    buttons.appendChild(loadButton);
+    var refreshButton = deps.createButton("\u5237\u65B0\u5217\u8868", function() {
+      select.innerHTML = "";
+      note.innerText = "\u6B63\u5728\u4ECE\u540E\u7AEF\u8BFB\u53D6\u56FE\u7EB8\u5217\u8868...";
+      deps.backend.listDiagramsFromBackend().then(function(payload) {
+        var diagrams = Array.isArray(payload.diagrams) ? payload.diagrams : [];
+        diagrams.forEach(function(diagram) {
+          var option = document.createElement("option");
+          option.value = diagram.diagramId;
+          var titleText = trim2(diagram.title) || "\u56FE\u7EB8 " + diagram.diagramId.slice(0, 8);
+          option.innerText = titleText + " | v" + diagram.latestVersion + (diagram.updatedAt != null ? " | " + String(diagram.updatedAt).replace("T", " ").slice(0, 19) : "");
+          option.setAttribute("data-title", titleText);
+          if (trim2(state.backendDiagramId) == trim2(diagram.diagramId)) {
+            option.selected = true;
+          }
+          select.appendChild(option);
+        });
+        note.innerText = diagrams.length == 0 ? "\u540E\u7AEF\u8FD8\u6CA1\u6709\u53EF\u52A0\u8F7D\u7684\u56FE\u7EB8\u3002" : "\u8BF7\u9009\u62E9\u4E00\u5F20\u56FE\u7EB8\u8FDB\u884C\u52A0\u8F7D\u3002";
+      }).catch(function(error) {
+        note.innerText = "\u8BFB\u53D6\u56FE\u7EB8\u5217\u8868\u5931\u8D25";
+        deps.showStatus(error.message || String(error), true);
+      });
+    });
+    refreshButton.style.marginTop = "0";
+    refreshButton.style.marginLeft = "8px";
+    buttons.appendChild(refreshButton);
+    wnd.setVisible(true);
+    refreshButton.click();
   }
+  async function openBackendRollbackDialog() {
+    var deps = getBackendDialogDeps();
+    var ctx = deps.ctx;
+    var state = ctx.state;
+    var trim2 = deps.trim;
+    var diagramId = trim2(state.backendDiagramId);
+    if (diagramId.length == 0) {
+      deps.showStatus("\u8BF7\u5148\u4FDD\u5B58\u56FE\u7EB8\u5230\u540E\u7AEF\uFF0C\u518D\u6267\u884C\u7248\u672C\u56DE\u6EDA", true);
+      return;
+    }
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.boxSizing = "border-box";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    var title = document.createElement("div");
+    title.style.fontWeight = "bold";
+    title.style.marginBottom = "8px";
+    title.innerText = "\u7248\u672C\u56DE\u6EDA";
+    div.appendChild(title);
+    var note = document.createElement("div");
+    note.style.fontSize = "12px";
+    note.style.color = "#666";
+    note.style.marginBottom = "10px";
+    note.innerText = "\u8BF7\u9009\u62E9\u4E00\u4E2A\u5386\u53F2\u7248\u672C\u8FDB\u884C\u56DE\u6EDA\uFF0C\u56DE\u6EDA\u4F1A\u751F\u6210\u4E00\u4E2A\u65B0\u7684\u7248\u672C\u3002";
+    div.appendChild(note);
+    var list = document.createElement("div");
+    list.style.flex = "1 1 auto";
+    list.style.overflow = "auto";
+    list.style.border = "1px solid #ddd";
+    list.style.padding = "8px";
+    list.style.background = Editor.isDarkMode() ? "#2b2b2b" : "#fff";
+    div.appendChild(list);
+    var wnd = new mxWindow("\u7248\u672C\u56DE\u6EDA", div, 240, 160, 560, 420, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(true);
+    wnd.setScrollable(true);
+    function renderHistory(payload) {
+      list.innerHTML = "";
+      var commits = payload != null && Array.isArray(payload.commits) ? payload.commits.slice() : [];
+      var versionItems = [
+        {
+          version: 0,
+          actorId: "",
+          commitType: "initial",
+          createdAt: "",
+          rollbackTargetVersion: null
+        }
+      ].concat(
+        commits.map(function(commit) {
+          var rollbackTargetVersion = null;
+          if (trim2(commit.commitType) === "rollback" && Array.isArray(commit.changes)) {
+            for (var changeIndex = 0; changeIndex < commit.changes.length; changeIndex++) {
+              var change = commit.changes[changeIndex];
+              if (change != null && change.objectId === "__rollback__" && deps.isObject(change.after) && change.after.version != null) {
+                rollbackTargetVersion = Math.max(0, deps.toInt(change.after.version, 0));
+                break;
+              }
+            }
+          }
+          return {
+            version: Math.max(0, deps.toInt(commit.resultVersion, 0)),
+            actorId: trim2(commit.actorId),
+            commitType: trim2(commit.commitType) || "normal",
+            createdAt: trim2(commit.createdAt),
+            rollbackTargetVersion
+          };
+        })
+      );
+      versionItems.sort(function(a, b) {
+        return b.version - a.version;
+      });
+      if (versionItems.length == 0) {
+        var empty = document.createElement("div");
+        empty.style.color = "#666";
+        empty.innerText = "\u6682\u65E0\u53EF\u56DE\u6EDA\u7684\u7248\u672C\u5386\u53F2\u3002";
+        list.appendChild(empty);
+        return;
+      }
+      versionItems.forEach(function(item) {
+        var row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.alignItems = "center";
+        row.style.justifyContent = "space-between";
+        row.style.gap = "12px";
+        row.style.padding = "8px 0";
+        row.style.borderBottom = "1px solid #eee";
+        list.appendChild(row);
+        var meta = document.createElement("div");
+        meta.style.flex = "1 1 auto";
+        row.appendChild(meta);
+        var versionText = document.createElement("div");
+        versionText.style.fontWeight = "bold";
+        versionText.innerText = "v" + String(item.version) + (item.version === state.backendDiagramVersion ? "\uFF08\u5F53\u524D\uFF09" : "");
+        meta.appendChild(versionText);
+        var detail = document.createElement("div");
+        detail.style.fontSize = "12px";
+        detail.style.color = "#666";
+        detail.innerText = (item.commitType === "rollback" ? "\u56DE\u6EDA\u63D0\u4EA4" + (item.rollbackTargetVersion != null ? "\uFF08\u56DE\u6EDA\u5230 v" + String(item.rollbackTargetVersion) + "\uFF09" : "") : item.commitType === "initial" ? "\u521D\u59CB\u7248\u672C" : "\u666E\u901A\u63D0\u4EA4") + (item.actorId.length > 0 ? " | " + item.actorId : "") + (item.createdAt.length > 0 ? " | " + item.createdAt.replace("T", " ").slice(0, 19) : "");
+        meta.appendChild(detail);
+        var rollbackButton = deps.createButton("\u56DE\u6EDA\u5230\u6B64\u7248\u672C", async function() {
+          if (!mxUtils.confirm(
+            "\u786E\u5B9A\u56DE\u6EDA\u5230\u7248\u672C v" + String(item.version) + " \u5417\uFF1F\u5F53\u524D\u753B\u5E03\u5185\u5BB9\u4F1A\u88AB\u8BE5\u7248\u672C\u8986\u76D6\u3002"
+          )) {
+            return;
+          }
+          try {
+            await deps.backend.rollbackDiagramToVersion(item.version);
+            wnd.destroy();
+          } catch (e) {
+            deps.showStatus(e.message || String(e), true);
+          }
+        });
+        rollbackButton.style.marginTop = "0";
+        rollbackButton.disabled = item.version === state.backendDiagramVersion;
+        row.appendChild(rollbackButton);
+      });
+    }
+    wnd.setVisible(true);
+    list.innerText = "\u6B63\u5728\u8BFB\u53D6\u7248\u672C\u5386\u53F2...";
+    try {
+      renderHistory(await deps.backend.getDiagramHistoryFromBackend(diagramId));
+    } catch (e) {
+      list.innerText = "\u8BFB\u53D6\u7248\u672C\u5386\u53F2\u5931\u8D25";
+      deps.showStatus(e.message || String(e), true);
+    }
+  }
+  var backendDialogsApi = {
+    openBackendLoadDialog,
+    openBackendRollbackDialog,
+    openBackendSaveDialog
+  };
 
   // ui/createInstanceDialog.js
   function openCreateFromLibraryDialog(deps, preferredSymbolId) {
@@ -6135,13 +6017,13 @@
     var app = getApp();
     return {
       ctx: app.ctx,
-      library: app.services.libraryStore,
-      getLibraryEntrySpec: app.services.libraryStore.getLibraryEntrySpec,
-      showStatus: app.showStatus,
+      library: libraryStoreApi,
+      getLibraryEntrySpec: libraryStoreApi.getLibraryEntrySpec,
+      showStatus,
       normalizePortLayout: app.domains.spec.normalizePortLayout,
       normalizeLabels: app.domains.spec.normalizeLabels,
-      trim: app.utils.trim,
-      createButton: app.utils.createButton,
+      trim,
+      createButton: createPluginButton,
       openEditorWithTemplate: function(template) {
         return app.ui != null && typeof app.ui.openEditorWithTemplate === "function" ? app.ui.openEditorWithTemplate(template) : null;
       },
@@ -6619,30 +6501,139 @@
     };
   }
 
+  // services/draftStore.js
+  function buildDraftStoreDeps() {
+    var app = getApp();
+    return {
+      state: app.appContext.getState(),
+      storageKey: app.constants.TEMPLATE_DRAFT_STORAGE_KEY,
+      trim,
+      cloneJson
+    };
+  }
+  function getDraftDeps() {
+    return buildDraftStoreDeps();
+  }
+  function getDraftStorage() {
+    try {
+      return window.localStorage;
+    } catch (e) {
+      return null;
+    }
+  }
+  function clearDraftSaveTimer() {
+    var deps = getDraftDeps();
+    var state = deps.state;
+    if (state.draftSaveTimer != null) {
+      window.clearTimeout(state.draftSaveTimer);
+      state.draftSaveTimer = null;
+    }
+  }
+  function buildEditorDraftSnapshot() {
+    var deps = getDraftDeps();
+    var state = deps.state;
+    var trim2 = deps.trim;
+    var cloneJson2 = deps.cloneJson;
+    return {
+      symbolId: state.symbolIdInput != null ? trim2(state.symbolIdInput.value) : "",
+      symbolIdTouched: !!state.symbolIdTouched,
+      templateName: state.templateNameInput != null ? trim2(state.templateNameInput.value) : "",
+      templateWidth: state.templateWidthInput != null ? trim2(state.templateWidthInput.value) : "",
+      templateHeight: state.templateHeightInput != null ? trim2(state.templateHeightInput.value) : "",
+      uploadedPrimarySvg: state.uploadedPrimarySvg || "",
+      uploadedPrimarySvgName: state.uploadedPrimarySvgName || "",
+      uploadedPrimarySvgSize: state.uploadedPrimarySvgSize || null,
+      variantEnabled: !!state.variantEnabled,
+      variantField: state.variantFieldInput != null ? trim2(state.variantFieldInput.value) : "",
+      previewVariantId: trim2(state.previewVariantId),
+      schemaFields: cloneJson2(state.schemaFields || []),
+      variantItems: cloneJson2(state.variantItems || []),
+      currentSpec: state.currentSpec != null ? cloneJson2(state.currentSpec) : null
+    };
+  }
+  function saveEditorDraftNow() {
+    var deps = getDraftDeps();
+    var storage = getDraftStorage();
+    clearDraftSaveTimer();
+    if (storage == null) {
+      return;
+    }
+    try {
+      storage.setItem(deps.storageKey, JSON.stringify(buildEditorDraftSnapshot()));
+    } catch (e) {
+    }
+  }
+  function scheduleEditorDraftSave() {
+    var deps = getDraftDeps();
+    clearDraftSaveTimer();
+    deps.state.draftSaveTimer = window.setTimeout(saveEditorDraftNow, 180);
+  }
+  function loadEditorDraft() {
+    var deps = getDraftDeps();
+    var storage = getDraftStorage();
+    var raw;
+    if (storage == null) {
+      return null;
+    }
+    try {
+      raw = storage.getItem(deps.storageKey);
+    } catch (e) {
+      return null;
+    }
+    if (deps.trim(raw).length == 0) {
+      return null;
+    }
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      return null;
+    }
+  }
+  function clearEditorDraft() {
+    var deps = getDraftDeps();
+    var storage = getDraftStorage();
+    clearDraftSaveTimer();
+    if (storage == null) {
+      return;
+    }
+    try {
+      storage.removeItem(deps.storageKey);
+    } catch (e) {
+    }
+  }
+  var draftStoreApi = {
+    buildEditorDraftSnapshot,
+    clearDraftSaveTimer,
+    clearEditorDraft,
+    loadEditorDraft,
+    saveEditorDraftNow,
+    scheduleEditorDraftSave
+  };
+
   // ui/templateEditor.js
-  function buildTemplateEditorDeps() {
+  function getTemplateEditorDeps() {
     var app = getApp();
     return {
       ctx: app.ctx,
-      trim: app.utils.trim,
-      cloneJson: app.utils.cloneJson,
+      trim,
+      cloneJson,
       normalizePortLayout: app.domains.spec.normalizePortLayout,
       normalizeLabels: app.domains.spec.normalizeLabels,
       toSvgDataUri: app.domains.spec.toSvgDataUri,
-      createButton: app.utils.createButton,
+      createButton: createPluginButton,
       normalizePortMarker: app.domains.spec.normalizePortMarker,
       normalizePortDirection: app.domains.spec.normalizePortDirection,
       normalizePortIoMode: app.domains.spec.normalizePortIoMode,
       portEdgeSnapThresholdPx: app.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
-      nextItemId: app.helpers.nextItemId,
+      nextItemId,
       normalizeLabelItem: app.domains.spec.normalizeLabelItem,
-      validateSvg: app.utils.validateSvg,
-      extractSvgSize: app.utils.extractSvgSize,
-      scheduleEditorDraftSave: app.services.draftStore.scheduleEditorDraftSave,
-      clearDraftSaveTimer: app.services.draftStore.clearDraftSaveTimer,
-      loadEditorDraft: app.services.draftStore.loadEditorDraft,
-      clearEditorDraft: app.services.draftStore.clearEditorDraft,
-      generateSymbolId: app.helpers.generateSymbolId,
+      validateSvg,
+      extractSvgSize,
+      scheduleEditorDraftSave: draftStoreApi.scheduleEditorDraftSave,
+      clearDraftSaveTimer: draftStoreApi.clearDraftSaveTimer,
+      loadEditorDraft: draftStoreApi.loadEditorDraft,
+      clearEditorDraft: draftStoreApi.clearEditorDraft,
+      generateSymbolId,
       getDefaultSchemaFields: app.domains.spec.getDefaultSchemaFields,
       buildSchemaFromFields: app.domains.spec.buildSchemaFromFields,
       hasSchemaPath: app.domains.spec.hasSchemaPath,
@@ -6650,1422 +6641,1469 @@
       normalizeSchemaType: app.domains.spec.normalizeSchemaType,
       normalizeEnumOptions: app.domains.spec.normalizeEnumOptions,
       isValidFieldPath: app.domains.spec.isValidFieldPath,
-      toInt: app.utils.toInt,
-      showStatus: app.showStatus,
+      toInt,
+      showStatus,
       normalizeSpec: app.domains.spec.normalizeSpec,
       normalizeVariantLayouts: app.domains.spec.normalizeVariantLayouts,
       flattenSchemaFields: app.domains.spec.flattenSchemaFields,
-      isObject: app.utils.isObject,
-      addToLibrary: app.services.libraryStore.addToLibrary,
-      isTemplateNameTaken: app.services.libraryStore.isTemplateNameTaken,
-      loadStoredLibrary: app.services.libraryStore.loadStoredLibrary
+      isObject,
+      addToLibrary: libraryStoreApi.addToLibrary,
+      isTemplateNameTaken: libraryStoreApi.isTemplateNameTaken,
+      loadStoredLibrary: libraryStoreApi.loadStoredLibrary
     };
   }
-  function createTemplateEditor() {
-    var deps = arguments.length > 0 ? arguments[0] : buildTemplateEditorDeps();
+  function getTemplateEditorRuntime() {
+    var deps = getTemplateEditorDeps();
     var ctx = deps.ctx;
     var state = ctx.state;
-    function hasLabelBinding(spec, binding, ignoreId) {
-      var normalized = deps.trim(binding);
-      var i;
-      if (normalized.length == 0) {
-        return false;
-      }
-      for (i = 0; i < spec.labels.length; i++) {
-        if (spec.labels[i].id != ignoreId && deps.trim(spec.labels[i].binding) == normalized) {
-          return true;
-        }
-      }
+    return {
+      deps,
+      ctx,
+      state
+    };
+  }
+  function hasLabelBinding(spec, binding, ignoreId) {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var normalized = deps.trim(binding);
+    var i;
+    if (normalized.length == 0) {
       return false;
     }
-    function hasVariantKey(key, ignoreId) {
-      var normalized = deps.trim(key);
-      var i;
-      if (normalized.length == 0) {
-        return false;
+    for (i = 0; i < spec.labels.length; i++) {
+      if (spec.labels[i].id != ignoreId && deps.trim(spec.labels[i].binding) == normalized) {
+        return true;
       }
-      for (i = 0; i < state.variantItems.length; i++) {
-        if (state.variantItems[i].id != ignoreId && deps.trim(state.variantItems[i].key) == normalized) {
-          return true;
-        }
-      }
+    }
+    return false;
+  }
+  function hasVariantKey(key, ignoreId) {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    var normalized = deps.trim(key);
+    var i;
+    if (normalized.length == 0) {
       return false;
     }
-    function findVariantItem(id) {
-      var i;
-      for (i = 0; i < state.variantItems.length; i++) {
-        if (state.variantItems[i].id == id) {
-          return state.variantItems[i];
-        }
+    for (i = 0; i < state.variantItems.length; i++) {
+      if (state.variantItems[i].id != ignoreId && deps.trim(state.variantItems[i].key) == normalized) {
+        return true;
+      }
+    }
+    return false;
+  }
+  function findVariantItem(id) {
+    var state = getTemplateEditorRuntime().state;
+    var i;
+    for (i = 0; i < state.variantItems.length; i++) {
+      if (state.variantItems[i].id == id) {
+        return state.variantItems[i];
+      }
+    }
+    return null;
+  }
+  function getPreviewLayoutStore(spec) {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    if (state.previewVariantId != null && state.previewVariantId.length > 0) {
+      var variantItem = findVariantItem(state.previewVariantId);
+      if (variantItem != null) {
+        variantItem.ports = deps.normalizePortLayout(variantItem.ports);
+        variantItem.labels = deps.normalizeLabels(variantItem.labels);
+        return variantItem;
+      }
+    }
+    spec.ports = deps.normalizePortLayout(spec.ports);
+    spec.labels = deps.normalizeLabels(spec.labels);
+    return spec;
+  }
+  function getPreviewSvg(spec) {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    var variantItem = state.previewVariantId != null && state.previewVariantId.length > 0 ? findVariantItem(state.previewVariantId) : null;
+    if (variantItem != null && deps.trim(variantItem.svg).length > 0) {
+      return "data:image/svg+xml," + encodeURIComponent(variantItem.svg);
+    }
+    return deps.toSvgDataUri(spec);
+  }
+  function getPreviewTitle(spec) {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    var variantItem = state.previewVariantId != null && state.previewVariantId.length > 0 ? findVariantItem(state.previewVariantId) : null;
+    if (variantItem != null) {
+      return deps.trim(variantItem.key).length > 0 ? spec.title + " [" + deps.trim(variantItem.key) + "]" : spec.title + " [\u672A\u547D\u540D\u53D8\u4F53]";
+    }
+    return spec.title;
+  }
+  function getEditorSchema() {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    return deps.buildSchemaFromFields(state.schemaFields || []);
+  }
+  function validateVariantField(showError) {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    if (!state.variantEnabled) {
+      return "";
+    }
+    var field = deps.trim(
+      state.variantFieldInput != null ? state.variantFieldInput.value : ""
+    );
+    if (field.length == 0) {
+      if (showError) {
+        deps.showStatus("\u8BF7\u5148\u586B\u5199\u53D8\u4F53\u5B57\u6BB5", true);
       }
       return null;
     }
-    function getPreviewLayoutStore(spec) {
-      if (state.previewVariantId != null && state.previewVariantId.length > 0) {
-        var variantItem = findVariantItem(state.previewVariantId);
-        if (variantItem != null) {
-          variantItem.ports = deps.normalizePortLayout(variantItem.ports);
-          variantItem.labels = deps.normalizeLabels(variantItem.labels);
-          return variantItem;
-        }
-      }
-      spec.ports = deps.normalizePortLayout(spec.ports);
-      spec.labels = deps.normalizeLabels(spec.labels);
-      return spec;
-    }
-    function getPreviewSvg(spec) {
-      var variantItem = state.previewVariantId != null && state.previewVariantId.length > 0 ? findVariantItem(state.previewVariantId) : null;
-      if (variantItem != null && deps.trim(variantItem.svg).length > 0) {
-        return "data:image/svg+xml," + encodeURIComponent(variantItem.svg);
-      }
-      return deps.toSvgDataUri(spec);
-    }
-    function getPreviewTitle(spec) {
-      var variantItem = state.previewVariantId != null && state.previewVariantId.length > 0 ? findVariantItem(state.previewVariantId) : null;
-      if (variantItem != null) {
-        return deps.trim(variantItem.key).length > 0 ? spec.title + " [" + deps.trim(variantItem.key) + "]" : spec.title + " [\u672A\u547D\u540D\u53D8\u4F53]";
-      }
-      return spec.title;
-    }
-    function getEditorSchema() {
-      return deps.buildSchemaFromFields(state.schemaFields || []);
-    }
-    function validateVariantField(showError) {
-      if (!state.variantEnabled) {
-        return "";
-      }
-      var field = deps.trim(
-        state.variantFieldInput != null ? state.variantFieldInput.value : ""
-      );
-      if (field.length == 0) {
-        if (showError) {
-          deps.showStatus("\u8BF7\u5148\u586B\u5199\u53D8\u4F53\u5B57\u6BB5", true);
-        }
-        return null;
-      }
-      try {
-        var schema = getEditorSchema();
-        if (!deps.isObject(schema)) {
-          throw new Error("\u7C7B\u578B\u5B9A\u4E49\u5FC5\u987B\u662F\u5BF9\u8C61");
-        }
-        if (!deps.hasSchemaPath(schema, field)) {
-          if (showError) {
-            deps.showStatus("\u53D8\u4F53\u5B57\u6BB5\u5FC5\u987B\u5148\u5728 JSON \u7C7B\u578B\u5B9A\u4E49\u4E2D\u58F0\u660E", true);
-          }
-          return null;
-        }
-        return field;
-      } catch (e) {
-        if (showError) {
-          deps.showStatus(e.message || "\u7C7B\u578B\u5B9A\u4E49\u683C\u5F0F\u6709\u8BEF", true);
-        }
-        return null;
-      }
-    }
-    function collectVariantMap() {
-      var variants = {};
-      var i;
-      if (!state.variantEnabled) {
-        return variants;
-      }
-      for (i = 0; i < state.variantItems.length; i++) {
-        var item = state.variantItems[i];
-        var key = deps.trim(item.key);
-        if (key.length > 0 && deps.trim(item.svg).length > 0) {
-          variants[key] = item.svg;
-        }
-      }
-      return variants;
-    }
-    function collectVariantLayouts() {
-      var layouts = {};
-      var i;
-      if (!state.variantEnabled) {
-        return layouts;
-      }
-      for (i = 0; i < state.variantItems.length; i++) {
-        var item = state.variantItems[i];
-        var key = deps.trim(item.key);
-        if (key.length == 0) {
-          continue;
-        }
-        layouts[key] = {
-          ports: deps.normalizePortLayout(item.ports),
-          labels: deps.normalizeLabels(item.labels)
-        };
-      }
-      return layouts;
-    }
-    function buildTemplateSpec() {
-      if (deps.trim(state.uploadedPrimarySvg).length == 0) {
-        throw new Error("\u8BF7\u5148\u4E0A\u4F20\u9ED8\u8BA4SVG");
-      }
+    try {
       var schema = getEditorSchema();
       if (!deps.isObject(schema)) {
         throw new Error("\u7C7B\u578B\u5B9A\u4E49\u5FC5\u987B\u662F\u5BF9\u8C61");
       }
-      var current = state.currentSpec || {};
-      var symbolId = deps.trim(
-        state.symbolIdInput != null ? state.symbolIdInput.value : ""
-      );
-      var templateName = deps.trim(
-        state.templateNameInput != null ? state.templateNameInput.value : ""
-      );
-      var variantField = "";
-      var baseSize;
-      if (symbolId.length == 0) {
-        throw new Error("\u8BF7\u5148\u586B\u5199\u56FE\u5143\u7C7B\u578BID");
-      }
-      if (templateName.length == 0) {
-        throw new Error("\u8BF7\u5148\u586B\u5199\u56FE\u5143\u7C7B\u578B\u540D\u79F0");
-      }
-      if (state.variantEnabled) {
-        variantField = validateVariantField(true);
-        if (variantField == null) {
-          throw new Error("\u53D8\u4F53\u5B57\u6BB5\u5FC5\u987B\u5148\u5728 JSON \u7C7B\u578B\u5B9A\u4E49\u4E2D\u58F0\u660E");
+      if (!deps.hasSchemaPath(schema, field)) {
+        if (showError) {
+          deps.showStatus("\u53D8\u4F53\u5B57\u6BB5\u5FC5\u987B\u5148\u5728 JSON \u7C7B\u578B\u5B9A\u4E49\u4E2D\u58F0\u660E", true);
         }
+        return null;
       }
-      baseSize = state.uploadedPrimarySvgSize || deps.extractSvgSize(state.uploadedPrimarySvg);
-      return deps.normalizeSpec({
-        symbolId,
-        templateName,
-        title: deps.trim(current.title) || templateName,
-        svg: state.uploadedPrimarySvg,
-        size: {
-          width: Math.max(
-            20,
-            deps.toInt(
-              state.templateWidthInput != null ? state.templateWidthInput.value : null,
-              baseSize.width
-            )
-          ),
-          height: Math.max(
-            20,
-            deps.toInt(
-              state.templateHeightInput != null ? state.templateHeightInput.value : null,
-              baseSize.height
-            )
+      return field;
+    } catch (e) {
+      if (showError) {
+        deps.showStatus(e.message || "\u7C7B\u578B\u5B9A\u4E49\u683C\u5F0F\u6709\u8BEF", true);
+      }
+      return null;
+    }
+  }
+  function collectVariantMap() {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    var variants = {};
+    var i;
+    if (!state.variantEnabled) {
+      return variants;
+    }
+    for (i = 0; i < state.variantItems.length; i++) {
+      var item = state.variantItems[i];
+      var key = deps.trim(item.key);
+      if (key.length > 0 && deps.trim(item.svg).length > 0) {
+        variants[key] = item.svg;
+      }
+    }
+    return variants;
+  }
+  function collectVariantLayouts() {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    var layouts = {};
+    var i;
+    if (!state.variantEnabled) {
+      return layouts;
+    }
+    for (i = 0; i < state.variantItems.length; i++) {
+      var item = state.variantItems[i];
+      var key = deps.trim(item.key);
+      if (key.length == 0) {
+        continue;
+      }
+      layouts[key] = {
+        ports: deps.normalizePortLayout(item.ports),
+        labels: deps.normalizeLabels(item.labels)
+      };
+    }
+    return layouts;
+  }
+  function buildTemplateSpec() {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    if (deps.trim(state.uploadedPrimarySvg).length == 0) {
+      throw new Error("\u8BF7\u5148\u4E0A\u4F20\u9ED8\u8BA4SVG");
+    }
+    var schema = getEditorSchema();
+    if (!deps.isObject(schema)) {
+      throw new Error("\u7C7B\u578B\u5B9A\u4E49\u5FC5\u987B\u662F\u5BF9\u8C61");
+    }
+    var current = state.currentSpec || {};
+    var symbolId = deps.trim(
+      state.symbolIdInput != null ? state.symbolIdInput.value : ""
+    );
+    var templateName = deps.trim(
+      state.templateNameInput != null ? state.templateNameInput.value : ""
+    );
+    var variantField = "";
+    var baseSize;
+    if (symbolId.length == 0) {
+      throw new Error("\u8BF7\u5148\u586B\u5199\u56FE\u5143\u7C7B\u578BID");
+    }
+    if (templateName.length == 0) {
+      throw new Error("\u8BF7\u5148\u586B\u5199\u56FE\u5143\u7C7B\u578B\u540D\u79F0");
+    }
+    if (state.variantEnabled) {
+      variantField = validateVariantField(true);
+      if (variantField == null) {
+        throw new Error("\u53D8\u4F53\u5B57\u6BB5\u5FC5\u987B\u5148\u5728 JSON \u7C7B\u578B\u5B9A\u4E49\u4E2D\u58F0\u660E");
+      }
+    }
+    baseSize = state.uploadedPrimarySvgSize || deps.extractSvgSize(state.uploadedPrimarySvg);
+    return deps.normalizeSpec({
+      symbolId,
+      templateName,
+      title: deps.trim(current.title) || templateName,
+      svg: state.uploadedPrimarySvg,
+      size: {
+        width: Math.max(
+          20,
+          deps.toInt(
+            state.templateWidthInput != null ? state.templateWidthInput.value : null,
+            baseSize.width
           )
-        },
-        device: current.device || {},
-        ports: current.ports || [],
-        labels: current.labels || [],
-        schema,
-        data: current.data || {},
-        variantField,
-        svgVariants: collectVariantMap(),
-        variantLayouts: collectVariantLayouts()
+        ),
+        height: Math.max(
+          20,
+          deps.toInt(
+            state.templateHeightInput != null ? state.templateHeightInput.value : null,
+            baseSize.height
+          )
+        )
+      },
+      device: current.device || {},
+      ports: current.ports || [],
+      labels: current.labels || [],
+      schema,
+      data: current.data || {},
+      variantField,
+      svgVariants: collectVariantMap(),
+      variantLayouts: collectVariantLayouts()
+    });
+  }
+  function parseEditorSpec() {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    try {
+      var spec = buildTemplateSpec();
+      state.currentSpec = spec;
+      updatePreview(spec);
+      deps.showStatus("\u9884\u89C8\u5DF2\u5237\u65B0", false);
+      return spec;
+    } catch (e) {
+      deps.showStatus(e.message || String(e), true);
+      throw e;
+    }
+  }
+  function updateSelectedItem(type, id) {
+    var state = getTemplateEditorRuntime().state;
+    state.selectedItem = type != null && id != null ? { type, id } : null;
+  }
+  function deleteSelectedItem() {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    if (state.currentSpec == null || state.selectedItem == null) {
+      return;
+    }
+    var next = deps.cloneJson(state.currentSpec);
+    var layout = getPreviewLayoutStore(next);
+    if (state.selectedItem.type == "port") {
+      layout.ports = layout.ports.filter(function(item) {
+        return item.id != state.selectedItem.id;
+      });
+    } else if (state.selectedItem.type == "label") {
+      layout.labels = layout.labels.filter(function(item) {
+        return item.id != state.selectedItem.id;
       });
     }
-    function parseEditorSpec() {
-      try {
-        var spec = buildTemplateSpec();
-        state.currentSpec = spec;
-        updatePreview(spec);
-        deps.showStatus("\u9884\u89C8\u5DF2\u5237\u65B0", false);
-        return spec;
-      } catch (e) {
-        deps.showStatus(e.message || String(e), true);
-        throw e;
-      }
+    state.currentSpec = deps.normalizeSpec(next);
+    updateSelectedItem(null, null);
+    updatePreview(state.currentSpec);
+  }
+  function getTemplateLabelText(label) {
+    var deps = getTemplateEditorRuntime().deps;
+    return deps.trim(label.binding).length > 0 ? "{{" + label.binding + "}}" : label.text || "\u672A\u7ED1\u5B9A";
+  }
+  function updatePreview(spec) {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    if (state.preview == null) {
+      return;
     }
-    function updateSelectedItem(type, id) {
-      state.selectedItem = type != null && id != null ? { type, id } : null;
-    }
-    function deleteSelectedItem() {
-      if (state.currentSpec == null || state.selectedItem == null) {
-        return;
-      }
-      var next = deps.cloneJson(state.currentSpec);
-      var layout = getPreviewLayoutStore(next);
-      if (state.selectedItem.type == "port") {
-        layout.ports = layout.ports.filter(function(item) {
-          return item.id != state.selectedItem.id;
-        });
-      } else if (state.selectedItem.type == "label") {
-        layout.labels = layout.labels.filter(function(item) {
-          return item.id != state.selectedItem.id;
-        });
-      }
-      state.currentSpec = deps.normalizeSpec(next);
-      updateSelectedItem(null, null);
-      updatePreview(state.currentSpec);
-    }
-    function getTemplateLabelText(label) {
-      return deps.trim(label.binding).length > 0 ? "{{" + label.binding + "}}" : label.text || "\u672A\u7ED1\u5B9A";
-    }
-    function updatePreview(spec) {
-      if (state.preview == null) {
-        return;
-      }
-      state.preview.innerHTML = "";
-      if (spec == null || deps.trim(spec.svg).length == 0) {
-        var empty = document.createElement("div");
-        empty.style.height = "100%";
-        empty.style.display = "flex";
-        empty.style.alignItems = "center";
-        empty.style.justifyContent = "center";
-        empty.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
-        empty.innerText = "\u8BF7\u5148\u4E0A\u4F20\u9ED8\u8BA4SVG\uFF0C\u518D\u5728\u8FD9\u91CC\u6DFB\u52A0\u8FDE\u63A5\u70B9\u548C\u6587\u672C\u6846";
-        state.preview.appendChild(empty);
-        deps.scheduleEditorDraftSave();
-        return;
-      }
-      state.currentSpec = deps.normalizeSpec(spec);
+    state.preview.innerHTML = "";
+    if (spec == null || deps.trim(spec.svg).length == 0) {
+      var empty = document.createElement("div");
+      empty.style.height = "100%";
+      empty.style.display = "flex";
+      empty.style.alignItems = "center";
+      empty.style.justifyContent = "center";
+      empty.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+      empty.innerText = "\u8BF7\u5148\u4E0A\u4F20\u9ED8\u8BA4SVG\uFF0C\u518D\u5728\u8FD9\u91CC\u6DFB\u52A0\u8FDE\u63A5\u70B9\u548C\u6587\u672C\u6846";
+      state.preview.appendChild(empty);
       deps.scheduleEditorDraftSave();
-      var layoutStore = getPreviewLayoutStore(state.currentSpec);
-      var selectedId = state.selectedItem != null ? state.selectedItem.id : null;
-      var selectedType = state.selectedItem != null ? state.selectedItem.type : null;
-      if (selectedType == "port" && findPreviewItemById(layoutStore.ports, selectedId) == null || selectedType == "label" && findPreviewItemById(layoutStore.labels, selectedId) == null) {
+      return;
+    }
+    state.currentSpec = deps.normalizeSpec(spec);
+    deps.scheduleEditorDraftSave();
+    var layoutStore = getPreviewLayoutStore(state.currentSpec);
+    var selectedId = state.selectedItem != null ? state.selectedItem.id : null;
+    var selectedType = state.selectedItem != null ? state.selectedItem.type : null;
+    if (selectedType == "port" && findPreviewItemById(layoutStore.ports, selectedId) == null || selectedType == "label" && findPreviewItemById(layoutStore.labels, selectedId) == null) {
+      updateSelectedItem(null, null);
+    }
+    var toolbar = document.createElement("div");
+    toolbar.style.display = "flex";
+    toolbar.style.alignItems = "center";
+    toolbar.style.padding = "8px";
+    toolbar.style.gap = "8px";
+    toolbar.style.borderBottom = "1px solid #d0d7de";
+    state.preview.appendChild(toolbar);
+    function createModeButton(mode, label) {
+      var btn = deps.createButton(label, function() {
+        state.previewMode = mode;
+        updatePreview(state.currentSpec);
+      });
+      btn.style.marginTop = "0";
+      btn.style.marginRight = "0";
+      btn.style.padding = "4px 10px";
+      if (state.previewMode == mode) {
+        btn.style.borderColor = "#1a73e8";
+        btn.style.color = "#1a73e8";
+      }
+      return btn;
+    }
+    toolbar.appendChild(createModeButton("select", "\u9009\u62E9"));
+    toolbar.appendChild(createModeButton("port", "\u6DFB\u52A0\u8FDE\u63A5\u70B9"));
+    toolbar.appendChild(createModeButton("label", "\u6DFB\u52A0\u6587\u672C\u6846"));
+    if (state.variantEnabled && state.variantItems.length > 0) {
+      var previewSelect = document.createElement("select");
+      previewSelect.style.marginLeft = "8px";
+      previewSelect.style.maxWidth = "180px";
+      var defaultOption = document.createElement("option");
+      defaultOption.value = "";
+      defaultOption.innerText = "\u7F16\u8F91\u9ED8\u8BA4SVG";
+      previewSelect.appendChild(defaultOption);
+      for (var p = 0; p < state.variantItems.length; p++) {
+        var previewItem = state.variantItems[p];
+        var option = document.createElement("option");
+        option.value = previewItem.id;
+        option.innerText = deps.trim(previewItem.key).length > 0 ? "\u7F16\u8F91\u53D8\u4F53\uFF1A" + deps.trim(previewItem.key) : "\u7F16\u8F91\u672A\u547D\u540D\u53D8\u4F53";
+        previewSelect.appendChild(option);
+      }
+      previewSelect.value = state.previewVariantId || "";
+      mxEvent.addListener(previewSelect, "change", function() {
+        state.previewVariantId = previewSelect.value || "";
         updateSelectedItem(null, null);
-      }
-      var toolbar = document.createElement("div");
-      toolbar.style.display = "flex";
-      toolbar.style.alignItems = "center";
-      toolbar.style.padding = "8px";
-      toolbar.style.gap = "8px";
-      toolbar.style.borderBottom = "1px solid #d0d7de";
-      state.preview.appendChild(toolbar);
-      function createModeButton(mode, label) {
-        var btn = deps.createButton(label, function() {
-          state.previewMode = mode;
-          updatePreview(state.currentSpec);
-        });
-        btn.style.marginTop = "0";
-        btn.style.marginRight = "0";
-        btn.style.padding = "4px 10px";
-        if (state.previewMode == mode) {
-          btn.style.borderColor = "#1a73e8";
-          btn.style.color = "#1a73e8";
-        }
-        return btn;
-      }
-      toolbar.appendChild(createModeButton("select", "\u9009\u62E9"));
-      toolbar.appendChild(createModeButton("port", "\u6DFB\u52A0\u8FDE\u63A5\u70B9"));
-      toolbar.appendChild(createModeButton("label", "\u6DFB\u52A0\u6587\u672C\u6846"));
-      if (state.variantEnabled && state.variantItems.length > 0) {
-        var previewSelect = document.createElement("select");
-        previewSelect.style.marginLeft = "8px";
-        previewSelect.style.maxWidth = "180px";
-        var defaultOption = document.createElement("option");
-        defaultOption.value = "";
-        defaultOption.innerText = "\u7F16\u8F91\u9ED8\u8BA4SVG";
-        previewSelect.appendChild(defaultOption);
-        for (var p = 0; p < state.variantItems.length; p++) {
-          var previewItem = state.variantItems[p];
-          var option = document.createElement("option");
-          option.value = previewItem.id;
-          option.innerText = deps.trim(previewItem.key).length > 0 ? "\u7F16\u8F91\u53D8\u4F53\uFF1A" + deps.trim(previewItem.key) : "\u7F16\u8F91\u672A\u547D\u540D\u53D8\u4F53";
-          previewSelect.appendChild(option);
-        }
-        previewSelect.value = state.previewVariantId || "";
-        mxEvent.addListener(previewSelect, "change", function() {
-          state.previewVariantId = previewSelect.value || "";
-          updateSelectedItem(null, null);
-          updatePreview(state.currentSpec);
-        });
-        toolbar.appendChild(previewSelect);
-      }
-      var deleteBtn = deps.createButton("\u5220\u9664\u9009\u4E2D", function() {
-        deleteSelectedItem();
+        updatePreview(state.currentSpec);
       });
-      deleteBtn.style.marginTop = "0";
-      deleteBtn.style.marginRight = "0";
-      deleteBtn.style.padding = "4px 10px";
-      toolbar.appendChild(deleteBtn);
-      if (state.selectedItem != null && state.selectedItem.type == "port") {
-        var selectedPort = findPreviewItemById(
-          layoutStore.ports,
-          state.selectedItem.id
-        );
-        if (selectedPort != null) {
-          var portEditor = document.createElement("div");
-          portEditor.style.display = "flex";
-          portEditor.style.alignItems = "center";
-          portEditor.style.gap = "8px";
-          portEditor.style.padding = "8px";
-          portEditor.style.borderBottom = "1px solid #d0d7de";
-          state.preview.appendChild(portEditor);
-          var portNameInput = document.createElement("input");
-          portNameInput.setAttribute("type", "text");
-          portNameInput.setAttribute("placeholder", "\u7AEF\u5B50\u540D\u79F0\uFF0C\u5982 L1 / N / PE");
-          portNameInput.value = selectedPort.name || "";
-          portNameInput.style.width = "180px";
-          portEditor.appendChild(portNameInput);
-          var markerSelect = document.createElement("select");
-          [
-            { value: "cross", label: "\u53C9\u53F7" },
-            { value: "circle", label: "\u5706\u70B9" },
-            { value: "hidden", label: "\u9690\u85CF" }
-          ].forEach(function(item) {
-            var option2 = document.createElement("option");
-            option2.value = item.value;
-            option2.innerText = item.label;
-            markerSelect.appendChild(option2);
-          });
-          markerSelect.value = selectedPort.marker || "cross";
-          portEditor.appendChild(markerSelect);
-          var directionSelect = document.createElement("select");
-          [
-            { value: "any", label: "\u4EFB\u610F\u65B9\u5411" },
-            { value: "left", label: "\u5DE6\u4FA7\u63A5\u5165" },
-            { value: "right", label: "\u53F3\u4FA7\u63A5\u5165" },
-            { value: "up", label: "\u4E0A\u4FA7\u63A5\u5165" },
-            { value: "down", label: "\u4E0B\u4FA7\u63A5\u5165" }
-          ].forEach(function(item) {
-            var option2 = document.createElement("option");
-            option2.value = item.value;
-            option2.innerText = item.label;
-            directionSelect.appendChild(option2);
-          });
-          directionSelect.value = selectedPort.direction || "any";
-          portEditor.appendChild(directionSelect);
-          var ioSelect = document.createElement("select");
-          [
-            { value: "both", label: "\u53EF\u63A5\u5165\u53EF\u63A5\u51FA" },
-            { value: "in", label: "\u4EC5\u63A5\u5165" },
-            { value: "out", label: "\u4EC5\u63A5\u51FA" }
-          ].forEach(function(item) {
-            var option2 = document.createElement("option");
-            option2.value = item.value;
-            option2.innerText = item.label;
-            ioSelect.appendChild(option2);
-          });
-          ioSelect.value = selectedPort.ioMode || "both";
-          portEditor.appendChild(ioSelect);
-          mxEvent.addListener(portNameInput, "input", function() {
-            selectedPort.name = deps.trim(portNameInput.value);
-            updatePreview(state.currentSpec);
-          });
-          mxEvent.addListener(markerSelect, "change", function() {
-            selectedPort.marker = deps.normalizePortMarker(markerSelect.value);
-            updatePreview(state.currentSpec);
-          });
-          mxEvent.addListener(directionSelect, "change", function() {
-            selectedPort.direction = deps.normalizePortDirection(
-              directionSelect.value
-            );
-            updatePreview(state.currentSpec);
-          });
-          mxEvent.addListener(ioSelect, "change", function() {
-            selectedPort.ioMode = deps.normalizePortIoMode(ioSelect.value);
-            updatePreview(state.currentSpec);
-          });
-        }
+      toolbar.appendChild(previewSelect);
+    }
+    var deleteBtn = deps.createButton("\u5220\u9664\u9009\u4E2D", function() {
+      deleteSelectedItem();
+    });
+    deleteBtn.style.marginTop = "0";
+    deleteBtn.style.marginRight = "0";
+    deleteBtn.style.padding = "4px 10px";
+    toolbar.appendChild(deleteBtn);
+    if (state.selectedItem != null && state.selectedItem.type == "port") {
+      var selectedPort = findPreviewItemById(
+        layoutStore.ports,
+        state.selectedItem.id
+      );
+      if (selectedPort != null) {
+        var portEditor = document.createElement("div");
+        portEditor.style.display = "flex";
+        portEditor.style.alignItems = "center";
+        portEditor.style.gap = "8px";
+        portEditor.style.padding = "8px";
+        portEditor.style.borderBottom = "1px solid #d0d7de";
+        state.preview.appendChild(portEditor);
+        var portNameInput = document.createElement("input");
+        portNameInput.setAttribute("type", "text");
+        portNameInput.setAttribute("placeholder", "\u7AEF\u5B50\u540D\u79F0\uFF0C\u5982 L1 / N / PE");
+        portNameInput.value = selectedPort.name || "";
+        portNameInput.style.width = "180px";
+        portEditor.appendChild(portNameInput);
+        var markerSelect = document.createElement("select");
+        [
+          { value: "cross", label: "\u53C9\u53F7" },
+          { value: "circle", label: "\u5706\u70B9" },
+          { value: "hidden", label: "\u9690\u85CF" }
+        ].forEach(function(item) {
+          var option2 = document.createElement("option");
+          option2.value = item.value;
+          option2.innerText = item.label;
+          markerSelect.appendChild(option2);
+        });
+        markerSelect.value = selectedPort.marker || "cross";
+        portEditor.appendChild(markerSelect);
+        var directionSelect = document.createElement("select");
+        [
+          { value: "any", label: "\u4EFB\u610F\u65B9\u5411" },
+          { value: "left", label: "\u5DE6\u4FA7\u63A5\u5165" },
+          { value: "right", label: "\u53F3\u4FA7\u63A5\u5165" },
+          { value: "up", label: "\u4E0A\u4FA7\u63A5\u5165" },
+          { value: "down", label: "\u4E0B\u4FA7\u63A5\u5165" }
+        ].forEach(function(item) {
+          var option2 = document.createElement("option");
+          option2.value = item.value;
+          option2.innerText = item.label;
+          directionSelect.appendChild(option2);
+        });
+        directionSelect.value = selectedPort.direction || "any";
+        portEditor.appendChild(directionSelect);
+        var ioSelect = document.createElement("select");
+        [
+          { value: "both", label: "\u53EF\u63A5\u5165\u53EF\u63A5\u51FA" },
+          { value: "in", label: "\u4EC5\u63A5\u5165" },
+          { value: "out", label: "\u4EC5\u63A5\u51FA" }
+        ].forEach(function(item) {
+          var option2 = document.createElement("option");
+          option2.value = item.value;
+          option2.innerText = item.label;
+          ioSelect.appendChild(option2);
+        });
+        ioSelect.value = selectedPort.ioMode || "both";
+        portEditor.appendChild(ioSelect);
+        mxEvent.addListener(portNameInput, "input", function() {
+          selectedPort.name = deps.trim(portNameInput.value);
+          updatePreview(state.currentSpec);
+        });
+        mxEvent.addListener(markerSelect, "change", function() {
+          selectedPort.marker = deps.normalizePortMarker(markerSelect.value);
+          updatePreview(state.currentSpec);
+        });
+        mxEvent.addListener(directionSelect, "change", function() {
+          selectedPort.direction = deps.normalizePortDirection(
+            directionSelect.value
+          );
+          updatePreview(state.currentSpec);
+        });
+        mxEvent.addListener(ioSelect, "change", function() {
+          selectedPort.ioMode = deps.normalizePortIoMode(ioSelect.value);
+          updatePreview(state.currentSpec);
+        });
       }
-      renderInteractivePreviewSurface(
-        null,
-        {
-          container: state.preview,
-          spec: state.currentSpec,
-          height: 278,
-          title: getPreviewTitle(state.currentSpec),
-          svgDataUri: getPreviewSvg(state.currentSpec),
-          mode: state.previewMode,
-          selectedItem: state.selectedItem,
-          ports: layoutStore.ports,
-          labels: layoutStore.labels,
-          getPortById: function(id) {
-            return findPreviewItemById(
-              getPreviewLayoutStore(state.currentSpec).ports,
-              id
-            );
-          },
-          getLabelById: function(id) {
-            return findPreviewItemById(
-              getPreviewLayoutStore(state.currentSpec).labels,
-              id
-            );
-          },
-          getLabelText: getTemplateLabelText,
-          buildPortTitle: function(point) {
-            return point.id;
-          },
-          onSelect: updateSelectedItem,
-          onRequestRender: function() {
-            updatePreview(state.currentSpec);
-          },
-          onDragMove: function(type, id, point) {
-            var current = state.currentSpec;
-            var nextLayout = getPreviewLayoutStore(current);
-            if (type == "port") {
-              var port = findPreviewItemById(nextLayout.ports, id);
-              if (port != null) {
-                port.x = point.x;
-                port.y = point.y;
-              }
-            } else {
-              var label = findPreviewItemById(nextLayout.labels, id);
-              if (label != null) {
-                label.x = point.x;
-                label.y = point.y;
-              }
-            }
-          },
-          onDragEnd: function(type, id, metrics) {
-            if (type != "port" || state.currentSpec == null) {
-              return;
-            }
-            var finalLayout = getPreviewLayoutStore(state.currentSpec);
-            var finalPort = findPreviewItemById(finalLayout.ports, id);
-            if (finalPort != null) {
-              var snappedPoint = snapPortPointToEdge(
-                { x: finalPort.x, y: finalPort.y },
-                metrics,
-                deps.portEdgeSnapThresholdPx
-              );
-              finalPort.x = snappedPoint.x;
-              finalPort.y = snappedPoint.y;
-            }
-          },
-          onSurfaceClick: function(point, metrics) {
-            if (state.previewMode == "port") {
-              point = snapPortPointToEdge(
-                point,
-                metrics,
-                deps.portEdgeSnapThresholdPx
-              );
-              layoutStore.ports.push({
-                id: deps.nextItemId("port"),
+    }
+    renderInteractivePreviewSurface(null, {
+      container: state.preview,
+      spec: state.currentSpec,
+      height: 278,
+      title: getPreviewTitle(state.currentSpec),
+      svgDataUri: getPreviewSvg(state.currentSpec),
+      mode: state.previewMode,
+      selectedItem: state.selectedItem,
+      ports: layoutStore.ports,
+      labels: layoutStore.labels,
+      getPortById: function(id) {
+        return findPreviewItemById(
+          getPreviewLayoutStore(state.currentSpec).ports,
+          id
+        );
+      },
+      getLabelById: function(id) {
+        return findPreviewItemById(
+          getPreviewLayoutStore(state.currentSpec).labels,
+          id
+        );
+      },
+      getLabelText: getTemplateLabelText,
+      buildPortTitle: function(point) {
+        return point.id;
+      },
+      onSelect: updateSelectedItem,
+      onRequestRender: function() {
+        updatePreview(state.currentSpec);
+      },
+      onDragMove: function(type, id, point) {
+        var current = state.currentSpec;
+        var nextLayout = getPreviewLayoutStore(current);
+        if (type == "port") {
+          var port = findPreviewItemById(nextLayout.ports, id);
+          if (port != null) {
+            port.x = point.x;
+            port.y = point.y;
+          }
+        } else {
+          var label = findPreviewItemById(nextLayout.labels, id);
+          if (label != null) {
+            label.x = point.x;
+            label.y = point.y;
+          }
+        }
+      },
+      onDragEnd: function(type, id, metrics) {
+        if (type != "port" || state.currentSpec == null) {
+          return;
+        }
+        var finalLayout = getPreviewLayoutStore(state.currentSpec);
+        var finalPort = findPreviewItemById(finalLayout.ports, id);
+        if (finalPort != null) {
+          var snappedPoint = snapPortPointToEdge(
+            { x: finalPort.x, y: finalPort.y },
+            metrics,
+            deps.portEdgeSnapThresholdPx
+          );
+          finalPort.x = snappedPoint.x;
+          finalPort.y = snappedPoint.y;
+        }
+      },
+      onSurfaceClick: function(point, metrics) {
+        if (state.previewMode == "port") {
+          point = snapPortPointToEdge(
+            point,
+            metrics,
+            deps.portEdgeSnapThresholdPx
+          );
+          layoutStore.ports.push({
+            id: deps.nextItemId("port"),
+            x: point.x,
+            y: point.y
+          });
+          updateSelectedItem(
+            "port",
+            layoutStore.ports[layoutStore.ports.length - 1].id
+          );
+          updatePreview(state.currentSpec);
+        } else if (state.previewMode == "label") {
+          var binding = window.prompt(
+            "\u8F93\u5165\u7ED1\u5B9A\u5C5E\u6027\u8DEF\u5F84\uFF0C\u4F8B\u5982 name \u6216 device.name",
+            "name"
+          );
+          var labelId = deps.nextItemId("label");
+          if (binding == null) {
+            return;
+          }
+          binding = deps.trim(binding);
+          if (hasLabelBinding({ labels: layoutStore.labels }, binding, null)) {
+            deps.showStatus("\u540C\u4E00\u4E2A\u5C5E\u6027\u53EA\u80FD\u7ED1\u5B9A\u4E00\u4E2A\u6587\u672C\u6846", true);
+            return;
+          }
+          layoutStore.labels.push(
+            deps.normalizeLabelItem(
+              {
+                id: labelId,
+                text: "\u6587\u672C",
+                binding,
                 x: point.x,
-                y: point.y
-              });
-              updateSelectedItem(
-                "port",
-                layoutStore.ports[layoutStore.ports.length - 1].id
-              );
-              updatePreview(state.currentSpec);
-            } else if (state.previewMode == "label") {
-              var binding = window.prompt(
-                "\u8F93\u5165\u7ED1\u5B9A\u5C5E\u6027\u8DEF\u5F84\uFF0C\u4F8B\u5982 name \u6216 device.name",
-                "name"
-              );
-              var labelId = deps.nextItemId("label");
-              if (binding == null) {
-                return;
-              }
-              binding = deps.trim(binding);
-              if (hasLabelBinding({ labels: layoutStore.labels }, binding, null)) {
-                deps.showStatus("\u540C\u4E00\u4E2A\u5C5E\u6027\u53EA\u80FD\u7ED1\u5B9A\u4E00\u4E2A\u6587\u672C\u6846", true);
-                return;
-              }
-              layoutStore.labels.push(
-                deps.normalizeLabelItem(
-                  {
-                    id: labelId,
-                    text: "\u6587\u672C",
-                    binding,
-                    x: point.x,
-                    y: point.y,
-                    width: 120,
-                    height: 26,
-                    align: "center"
-                  },
-                  labelId,
-                  "\u6587\u672C"
-                )
-              );
-              updateSelectedItem(
-                "label",
-                layoutStore.labels[layoutStore.labels.length - 1].id
-              );
-              updatePreview(state.currentSpec);
-            } else {
-              updateSelectedItem(null, null);
-              updatePreview(state.currentSpec);
-            }
-          },
-          onLabelDoubleClick: function(label) {
-            var nextBinding = window.prompt(
-              "\u8F93\u5165\u7ED1\u5B9A\u5C5E\u6027\u8DEF\u5F84\uFF0C\u4F8B\u5982 name \u6216 device.name",
-              label.binding
-            );
-            if (nextBinding == null) {
-              return;
-            }
-            nextBinding = deps.trim(nextBinding);
-            if (hasLabelBinding(
-              { labels: getPreviewLayoutStore(state.currentSpec).labels },
-              nextBinding,
-              label.id
-            )) {
-              deps.showStatus("\u540C\u4E00\u4E2A\u5C5E\u6027\u53EA\u80FD\u7ED1\u5B9A\u4E00\u4E2A\u6587\u672C\u6846", true);
-              return;
-            }
-            label.binding = nextBinding;
-            updateSelectedItem("label", label.id);
-            updatePreview(state.currentSpec);
-          }
-        }
-      );
-    }
-    function bindSvgUpload(input, nameNode, svgKey, nameKey, successMessage, updateSize, onLoaded) {
-      mxEvent.addListener(input, "change", function() {
-        if (input.files == null || input.files.length == 0) {
-          return;
-        }
-        var reader = new FileReader();
-        reader.onload = function() {
-          try {
-            var svg = deps.validateSvg(reader.result);
-            var fileName = input.files[0].name;
-            if (svgKey != null) {
-              state[svgKey] = svg;
-            }
-            if (nameKey != null) {
-              state[nameKey] = fileName;
-            }
-            if (typeof onLoaded === "function") {
-              onLoaded(svg, fileName);
-            }
-            if (updateSize) {
-              state.uploadedPrimarySvgSize = deps.extractSvgSize(svg);
-            }
-            if (nameNode != null && nameKey != null) {
-              nameNode.innerText = state[nameKey];
-            }
-            if (deps.trim(state.uploadedPrimarySvg).length > 0) {
-              parseEditorSpec();
-            } else {
-              updatePreview(null);
-            }
-            deps.scheduleEditorDraftSave();
-            deps.showStatus(successMessage, false);
-          } catch (e) {
-            deps.showStatus(e.message || String(e), true);
-          }
-        };
-        reader.readAsText(input.files[0], "utf-8");
-      });
-    }
-    function createWindow() {
-      deps.clearDraftSaveTimer();
-      state.nextId = 1;
-      state.symbolIdTouched = false;
-      state.variantEnabled = false;
-      state.lastValidVariantField = "";
-      state.variantItems = [];
-      state.currentSpec = null;
-      state.selectedItem = null;
-      state.previewVariantId = "";
-      state.previewMode = "select";
-      state.uploadedPrimarySvg = "";
-      state.uploadedPrimarySvgName = "";
-      state.uploadedPrimarySvgSize = null;
-      var container = document.createElement("div");
-      container.style.width = "100%";
-      container.style.height = "100%";
-      container.style.boxSizing = "border-box";
-      container.style.padding = "12px";
-      container.style.overflow = "auto";
-      container.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
-      var title = document.createElement("div");
-      title.style.fontWeight = "bold";
-      title.style.marginBottom = "8px";
-      title.innerText = "\u7535\u6C14\u56FE\u5143\u7C7B\u578B\u5B9A\u4E49";
-      container.appendChild(title);
-      var symbolRow = document.createElement("div");
-      symbolRow.style.display = "flex";
-      symbolRow.style.alignItems = "center";
-      symbolRow.style.marginBottom = "10px";
-      container.appendChild(symbolRow);
-      var symbolLabel = document.createElement("div");
-      symbolLabel.style.width = "90px";
-      symbolLabel.style.flex = "0 0 90px";
-      symbolLabel.innerText = "\u56FE\u5143\u7C7B\u578BID";
-      symbolRow.appendChild(symbolLabel);
-      state.symbolIdInput = document.createElement("input");
-      state.symbolIdInput.setAttribute("type", "text");
-      state.symbolIdInput.style.flex = "1 1 auto";
-      state.symbolIdInput.style.boxSizing = "border-box";
-      state.symbolIdInput.value = deps.generateSymbolId("electrical-symbol");
-      symbolRow.appendChild(state.symbolIdInput);
-      mxEvent.addListener(state.symbolIdInput, "input", function() {
-        state.symbolIdTouched = true;
-        deps.scheduleEditorDraftSave();
-      });
-      var nameRow = document.createElement("div");
-      nameRow.style.display = "flex";
-      nameRow.style.alignItems = "center";
-      nameRow.style.marginBottom = "10px";
-      container.appendChild(nameRow);
-      var nameLabel = document.createElement("div");
-      nameLabel.style.width = "90px";
-      nameLabel.style.flex = "0 0 90px";
-      nameLabel.innerText = "\u56FE\u5143\u7C7B\u578B\u540D\u79F0";
-      nameRow.appendChild(nameLabel);
-      state.templateNameInput = document.createElement("input");
-      state.templateNameInput.setAttribute("type", "text");
-      state.templateNameInput.style.flex = "1 1 auto";
-      state.templateNameInput.style.boxSizing = "border-box";
-      state.templateNameInput.value = "\u7535\u6C14\u56FE\u5143";
-      nameRow.appendChild(state.templateNameInput);
-      var sizeRow = document.createElement("div");
-      sizeRow.style.display = "flex";
-      sizeRow.style.alignItems = "center";
-      sizeRow.style.gap = "8px";
-      sizeRow.style.marginBottom = "10px";
-      container.appendChild(sizeRow);
-      var sizeLabel = document.createElement("div");
-      sizeLabel.style.width = "90px";
-      sizeLabel.style.flex = "0 0 90px";
-      sizeLabel.innerText = "\u9ED8\u8BA4\u5BBD\u9AD8";
-      sizeRow.appendChild(sizeLabel);
-      state.templateWidthInput = document.createElement("input");
-      state.templateWidthInput.setAttribute("type", "number");
-      state.templateWidthInput.setAttribute("min", "20");
-      state.templateWidthInput.style.width = "120px";
-      state.templateWidthInput.value = "120";
-      sizeRow.appendChild(state.templateWidthInput);
-      var sizeSplit = document.createElement("div");
-      sizeSplit.innerText = "x";
-      sizeRow.appendChild(sizeSplit);
-      state.templateHeightInput = document.createElement("input");
-      state.templateHeightInput.setAttribute("type", "number");
-      state.templateHeightInput.setAttribute("min", "20");
-      state.templateHeightInput.style.width = "120px";
-      state.templateHeightInput.value = "80";
-      sizeRow.appendChild(state.templateHeightInput);
-      var topRow = document.createElement("div");
-      topRow.style.display = "flex";
-      topRow.style.alignItems = "center";
-      topRow.style.flexWrap = "wrap";
-      topRow.style.rowGap = "8px";
-      container.appendChild(topRow);
-      var primaryInput = document.createElement("input");
-      primaryInput.setAttribute("type", "file");
-      primaryInput.setAttribute("accept", ".svg,image/svg+xml");
-      primaryInput.style.display = "none";
-      topRow.appendChild(primaryInput);
-      var primaryButton = deps.createButton(
-        mxResources.get("electricalUploadPrimarySvg"),
-        function() {
-          primaryInput.click();
-        }
-      );
-      primaryButton.style.marginTop = "0";
-      topRow.appendChild(primaryButton);
-      var primaryName = document.createElement("div");
-      primaryName.style.marginLeft = "8px";
-      primaryName.style.marginRight = "12px";
-      primaryName.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
-      primaryName.innerText = "\u672A\u9009\u62E9\u9ED8\u8BA4SVG";
-      topRow.appendChild(primaryName);
-      var variantToggleRow = document.createElement("div");
-      variantToggleRow.style.display = "flex";
-      variantToggleRow.style.alignItems = "center";
-      variantToggleRow.style.gap = "8px";
-      variantToggleRow.style.marginTop = "10px";
-      container.appendChild(variantToggleRow);
-      var variantToggle = document.createElement("input");
-      variantToggle.setAttribute("type", "checkbox");
-      variantToggleRow.appendChild(variantToggle);
-      var variantToggleLabel = document.createElement("div");
-      variantToggleLabel.innerText = mxResources.get("electricalEnableVariants");
-      variantToggleRow.appendChild(variantToggleLabel);
-      var variantSection = document.createElement("div");
-      variantSection.style.display = "none";
-      container.appendChild(variantSection);
-      var variantRow = document.createElement("div");
-      variantRow.style.display = "flex";
-      variantRow.style.alignItems = "center";
-      variantRow.style.gap = "8px";
-      variantRow.style.marginTop = "10px";
-      variantSection.appendChild(variantRow);
-      var variantLabel = document.createElement("div");
-      variantLabel.style.width = "90px";
-      variantLabel.style.flex = "0 0 90px";
-      variantLabel.innerText = "\u53D8\u4F53\u5B57\u6BB5";
-      variantRow.appendChild(variantLabel);
-      state.variantFieldInput = document.createElement("input");
-      state.variantFieldInput.setAttribute("type", "text");
-      state.variantFieldInput.style.flex = "1 1 auto";
-      state.variantFieldInput.style.boxSizing = "border-box";
-      state.variantFieldInput.value = "";
-      state.variantFieldInput.setAttribute(
-        "placeholder",
-        "\u8BF7\u8F93\u5165\u7C7B\u578B\u5B9A\u4E49\u91CC\u5DF2\u5B58\u5728\u7684\u5B57\u6BB5\u8DEF\u5F84"
-      );
-      variantRow.appendChild(state.variantFieldInput);
-      var addVariantButton = deps.createButton(
-        mxResources.get("electricalAddVariantSvg"),
-        function() {
-          if (state.variantEnabled && validateVariantField(true) == null) {
-            return;
-          }
-          state.variantItems.push({
-            id: deps.nextItemId("variant"),
-            key: "",
-            svg: "",
-            name: "",
-            ports: deps.cloneJson(
-              state.currentSpec != null ? state.currentSpec.ports || [] : []
-            ),
-            labels: deps.cloneJson(
-              state.currentSpec != null ? state.currentSpec.labels || [] : []
+                y: point.y,
+                width: 120,
+                height: 26,
+                align: "center"
+              },
+              labelId,
+              "\u6587\u672C"
             )
-          });
-          renderVariantList();
+          );
+          updateSelectedItem(
+            "label",
+            layoutStore.labels[layoutStore.labels.length - 1].id
+          );
+          updatePreview(state.currentSpec);
+        } else {
           updateSelectedItem(null, null);
           updatePreview(state.currentSpec);
-          deps.scheduleEditorDraftSave();
         }
-      );
-      addVariantButton.style.marginTop = "0";
-      addVariantButton.style.marginRight = "0";
-      variantRow.appendChild(addVariantButton);
-      var variantList = document.createElement("div");
-      variantList.style.marginTop = "10px";
-      variantSection.appendChild(variantList);
-      function refreshVariantSection() {
-        variantSection.style.display = state.variantEnabled ? "block" : "none";
-        variantToggle.checked = state.variantEnabled;
-      }
-      function renderVariantList() {
-        variantList.innerHTML = "";
-        if (state.variantItems.length == 0) {
+      },
+      onLabelDoubleClick: function(label) {
+        var nextBinding = window.prompt(
+          "\u8F93\u5165\u7ED1\u5B9A\u5C5E\u6027\u8DEF\u5F84\uFF0C\u4F8B\u5982 name \u6216 device.name",
+          label.binding
+        );
+        if (nextBinding == null) {
           return;
         }
-        state.variantItems.forEach(function(item) {
-          var row = document.createElement("div");
-          row.style.display = "flex";
-          row.style.alignItems = "center";
-          row.style.gap = "8px";
-          row.style.marginTop = "8px";
-          variantList.appendChild(row);
-          var keyInput = document.createElement("input");
-          keyInput.setAttribute("type", "text");
-          keyInput.setAttribute(
-            "placeholder",
-            "\u53D8\u4F53\u503C\uFF0C\u5982 standby / large / medium"
-          );
-          keyInput.style.width = "180px";
-          keyInput.style.boxSizing = "border-box";
-          keyInput.value = item.key;
-          row.appendChild(keyInput);
-          var uploadInput = document.createElement("input");
-          uploadInput.setAttribute("type", "file");
-          uploadInput.setAttribute("accept", ".svg,image/svg+xml");
-          uploadInput.style.display = "none";
-          row.appendChild(uploadInput);
-          var uploadButton = deps.createButton("\u4E0A\u4F20\u53D8\u4F53SVG", function() {
-            uploadInput.click();
-          });
-          uploadButton.style.marginTop = "0";
-          uploadButton.style.marginRight = "0";
-          row.appendChild(uploadButton);
-          var fileName = document.createElement("div");
-          fileName.style.flex = "1 1 auto";
-          fileName.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
-          fileName.innerText = item.name || "\u672A\u9009\u62E9\u53D8\u4F53SVG";
-          row.appendChild(fileName);
-          var deleteButton = deps.createButton("\u5220\u9664", function() {
-            state.variantItems = state.variantItems.filter(function(entry) {
-              return entry.id != item.id;
-            });
-            if (state.previewVariantId == item.id) {
-              state.previewVariantId = "";
-              updateSelectedItem(null, null);
-            }
-            renderVariantList();
-            if (deps.trim(state.uploadedPrimarySvg).length > 0) {
-              parseEditorSpec();
-            }
-            deps.scheduleEditorDraftSave();
-          });
-          deleteButton.style.marginTop = "0";
-          deleteButton.style.marginRight = "0";
-          row.appendChild(deleteButton);
-          mxEvent.addListener(keyInput, "change", function() {
-            var nextKey = deps.trim(keyInput.value);
-            if (hasVariantKey(nextKey, item.id)) {
-              deps.showStatus("\u540C\u4E00\u4E2A\u53D8\u4F53\u503C\u53EA\u80FD\u7ED1\u5B9A\u4E00\u5F20SVG", true);
-              keyInput.value = item.key;
-              return;
-            }
-            item.key = nextKey;
-            if (state.variantEnabled) {
-              validateVariantField(true);
-            }
-            if (deps.trim(state.uploadedPrimarySvg).length > 0) {
-              parseEditorSpec();
-            }
-            deps.scheduleEditorDraftSave();
-          });
-          bindSvgUpload(
-            uploadInput,
-            null,
-            null,
-            null,
-            "\u53D8\u4F53SVG \u5DF2\u52A0\u8F7D",
-            false,
-            function(svg, fileNameText) {
-              item.svg = svg;
-              item.name = fileNameText;
-              fileName.innerText = item.name || "\u672A\u9009\u62E9\u53D8\u4F53SVG";
-              deps.scheduleEditorDraftSave();
-            }
-          );
-        });
+        nextBinding = deps.trim(nextBinding);
+        if (hasLabelBinding(
+          { labels: getPreviewLayoutStore(state.currentSpec).labels },
+          nextBinding,
+          label.id
+        )) {
+          deps.showStatus("\u540C\u4E00\u4E2A\u5C5E\u6027\u53EA\u80FD\u7ED1\u5B9A\u4E00\u4E2A\u6587\u672C\u6846", true);
+          return;
+        }
+        label.binding = nextBinding;
+        updateSelectedItem("label", label.id);
+        updatePreview(state.currentSpec);
       }
-      state.schemaFields = deps.getDefaultSchemaFields();
-      var schemaSection = document.createElement("div");
-      schemaSection.style.marginTop = "10px";
-      container.appendChild(schemaSection);
-      var schemaHeader = document.createElement("div");
-      schemaHeader.style.display = "flex";
-      schemaHeader.style.alignItems = "center";
-      schemaHeader.style.marginBottom = "8px";
-      schemaSection.appendChild(schemaHeader);
-      var schemaTitle = document.createElement("div");
-      schemaTitle.style.fontWeight = "bold";
-      schemaTitle.innerText = "\u5C5E\u6027\u5B57\u6BB5\u914D\u7F6E";
-      schemaHeader.appendChild(schemaTitle);
-      var addFieldButton = deps.createButton("\u65B0\u589E\u5B57\u6BB5", function() {
-        state.schemaFields.push(
-          deps.normalizeSchemaField({
-            path: "",
-            type: "string",
-            required: false,
-            enumValues: []
-          })
-        );
-        renderSchemaFields();
-        deps.scheduleEditorDraftSave();
-      });
-      addFieldButton.style.marginTop = "0";
-      addFieldButton.style.marginLeft = "12px";
-      schemaHeader.appendChild(addFieldButton);
-      var schemaList = document.createElement("div");
-      schemaSection.appendChild(schemaList);
-      function renderSchemaFields() {
-        schemaList.innerHTML = "";
-        var hasEnumField = state.schemaFields.some(function(field) {
-          return deps.normalizeSchemaType(field.type) == "enum";
-        });
-        var header = document.createElement("div");
-        header.style.display = "grid";
-        header.style.gridTemplateColumns = hasEnumField ? "minmax(0, 1.6fr) 110px minmax(0, 1.2fr) 80px auto" : "minmax(0, 1.6fr) 110px 80px auto";
-        header.style.gap = "8px";
-        header.style.alignItems = "center";
-        header.style.marginBottom = "6px";
-        header.style.fontSize = "12px";
-        header.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
-        (hasEnumField ? ["\u5B57\u6BB5\u8DEF\u5F84", "\u7C7B\u578B", "\u679A\u4E3E\u503C", "\u5FC5\u586B", "\u64CD\u4F5C"] : ["\u5B57\u6BB5\u8DEF\u5F84", "\u7C7B\u578B", "\u5FC5\u586B", "\u64CD\u4F5C"]).forEach(function(text) {
-          var cell = document.createElement("div");
-          cell.innerText = text;
-          header.appendChild(cell);
-        });
-        schemaList.appendChild(header);
-        state.schemaFields.forEach(function(field) {
-          var row = document.createElement("div");
-          row.style.display = "grid";
-          row.style.gap = "8px";
-          row.style.alignItems = "center";
-          row.style.marginBottom = "8px";
-          schemaList.appendChild(row);
-          var pathInput = document.createElement("input");
-          pathInput.setAttribute("type", "text");
-          pathInput.setAttribute(
-            "placeholder",
-            "\u5B57\u6BB5\u8DEF\u5F84\uFF0C\u5982 name \u6216 device.mode"
-          );
-          pathInput.value = field.path;
-          row.appendChild(pathInput);
-          var typeSelect = document.createElement("select");
-          ["string", "number", "boolean", "enum"].forEach(function(type) {
-            var option = document.createElement("option");
-            option.value = type;
-            option.innerText = type;
-            typeSelect.appendChild(option);
-          });
-          typeSelect.value = field.type;
-          row.appendChild(typeSelect);
-          var enumWrap = document.createElement("div");
-          enumWrap.style.minWidth = "0";
-          row.appendChild(enumWrap);
-          var enumInput = document.createElement("input");
-          enumInput.setAttribute("type", "text");
-          enumInput.setAttribute("placeholder", "\u679A\u4E3E\u503C\uFF0C\u9017\u53F7\u5206\u9694");
-          enumInput.value = (field.enumValues || []).join(", ");
-          enumInput.style.width = "100%";
-          enumInput.style.boxSizing = "border-box";
-          enumWrap.appendChild(enumInput);
-          var requiredWrap = document.createElement("label");
-          requiredWrap.style.display = "flex";
-          requiredWrap.style.alignItems = "center";
-          requiredWrap.style.gap = "4px";
-          var requiredInput = document.createElement("input");
-          requiredInput.setAttribute("type", "checkbox");
-          requiredInput.checked = !!field.required;
-          requiredWrap.appendChild(requiredInput);
-          var requiredText = document.createElement("span");
-          requiredText.innerText = "\u5FC5\u586B";
-          requiredWrap.appendChild(requiredText);
-          row.appendChild(requiredWrap);
-          var deleteFieldButton = deps.createButton("\u5220\u9664", function() {
-            state.schemaFields = state.schemaFields.filter(function(entry) {
-              return entry.id != field.id;
-            });
-            renderSchemaFields();
-            updateVariantFieldState(false);
-            deps.scheduleEditorDraftSave();
-          });
-          deleteFieldButton.style.marginTop = "0";
-          deleteFieldButton.style.marginRight = "0";
-          deleteFieldButton.style.padding = "4px 8px";
-          deleteFieldButton.style.minWidth = "64px";
-          deleteFieldButton.style.whiteSpace = "nowrap";
-          row.appendChild(deleteFieldButton);
-          function refreshRowLayout() {
-            var enumVisible = deps.normalizeSchemaType(typeSelect.value) == "enum";
-            row.style.gridTemplateColumns = enumVisible ? "minmax(0, 1.6fr) 110px minmax(0, 1.2fr) 80px auto" : "minmax(0, 1.6fr) 110px 80px auto";
-            enumWrap.style.display = enumVisible ? "" : "none";
-          }
-          function syncField(showError) {
-            field.path = deps.trim(pathInput.value);
-            field.type = deps.normalizeSchemaType(typeSelect.value);
-            field.required = requiredInput.checked;
-            field.enumValues = deps.normalizeEnumOptions(enumInput.value);
-            var valid = field.path.length > 0 && deps.isValidFieldPath(field.path) && state.schemaFields.filter(function(entry) {
-              return deps.trim(entry.path) == field.path;
-            }).length == 1 && (field.type != "enum" || field.enumValues.length > 0);
-            pathInput.style.borderColor = valid ? "" : "#b3261e";
-            enumInput.style.borderColor = field.type != "enum" || field.enumValues.length > 0 ? "" : "#b3261e";
-            if (!valid && showError) {
-              deps.showStatus("\u5B57\u6BB5\u914D\u7F6E\u6709\u8BEF\uFF0C\u8BF7\u68C0\u67E5\u8DEF\u5F84\u552F\u4E00\u6027\u548C\u679A\u4E3E\u503C", true);
-            }
-            updateVariantFieldState(false);
-            deps.scheduleEditorDraftSave();
-          }
-          mxEvent.addListener(pathInput, "input", function() {
-            syncField(false);
-          });
-          mxEvent.addListener(typeSelect, "change", function() {
-            refreshRowLayout();
-            syncField(false);
-          });
-          mxEvent.addListener(enumInput, "input", function() {
-            syncField(false);
-          });
-          mxEvent.addListener(requiredInput, "change", function() {
-            syncField(false);
-          });
-          refreshRowLayout();
-        });
+    });
+  }
+  function bindSvgUpload(input, nameNode, svgKey, nameKey, successMessage, updateSize, onLoaded) {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    mxEvent.addListener(input, "change", function() {
+      if (input.files == null || input.files.length == 0) {
+        return;
       }
-      renderSchemaFields();
-      function rebuildEditorUi(specOrNull) {
-        renderSchemaFields();
-        refreshVariantSection();
-        renderVariantList();
-        updateTemplateNameState(false);
-        updateVariantFieldState(false);
-        if (specOrNull != null) {
-          updatePreview(specOrNull);
-        } else {
-          updatePreview(null);
-        }
-      }
-      function recalcNextItemId() {
-        var maxId = 0;
-        function scanId(id) {
-          var match = /:(\d+)$/.exec(deps.trim(id));
-          if (match != null) {
-            maxId = Math.max(maxId, parseInt(match[1], 10) || 0);
-          }
-        }
-        function scanLayout(layout) {
-          var i;
-          var ports = deps.normalizePortLayout(layout != null ? layout.ports : []);
-          var labels = deps.normalizeLabels(layout != null ? layout.labels : []);
-          for (i = 0; i < ports.length; i++) {
-            scanId(ports[i].id);
-          }
-          for (i = 0; i < labels.length; i++) {
-            scanId(labels[i].id);
-          }
-        }
-        scanLayout(state.currentSpec);
-        (state.variantItems || []).forEach(function(item) {
-          scanId(item.id);
-          scanLayout(item);
-        });
-        state.nextId = maxId + 1;
-      }
-      function loadTemplateIntoEditor(template, options) {
-        var spec = deps.normalizeSpec(deps.cloneJson(template));
-        var layouts = deps.normalizeVariantLayouts(spec.variantLayouts);
-        var keys = Object.keys(spec.svgVariants || {});
-        options = options || {};
-        state.symbolIdTouched = !options.allowAutoSymbolId;
-        state.symbolIdInput.value = deps.trim(spec.symbolId).length > 0 ? spec.symbolId : deps.generateSymbolId(
-          spec.templateName || spec.title || "electrical-symbol"
-        );
-        state.templateNameInput.value = deps.trim(spec.templateName || spec.title) || "\u7535\u6C14\u56FE\u5143";
-        state.uploadedPrimarySvg = spec.svg || "";
-        state.uploadedPrimarySvgName = deps.trim(options.primarySvgName || "") || (deps.trim(spec.templateName || spec.title).length > 0 ? deps.trim(spec.templateName || spec.title) + ".svg" : "\u5DF2\u52A0\u8F7D\u9ED8\u8BA4SVG");
-        state.uploadedPrimarySvgSize = spec.size != null ? deps.cloneJson(spec.size) : deps.extractSvgSize(spec.svg || "");
-        if (state.templateWidthInput != null) {
-          state.templateWidthInput.value = String(spec.size.width);
-        }
-        if (state.templateHeightInput != null) {
-          state.templateHeightInput.value = String(spec.size.height);
-        }
-        primaryName.innerText = deps.trim(state.uploadedPrimarySvg).length > 0 ? state.uploadedPrimarySvgName : "\u672A\u9009\u62E9\u9ED8\u8BA4SVG";
-        state.schemaFields = deps.flattenSchemaFields(spec.schema, "", []).map(
-          function(field) {
-            return deps.normalizeSchemaField(field);
-          }
-        );
-        if (state.schemaFields.length == 0) {
-          state.schemaFields = deps.getDefaultSchemaFields();
-        }
-        state.variantEnabled = deps.trim(spec.variantField).length > 0 || Object.keys(spec.svgVariants || {}).length > 0;
-        state.variantFieldInput.value = deps.trim(spec.variantField);
-        state.lastValidVariantField = deps.trim(spec.variantField);
-        state.previewVariantId = "";
-        state.selectedItem = null;
-        state.currentSpec = spec;
-        state.variantItems = keys.map(function(key) {
-          var variantLayout = layouts[key] || {};
-          return {
-            id: deps.nextItemId("variant"),
-            key,
-            svg: spec.svgVariants[key],
-            name: key + ".svg",
-            ports: deps.normalizePortLayout(variantLayout.ports || []),
-            labels: deps.normalizeLabels(variantLayout.labels || [])
-          };
-        });
-        recalcNextItemId();
-        rebuildEditorUi(spec);
-        deps.scheduleEditorDraftSave();
-      }
-      function restoreDraftIfExists() {
-        var draft = deps.loadEditorDraft();
-        var draftSpec;
-        if (draft == null) {
-          return false;
-        }
+      var reader = new FileReader();
+      reader.onload = function() {
         try {
-          state.symbolIdTouched = !!draft.symbolIdTouched;
-          state.symbolIdInput.value = deps.trim(draft.symbolId).length > 0 ? draft.symbolId : deps.generateSymbolId("electrical-symbol");
-          state.templateNameInput.value = deps.trim(draft.templateName).length > 0 ? draft.templateName : "\u7535\u6C14\u56FE\u5143";
-          state.uploadedPrimarySvg = deps.trim(draft.uploadedPrimarySvg);
-          state.uploadedPrimarySvgName = deps.trim(draft.uploadedPrimarySvgName);
-          state.uploadedPrimarySvgSize = deps.isObject(draft.uploadedPrimarySvgSize) ? deps.cloneJson(draft.uploadedPrimarySvgSize) : null;
-          if (state.templateWidthInput != null) {
-            state.templateWidthInput.value = deps.trim(draft.templateWidth).length > 0 ? deps.trim(draft.templateWidth) : String(
-              draft.currentSpec != null && draft.currentSpec.size != null ? draft.currentSpec.size.width : state.uploadedPrimarySvgSize != null ? state.uploadedPrimarySvgSize.width : 120
-            );
+          var svg = deps.validateSvg(reader.result);
+          var fileName = input.files[0].name;
+          if (svgKey != null) {
+            state[svgKey] = svg;
           }
-          if (state.templateHeightInput != null) {
-            state.templateHeightInput.value = deps.trim(draft.templateHeight).length > 0 ? deps.trim(draft.templateHeight) : String(
-              draft.currentSpec != null && draft.currentSpec.size != null ? draft.currentSpec.size.height : state.uploadedPrimarySvgSize != null ? state.uploadedPrimarySvgSize.height : 80
-            );
+          if (nameKey != null) {
+            state[nameKey] = fileName;
           }
-          primaryName.innerText = deps.trim(state.uploadedPrimarySvg).length > 0 ? state.uploadedPrimarySvgName || "\u5DF2\u52A0\u8F7D\u9ED8\u8BA4SVG" : "\u672A\u9009\u62E9\u9ED8\u8BA4SVG";
-          state.variantEnabled = !!draft.variantEnabled;
-          state.variantFieldInput.value = deps.trim(draft.variantField);
-          state.lastValidVariantField = deps.trim(draft.variantField);
-          state.previewVariantId = deps.trim(draft.previewVariantId);
-          state.schemaFields = Array.isArray(draft.schemaFields) ? draft.schemaFields.map(function(field) {
-            return deps.normalizeSchemaField(field);
-          }) : deps.getDefaultSchemaFields();
-          state.variantItems = Array.isArray(draft.variantItems) ? draft.variantItems.map(function(item) {
-            return {
-              id: deps.trim(item.id) || deps.nextItemId("variant"),
-              key: deps.trim(item.key),
-              svg: deps.trim(item.svg),
-              name: deps.trim(item.name),
-              ports: deps.normalizePortLayout(item.ports || []),
-              labels: deps.normalizeLabels(item.labels || [])
-            };
-          }) : [];
-          draftSpec = draft.currentSpec != null && deps.trim(draft.currentSpec.svg || draft.uploadedPrimarySvg).length > 0 ? deps.normalizeSpec(deps.cloneJson(draft.currentSpec)) : null;
-          state.currentSpec = draftSpec;
-          recalcNextItemId();
-          rebuildEditorUi(draftSpec);
-          deps.showStatus("\u5DF2\u6062\u590D\u4E0A\u6B21\u672A\u4FDD\u5B58\u7684\u8349\u7A3F", false);
-          return true;
+          if (typeof onLoaded === "function") {
+            onLoaded(svg, fileName);
+          }
+          if (updateSize) {
+            state.uploadedPrimarySvgSize = deps.extractSvgSize(svg);
+          }
+          if (nameNode != null && nameKey != null) {
+            nameNode.innerText = state[nameKey];
+          }
+          if (deps.trim(state.uploadedPrimarySvg).length > 0) {
+            parseEditorSpec();
+          } else {
+            updatePreview(null);
+          }
+          deps.scheduleEditorDraftSave();
+          deps.showStatus(successMessage, false);
         } catch (e) {
-          deps.clearEditorDraft();
-          return false;
+          deps.showStatus(e.message || String(e), true);
         }
+      };
+      reader.readAsText(input.files[0], "utf-8");
+    });
+  }
+  function createWindow() {
+    var runtime = getTemplateEditorRuntime();
+    var deps = runtime.deps;
+    var ctx = runtime.ctx;
+    var state = runtime.state;
+    deps.clearDraftSaveTimer();
+    state.nextId = 1;
+    state.symbolIdTouched = false;
+    state.variantEnabled = false;
+    state.lastValidVariantField = "";
+    state.variantItems = [];
+    state.currentSpec = null;
+    state.selectedItem = null;
+    state.previewVariantId = "";
+    state.previewMode = "select";
+    state.uploadedPrimarySvg = "";
+    state.uploadedPrimarySvgName = "";
+    state.uploadedPrimarySvgSize = null;
+    var container = document.createElement("div");
+    container.style.width = "100%";
+    container.style.height = "100%";
+    container.style.boxSizing = "border-box";
+    container.style.padding = "12px";
+    container.style.overflow = "auto";
+    container.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
+    var title = document.createElement("div");
+    title.style.fontWeight = "bold";
+    title.style.marginBottom = "8px";
+    title.innerText = "\u7535\u6C14\u56FE\u5143\u7C7B\u578B\u5B9A\u4E49";
+    container.appendChild(title);
+    var symbolRow = document.createElement("div");
+    symbolRow.style.display = "flex";
+    symbolRow.style.alignItems = "center";
+    symbolRow.style.marginBottom = "10px";
+    container.appendChild(symbolRow);
+    var symbolLabel = document.createElement("div");
+    symbolLabel.style.width = "90px";
+    symbolLabel.style.flex = "0 0 90px";
+    symbolLabel.innerText = "\u56FE\u5143\u7C7B\u578BID";
+    symbolRow.appendChild(symbolLabel);
+    state.symbolIdInput = document.createElement("input");
+    state.symbolIdInput.setAttribute("type", "text");
+    state.symbolIdInput.style.flex = "1 1 auto";
+    state.symbolIdInput.style.boxSizing = "border-box";
+    state.symbolIdInput.value = deps.generateSymbolId("electrical-symbol");
+    symbolRow.appendChild(state.symbolIdInput);
+    mxEvent.addListener(state.symbolIdInput, "input", function() {
+      state.symbolIdTouched = true;
+      deps.scheduleEditorDraftSave();
+    });
+    var nameRow = document.createElement("div");
+    nameRow.style.display = "flex";
+    nameRow.style.alignItems = "center";
+    nameRow.style.marginBottom = "10px";
+    container.appendChild(nameRow);
+    var nameLabel = document.createElement("div");
+    nameLabel.style.width = "90px";
+    nameLabel.style.flex = "0 0 90px";
+    nameLabel.innerText = "\u56FE\u5143\u7C7B\u578B\u540D\u79F0";
+    nameRow.appendChild(nameLabel);
+    state.templateNameInput = document.createElement("input");
+    state.templateNameInput.setAttribute("type", "text");
+    state.templateNameInput.style.flex = "1 1 auto";
+    state.templateNameInput.style.boxSizing = "border-box";
+    state.templateNameInput.value = "\u7535\u6C14\u56FE\u5143";
+    nameRow.appendChild(state.templateNameInput);
+    var sizeRow = document.createElement("div");
+    sizeRow.style.display = "flex";
+    sizeRow.style.alignItems = "center";
+    sizeRow.style.gap = "8px";
+    sizeRow.style.marginBottom = "10px";
+    container.appendChild(sizeRow);
+    var sizeLabel = document.createElement("div");
+    sizeLabel.style.width = "90px";
+    sizeLabel.style.flex = "0 0 90px";
+    sizeLabel.innerText = "\u9ED8\u8BA4\u5BBD\u9AD8";
+    sizeRow.appendChild(sizeLabel);
+    state.templateWidthInput = document.createElement("input");
+    state.templateWidthInput.setAttribute("type", "number");
+    state.templateWidthInput.setAttribute("min", "20");
+    state.templateWidthInput.style.width = "120px";
+    state.templateWidthInput.value = "120";
+    sizeRow.appendChild(state.templateWidthInput);
+    var sizeSplit = document.createElement("div");
+    sizeSplit.innerText = "x";
+    sizeRow.appendChild(sizeSplit);
+    state.templateHeightInput = document.createElement("input");
+    state.templateHeightInput.setAttribute("type", "number");
+    state.templateHeightInput.setAttribute("min", "20");
+    state.templateHeightInput.style.width = "120px";
+    state.templateHeightInput.value = "80";
+    sizeRow.appendChild(state.templateHeightInput);
+    var topRow = document.createElement("div");
+    topRow.style.display = "flex";
+    topRow.style.alignItems = "center";
+    topRow.style.flexWrap = "wrap";
+    topRow.style.rowGap = "8px";
+    container.appendChild(topRow);
+    var primaryInput = document.createElement("input");
+    primaryInput.setAttribute("type", "file");
+    primaryInput.setAttribute("accept", ".svg,image/svg+xml");
+    primaryInput.style.display = "none";
+    topRow.appendChild(primaryInput);
+    var primaryButton = deps.createButton(
+      mxResources.get("electricalUploadPrimarySvg"),
+      function() {
+        primaryInput.click();
       }
-      state.preview = document.createElement("div");
-      state.preview.style.marginTop = "10px";
-      state.preview.style.height = "328px";
-      state.preview.style.border = "1px solid #d0d7de";
-      state.preview.style.display = "block";
-      state.preview.style.boxSizing = "border-box";
-      state.preview.style.overflow = "hidden";
-      state.preview.style.background = Editor.isDarkMode() ? "#111111" : "#fafafa";
-      container.appendChild(state.preview);
-      var buttons = document.createElement("div");
-      buttons.style.marginTop = "10px";
-      container.appendChild(buttons);
-      var previewButton = deps.createButton(
-        mxResources.get("electricalPreview"),
-        function() {
-          parseEditorSpec();
+    );
+    primaryButton.style.marginTop = "0";
+    topRow.appendChild(primaryButton);
+    var primaryName = document.createElement("div");
+    primaryName.style.marginLeft = "8px";
+    primaryName.style.marginRight = "12px";
+    primaryName.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+    primaryName.innerText = "\u672A\u9009\u62E9\u9ED8\u8BA4SVG";
+    topRow.appendChild(primaryName);
+    var variantToggleRow = document.createElement("div");
+    variantToggleRow.style.display = "flex";
+    variantToggleRow.style.alignItems = "center";
+    variantToggleRow.style.gap = "8px";
+    variantToggleRow.style.marginTop = "10px";
+    container.appendChild(variantToggleRow);
+    var variantToggle = document.createElement("input");
+    variantToggle.setAttribute("type", "checkbox");
+    variantToggleRow.appendChild(variantToggle);
+    var variantToggleLabel = document.createElement("div");
+    variantToggleLabel.innerText = mxResources.get("electricalEnableVariants");
+    variantToggleRow.appendChild(variantToggleLabel);
+    var variantSection = document.createElement("div");
+    variantSection.style.display = "none";
+    container.appendChild(variantSection);
+    var variantRow = document.createElement("div");
+    variantRow.style.display = "flex";
+    variantRow.style.alignItems = "center";
+    variantRow.style.gap = "8px";
+    variantRow.style.marginTop = "10px";
+    variantSection.appendChild(variantRow);
+    var variantLabel = document.createElement("div");
+    variantLabel.style.width = "90px";
+    variantLabel.style.flex = "0 0 90px";
+    variantLabel.innerText = "\u53D8\u4F53\u5B57\u6BB5";
+    variantRow.appendChild(variantLabel);
+    state.variantFieldInput = document.createElement("input");
+    state.variantFieldInput.setAttribute("type", "text");
+    state.variantFieldInput.style.flex = "1 1 auto";
+    state.variantFieldInput.style.boxSizing = "border-box";
+    state.variantFieldInput.value = "";
+    state.variantFieldInput.setAttribute(
+      "placeholder",
+      "\u8BF7\u8F93\u5165\u7C7B\u578B\u5B9A\u4E49\u91CC\u5DF2\u5B58\u5728\u7684\u5B57\u6BB5\u8DEF\u5F84"
+    );
+    variantRow.appendChild(state.variantFieldInput);
+    var addVariantButton = deps.createButton(
+      mxResources.get("electricalAddVariantSvg"),
+      function() {
+        if (state.variantEnabled && validateVariantField(true) == null) {
+          return;
         }
-      );
-      buttons.appendChild(previewButton);
-      var addLibraryButton = deps.createButton(
-        mxResources.get("electricalAddLibrary"),
-        function() {
-          deps.addToLibrary(parseEditorSpec(), function() {
-            deps.clearEditorDraft();
-            if (state.window != null && state.window.window != null) {
-              state.window.window.destroy();
-            }
-          });
-        }
-      );
-      buttons.appendChild(addLibraryButton);
-      state.status = document.createElement("div");
-      state.status.style.marginTop = "10px";
-      state.status.style.minHeight = "18px";
-      container.appendChild(state.status);
-      function setButtonEnabled(button, enabled) {
-        button.disabled = !enabled;
-        button.style.opacity = enabled ? "1" : "0.45";
-        button.style.pointerEvents = enabled ? "auto" : "none";
-      }
-      function updateTemplateNameState(showError) {
-        var name = deps.trim(
-          state.templateNameInput != null ? state.templateNameInput.value : ""
-        );
-        var symbolId = deps.trim(
-          state.symbolIdInput != null ? state.symbolIdInput.value : ""
-        );
-        var valid = name.length > 0 && !deps.isTemplateNameTaken(name, symbolId);
-        if (state.templateNameInput != null) {
-          state.templateNameInput.style.borderColor = !valid ? "#b3261e" : "";
-          state.templateNameInput.style.boxShadow = !valid ? "0 0 0 1px rgba(179,38,30,0.2)" : "";
-          state.templateNameInput.title = name.length == 0 ? "\u56FE\u5143\u7C7B\u578B\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A" : !valid ? "\u56FE\u5143\u7C7B\u578B\u540D\u79F0\u4E0D\u80FD\u91CD\u590D" : "";
-        }
-        setButtonEnabled(addLibraryButton, valid);
-        if (!valid && showError) {
-          deps.showStatus(
-            name.length == 0 ? "\u8BF7\u5148\u586B\u5199\u56FE\u5143\u7C7B\u578B\u540D\u79F0" : "\u56FE\u5143\u7C7B\u578B\u540D\u79F0\u4E0D\u80FD\u91CD\u590D",
-            true
-          );
-        }
-        return valid;
-      }
-      function updateVariantFieldState(showError) {
-        var valid = true;
-        if (state.variantEnabled) {
-          valid = validateVariantField(showError) != null;
-        }
-        if (state.variantFieldInput != null) {
-          state.variantFieldInput.style.borderColor = !valid ? "#b3261e" : "";
-          state.variantFieldInput.style.boxShadow = !valid ? "0 0 0 1px rgba(179,38,30,0.2)" : "";
-          state.variantFieldInput.title = !valid ? "\u53D8\u4F53\u5B57\u6BB5\u5FC5\u987B\u5148\u5728 JSON \u7C7B\u578B\u5B9A\u4E49\u4E2D\u58F0\u660E" : "";
-        }
-        setButtonEnabled(addVariantButton, !state.variantEnabled || valid);
-        setButtonEnabled(previewButton, !state.variantEnabled || valid);
-        setButtonEnabled(
-          addLibraryButton,
-          (!state.variantEnabled || valid) && updateTemplateNameState(false)
-        );
-        return valid;
-      }
-      bindSvgUpload(
-        primaryInput,
-        primaryName,
-        "uploadedPrimarySvg",
-        "uploadedPrimarySvgName",
-        "\u9ED8\u8BA4SVG \u5DF2\u52A0\u8F7D",
-        true,
-        function() {
-          state.previewVariantId = "";
-          updateSelectedItem(null, null);
-          if (state.templateWidthInput != null && state.uploadedPrimarySvgSize != null) {
-            state.templateWidthInput.value = String(
-              state.uploadedPrimarySvgSize.width
-            );
-          }
-          if (state.templateHeightInput != null && state.uploadedPrimarySvgSize != null) {
-            state.templateHeightInput.value = String(
-              state.uploadedPrimarySvgSize.height
-            );
-          }
-        }
-      );
-      mxEvent.addListener(primaryInput, "change", function() {
-        if (state.symbolIdInput != null && !state.symbolIdTouched) {
-          state.symbolIdInput.value = deps.generateSymbolId(
-            state.uploadedPrimarySvgName || "electrical-symbol"
-          );
-          updateTemplateNameState(false);
-        }
-      });
-      mxEvent.addListener(state.templateNameInput, "input", function() {
-        updateTemplateNameState(false);
+        state.variantItems.push({
+          id: deps.nextItemId("variant"),
+          key: "",
+          svg: "",
+          name: "",
+          ports: deps.cloneJson(
+            state.currentSpec != null ? state.currentSpec.ports || [] : []
+          ),
+          labels: deps.cloneJson(
+            state.currentSpec != null ? state.currentSpec.labels || [] : []
+          )
+        });
+        renderVariantList();
+        updateSelectedItem(null, null);
+        updatePreview(state.currentSpec);
         deps.scheduleEditorDraftSave();
-      });
-      mxEvent.addListener(state.templateNameInput, "blur", function() {
-        updateTemplateNameState(true);
-      });
-      mxEvent.addListener(state.templateWidthInput, "change", function() {
-        if (deps.trim(state.uploadedPrimarySvg).length > 0) {
-          try {
-            parseEditorSpec();
-          } catch (e) {
+      }
+    );
+    addVariantButton.style.marginTop = "0";
+    addVariantButton.style.marginRight = "0";
+    variantRow.appendChild(addVariantButton);
+    var variantList = document.createElement("div");
+    variantList.style.marginTop = "10px";
+    variantSection.appendChild(variantList);
+    function refreshVariantSection() {
+      variantSection.style.display = state.variantEnabled ? "block" : "none";
+      variantToggle.checked = state.variantEnabled;
+    }
+    function renderVariantList() {
+      variantList.innerHTML = "";
+      if (state.variantItems.length == 0) {
+        return;
+      }
+      state.variantItems.forEach(function(item) {
+        var row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.alignItems = "center";
+        row.style.gap = "8px";
+        row.style.marginTop = "8px";
+        variantList.appendChild(row);
+        var keyInput = document.createElement("input");
+        keyInput.setAttribute("type", "text");
+        keyInput.setAttribute(
+          "placeholder",
+          "\u53D8\u4F53\u503C\uFF0C\u5982 standby / large / medium"
+        );
+        keyInput.style.width = "180px";
+        keyInput.style.boxSizing = "border-box";
+        keyInput.value = item.key;
+        row.appendChild(keyInput);
+        var uploadInput = document.createElement("input");
+        uploadInput.setAttribute("type", "file");
+        uploadInput.setAttribute("accept", ".svg,image/svg+xml");
+        uploadInput.style.display = "none";
+        row.appendChild(uploadInput);
+        var uploadButton = deps.createButton("\u4E0A\u4F20\u53D8\u4F53SVG", function() {
+          uploadInput.click();
+        });
+        uploadButton.style.marginTop = "0";
+        uploadButton.style.marginRight = "0";
+        row.appendChild(uploadButton);
+        var fileName = document.createElement("div");
+        fileName.style.flex = "1 1 auto";
+        fileName.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+        fileName.innerText = item.name || "\u672A\u9009\u62E9\u53D8\u4F53SVG";
+        row.appendChild(fileName);
+        var deleteButton = deps.createButton("\u5220\u9664", function() {
+          state.variantItems = state.variantItems.filter(function(entry) {
+            return entry.id != item.id;
+          });
+          if (state.previewVariantId == item.id) {
+            state.previewVariantId = "";
+            updateSelectedItem(null, null);
           }
-        } else {
-          deps.scheduleEditorDraftSave();
-        }
-      });
-      mxEvent.addListener(state.templateHeightInput, "change", function() {
-        if (deps.trim(state.uploadedPrimarySvg).length > 0) {
-          try {
+          renderVariantList();
+          if (deps.trim(state.uploadedPrimarySvg).length > 0) {
             parseEditorSpec();
-          } catch (e) {
           }
-        } else {
           deps.scheduleEditorDraftSave();
-        }
-      });
-      mxEvent.addListener(state.variantFieldInput, "change", function() {
-        var currentValue = deps.trim(state.variantFieldInput.value);
-        if (state.variantEnabled) {
-          if (!updateVariantFieldState(true)) {
+        });
+        deleteButton.style.marginTop = "0";
+        deleteButton.style.marginRight = "0";
+        row.appendChild(deleteButton);
+        mxEvent.addListener(keyInput, "change", function() {
+          var nextKey = deps.trim(keyInput.value);
+          if (hasVariantKey(nextKey, item.id)) {
+            deps.showStatus("\u540C\u4E00\u4E2A\u53D8\u4F53\u503C\u53EA\u80FD\u7ED1\u5B9A\u4E00\u5F20SVG", true);
+            keyInput.value = item.key;
             return;
           }
-          state.lastValidVariantField = currentValue;
-        }
-        if (deps.trim(state.uploadedPrimarySvg).length > 0) {
-          parseEditorSpec();
-        }
-        deps.scheduleEditorDraftSave();
-      });
-      mxEvent.addListener(state.variantFieldInput, "input", function() {
-        updateVariantFieldState(false);
-        deps.scheduleEditorDraftSave();
-      });
-      mxEvent.addListener(state.variantFieldInput, "blur", function() {
-        updateVariantFieldState(true);
-      });
-      mxEvent.addListener(variantToggle, "change", function() {
-        state.variantEnabled = variantToggle.checked;
-        if (state.variantEnabled) {
-          var validField = validateVariantField(false);
-          if (validField != null) {
-            state.lastValidVariantField = validField;
+          item.key = nextKey;
+          if (state.variantEnabled) {
+            validateVariantField(true);
           }
-        } else {
-          state.previewVariantId = "";
-          updateSelectedItem(null, null);
-        }
-        refreshVariantSection();
-        updateVariantFieldState(false);
-        deps.scheduleEditorDraftSave();
-        if (deps.trim(state.uploadedPrimarySvg).length > 0) {
-          try {
+          if (deps.trim(state.uploadedPrimarySvg).length > 0) {
             parseEditorSpec();
-          } catch (e) {
           }
-        }
+          deps.scheduleEditorDraftSave();
+        });
+        bindSvgUpload(
+          uploadInput,
+          null,
+          null,
+          null,
+          "\u53D8\u4F53SVG \u5DF2\u52A0\u8F7D",
+          false,
+          function(svg, fileNameText) {
+            item.svg = svg;
+            item.name = fileNameText;
+            fileName.innerText = item.name || "\u672A\u9009\u62E9\u53D8\u4F53SVG";
+            deps.scheduleEditorDraftSave();
+          }
+        );
       });
+    }
+    state.schemaFields = deps.getDefaultSchemaFields();
+    var schemaSection = document.createElement("div");
+    schemaSection.style.marginTop = "10px";
+    container.appendChild(schemaSection);
+    var schemaHeader = document.createElement("div");
+    schemaHeader.style.display = "flex";
+    schemaHeader.style.alignItems = "center";
+    schemaHeader.style.marginBottom = "8px";
+    schemaSection.appendChild(schemaHeader);
+    var schemaTitle = document.createElement("div");
+    schemaTitle.style.fontWeight = "bold";
+    schemaTitle.innerText = "\u5C5E\u6027\u5B57\u6BB5\u914D\u7F6E";
+    schemaHeader.appendChild(schemaTitle);
+    var addFieldButton = deps.createButton("\u65B0\u589E\u5B57\u6BB5", function() {
+      state.schemaFields.push(
+        deps.normalizeSchemaField({
+          path: "",
+          type: "string",
+          required: false,
+          enumValues: []
+        })
+      );
+      renderSchemaFields();
+      deps.scheduleEditorDraftSave();
+    });
+    addFieldButton.style.marginTop = "0";
+    addFieldButton.style.marginLeft = "12px";
+    schemaHeader.appendChild(addFieldButton);
+    var schemaList = document.createElement("div");
+    schemaSection.appendChild(schemaList);
+    function renderSchemaFields() {
+      schemaList.innerHTML = "";
+      var hasEnumField = state.schemaFields.some(function(field) {
+        return deps.normalizeSchemaType(field.type) == "enum";
+      });
+      var header = document.createElement("div");
+      header.style.display = "grid";
+      header.style.gridTemplateColumns = hasEnumField ? "minmax(0, 1.6fr) 110px minmax(0, 1.2fr) 80px auto" : "minmax(0, 1.6fr) 110px 80px auto";
+      header.style.gap = "8px";
+      header.style.alignItems = "center";
+      header.style.marginBottom = "6px";
+      header.style.fontSize = "12px";
+      header.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+      (hasEnumField ? ["\u5B57\u6BB5\u8DEF\u5F84", "\u7C7B\u578B", "\u679A\u4E3E\u503C", "\u5FC5\u586B", "\u64CD\u4F5C"] : ["\u5B57\u6BB5\u8DEF\u5F84", "\u7C7B\u578B", "\u5FC5\u586B", "\u64CD\u4F5C"]).forEach(function(text) {
+        var cell = document.createElement("div");
+        cell.innerText = text;
+        header.appendChild(cell);
+      });
+      schemaList.appendChild(header);
+      state.schemaFields.forEach(function(field) {
+        var row = document.createElement("div");
+        row.style.display = "grid";
+        row.style.gap = "8px";
+        row.style.alignItems = "center";
+        row.style.marginBottom = "8px";
+        schemaList.appendChild(row);
+        var pathInput = document.createElement("input");
+        pathInput.setAttribute("type", "text");
+        pathInput.setAttribute("placeholder", "\u5B57\u6BB5\u8DEF\u5F84\uFF0C\u5982 name \u6216 device.mode");
+        pathInput.value = field.path;
+        row.appendChild(pathInput);
+        var typeSelect = document.createElement("select");
+        ["string", "number", "boolean", "enum"].forEach(function(type) {
+          var option = document.createElement("option");
+          option.value = type;
+          option.innerText = type;
+          typeSelect.appendChild(option);
+        });
+        typeSelect.value = field.type;
+        row.appendChild(typeSelect);
+        var enumWrap = document.createElement("div");
+        enumWrap.style.minWidth = "0";
+        row.appendChild(enumWrap);
+        var enumInput = document.createElement("input");
+        enumInput.setAttribute("type", "text");
+        enumInput.setAttribute("placeholder", "\u679A\u4E3E\u503C\uFF0C\u9017\u53F7\u5206\u9694");
+        enumInput.value = (field.enumValues || []).join(", ");
+        enumInput.style.width = "100%";
+        enumInput.style.boxSizing = "border-box";
+        enumWrap.appendChild(enumInput);
+        var requiredWrap = document.createElement("label");
+        requiredWrap.style.display = "flex";
+        requiredWrap.style.alignItems = "center";
+        requiredWrap.style.gap = "4px";
+        var requiredInput = document.createElement("input");
+        requiredInput.setAttribute("type", "checkbox");
+        requiredInput.checked = !!field.required;
+        requiredWrap.appendChild(requiredInput);
+        var requiredText = document.createElement("span");
+        requiredText.innerText = "\u5FC5\u586B";
+        requiredWrap.appendChild(requiredText);
+        row.appendChild(requiredWrap);
+        var deleteFieldButton = deps.createButton("\u5220\u9664", function() {
+          state.schemaFields = state.schemaFields.filter(function(entry) {
+            return entry.id != field.id;
+          });
+          renderSchemaFields();
+          updateVariantFieldState(false);
+          deps.scheduleEditorDraftSave();
+        });
+        deleteFieldButton.style.marginTop = "0";
+        deleteFieldButton.style.marginRight = "0";
+        deleteFieldButton.style.padding = "4px 8px";
+        deleteFieldButton.style.minWidth = "64px";
+        deleteFieldButton.style.whiteSpace = "nowrap";
+        row.appendChild(deleteFieldButton);
+        function refreshRowLayout() {
+          var enumVisible = deps.normalizeSchemaType(typeSelect.value) == "enum";
+          row.style.gridTemplateColumns = enumVisible ? "minmax(0, 1.6fr) 110px minmax(0, 1.2fr) 80px auto" : "minmax(0, 1.6fr) 110px 80px auto";
+          enumWrap.style.display = enumVisible ? "" : "none";
+        }
+        function syncField(showError) {
+          field.path = deps.trim(pathInput.value);
+          field.type = deps.normalizeSchemaType(typeSelect.value);
+          field.required = requiredInput.checked;
+          field.enumValues = deps.normalizeEnumOptions(enumInput.value);
+          var valid = field.path.length > 0 && deps.isValidFieldPath(field.path) && state.schemaFields.filter(function(entry) {
+            return deps.trim(entry.path) == field.path;
+          }).length == 1 && (field.type != "enum" || field.enumValues.length > 0);
+          pathInput.style.borderColor = valid ? "" : "#b3261e";
+          enumInput.style.borderColor = field.type != "enum" || field.enumValues.length > 0 ? "" : "#b3261e";
+          if (!valid && showError) {
+            deps.showStatus("\u5B57\u6BB5\u914D\u7F6E\u6709\u8BEF\uFF0C\u8BF7\u68C0\u67E5\u8DEF\u5F84\u552F\u4E00\u6027\u548C\u679A\u4E3E\u503C", true);
+          }
+          updateVariantFieldState(false);
+          deps.scheduleEditorDraftSave();
+        }
+        mxEvent.addListener(pathInput, "input", function() {
+          syncField(false);
+        });
+        mxEvent.addListener(typeSelect, "change", function() {
+          refreshRowLayout();
+          syncField(false);
+        });
+        mxEvent.addListener(enumInput, "input", function() {
+          syncField(false);
+        });
+        mxEvent.addListener(requiredInput, "change", function() {
+          syncField(false);
+        });
+        refreshRowLayout();
+      });
+    }
+    renderSchemaFields();
+    function rebuildEditorUi(specOrNull) {
+      renderSchemaFields();
       refreshVariantSection();
       renderVariantList();
       updateTemplateNameState(false);
       updateVariantFieldState(false);
-      restoreDraftIfExists();
-      var x = Math.max(20, (document.body.offsetWidth - 560) / 2);
-      var y = 80;
-      var wnd = new mxWindow(
-        mxResources.get("electricalSymbols"),
-        container,
-        x,
-        y,
-        560,
-        620,
-        true,
-        true
-      );
-      wnd.destroyOnClose = true;
-      wnd.setClosable(true);
-      wnd.setMaximizable(false);
-      wnd.setResizable(true);
-      wnd.setScrollable(true);
-      wnd.addListener(mxEvent.DESTROY, function() {
-        state.window = null;
-        state.status = null;
-        state.symbolIdInput = null;
-        state.templateNameInput = null;
-        state.templateWidthInput = null;
-        state.templateHeightInput = null;
-        state.variantFieldInput = null;
-        state.schemaFields = [];
-        state.preview = null;
-        state.variantEnabled = false;
-        state.lastValidVariantField = "";
-        state.previewVariantId = "";
-        state.variantItems = [];
-        state.currentSpec = null;
-        deps.clearDraftSaveTimer();
-      });
-      if (state.currentSpec == null) {
+      if (specOrNull != null) {
+        updatePreview(specOrNull);
+      } else {
         updatePreview(null);
       }
-      deps.loadStoredLibrary(null, true);
-      return {
-        window: wnd,
-        container,
-        loadTemplate: function(template) {
-          loadTemplateIntoEditor(template);
+    }
+    function recalcNextItemId() {
+      var maxId = 0;
+      function scanId(id) {
+        var match = /:(\d+)$/.exec(deps.trim(id));
+        if (match != null) {
+          maxId = Math.max(maxId, parseInt(match[1], 10) || 0);
         }
-      };
+      }
+      function scanLayout(layout) {
+        var i;
+        var ports = deps.normalizePortLayout(layout != null ? layout.ports : []);
+        var labels = deps.normalizeLabels(layout != null ? layout.labels : []);
+        for (i = 0; i < ports.length; i++) {
+          scanId(ports[i].id);
+        }
+        for (i = 0; i < labels.length; i++) {
+          scanId(labels[i].id);
+        }
+      }
+      scanLayout(state.currentSpec);
+      (state.variantItems || []).forEach(function(item) {
+        scanId(item.id);
+        scanLayout(item);
+      });
+      state.nextId = maxId + 1;
     }
-    function toggleWindow() {
-      if (state.window == null) {
-        state.window = createWindow();
-        state.window.window.setVisible(true);
+    function loadTemplateIntoEditor(template, options) {
+      var spec = deps.normalizeSpec(deps.cloneJson(template));
+      var layouts = deps.normalizeVariantLayouts(spec.variantLayouts);
+      var keys = Object.keys(spec.svgVariants || {});
+      options = options || {};
+      state.symbolIdTouched = !options.allowAutoSymbolId;
+      state.symbolIdInput.value = deps.trim(spec.symbolId).length > 0 ? spec.symbolId : deps.generateSymbolId(
+        spec.templateName || spec.title || "electrical-symbol"
+      );
+      state.templateNameInput.value = deps.trim(spec.templateName || spec.title) || "\u7535\u6C14\u56FE\u5143";
+      state.uploadedPrimarySvg = spec.svg || "";
+      state.uploadedPrimarySvgName = deps.trim(options.primarySvgName || "") || (deps.trim(spec.templateName || spec.title).length > 0 ? deps.trim(spec.templateName || spec.title) + ".svg" : "\u5DF2\u52A0\u8F7D\u9ED8\u8BA4SVG");
+      state.uploadedPrimarySvgSize = spec.size != null ? deps.cloneJson(spec.size) : deps.extractSvgSize(spec.svg || "");
+      if (state.templateWidthInput != null) {
+        state.templateWidthInput.value = String(spec.size.width);
+      }
+      if (state.templateHeightInput != null) {
+        state.templateHeightInput.value = String(spec.size.height);
+      }
+      primaryName.innerText = deps.trim(state.uploadedPrimarySvg).length > 0 ? state.uploadedPrimarySvgName : "\u672A\u9009\u62E9\u9ED8\u8BA4SVG";
+      state.schemaFields = deps.flattenSchemaFields(spec.schema, "", []).map(function(field) {
+        return deps.normalizeSchemaField(field);
+      });
+      if (state.schemaFields.length == 0) {
+        state.schemaFields = deps.getDefaultSchemaFields();
+      }
+      state.variantEnabled = deps.trim(spec.variantField).length > 0 || Object.keys(spec.svgVariants || {}).length > 0;
+      state.variantFieldInput.value = deps.trim(spec.variantField);
+      state.lastValidVariantField = deps.trim(spec.variantField);
+      state.previewVariantId = "";
+      state.selectedItem = null;
+      state.currentSpec = spec;
+      state.variantItems = keys.map(function(key) {
+        var variantLayout = layouts[key] || {};
+        return {
+          id: deps.nextItemId("variant"),
+          key,
+          svg: spec.svgVariants[key],
+          name: key + ".svg",
+          ports: deps.normalizePortLayout(variantLayout.ports || []),
+          labels: deps.normalizeLabels(variantLayout.labels || [])
+        };
+      });
+      recalcNextItemId();
+      rebuildEditorUi(spec);
+      deps.scheduleEditorDraftSave();
+    }
+    function restoreDraftIfExists() {
+      var draft = deps.loadEditorDraft();
+      var draftSpec;
+      if (draft == null) {
+        return false;
+      }
+      try {
+        state.symbolIdTouched = !!draft.symbolIdTouched;
+        state.symbolIdInput.value = deps.trim(draft.symbolId).length > 0 ? draft.symbolId : deps.generateSymbolId("electrical-symbol");
+        state.templateNameInput.value = deps.trim(draft.templateName).length > 0 ? draft.templateName : "\u7535\u6C14\u56FE\u5143";
+        state.uploadedPrimarySvg = deps.trim(draft.uploadedPrimarySvg);
+        state.uploadedPrimarySvgName = deps.trim(draft.uploadedPrimarySvgName);
+        state.uploadedPrimarySvgSize = deps.isObject(draft.uploadedPrimarySvgSize) ? deps.cloneJson(draft.uploadedPrimarySvgSize) : null;
+        if (state.templateWidthInput != null) {
+          state.templateWidthInput.value = deps.trim(draft.templateWidth).length > 0 ? deps.trim(draft.templateWidth) : String(
+            draft.currentSpec != null && draft.currentSpec.size != null ? draft.currentSpec.size.width : state.uploadedPrimarySvgSize != null ? state.uploadedPrimarySvgSize.width : 120
+          );
+        }
+        if (state.templateHeightInput != null) {
+          state.templateHeightInput.value = deps.trim(draft.templateHeight).length > 0 ? deps.trim(draft.templateHeight) : String(
+            draft.currentSpec != null && draft.currentSpec.size != null ? draft.currentSpec.size.height : state.uploadedPrimarySvgSize != null ? state.uploadedPrimarySvgSize.height : 80
+          );
+        }
+        primaryName.innerText = deps.trim(state.uploadedPrimarySvg).length > 0 ? state.uploadedPrimarySvgName || "\u5DF2\u52A0\u8F7D\u9ED8\u8BA4SVG" : "\u672A\u9009\u62E9\u9ED8\u8BA4SVG";
+        state.variantEnabled = !!draft.variantEnabled;
+        state.variantFieldInput.value = deps.trim(draft.variantField);
+        state.lastValidVariantField = deps.trim(draft.variantField);
+        state.previewVariantId = deps.trim(draft.previewVariantId);
+        state.schemaFields = Array.isArray(draft.schemaFields) ? draft.schemaFields.map(function(field) {
+          return deps.normalizeSchemaField(field);
+        }) : deps.getDefaultSchemaFields();
+        state.variantItems = Array.isArray(draft.variantItems) ? draft.variantItems.map(function(item) {
+          return {
+            id: deps.trim(item.id) || deps.nextItemId("variant"),
+            key: deps.trim(item.key),
+            svg: deps.trim(item.svg),
+            name: deps.trim(item.name),
+            ports: deps.normalizePortLayout(item.ports || []),
+            labels: deps.normalizeLabels(item.labels || [])
+          };
+        }) : [];
+        draftSpec = draft.currentSpec != null && deps.trim(draft.currentSpec.svg || draft.uploadedPrimarySvg).length > 0 ? deps.normalizeSpec(deps.cloneJson(draft.currentSpec)) : null;
+        state.currentSpec = draftSpec;
+        recalcNextItemId();
+        rebuildEditorUi(draftSpec);
+        deps.showStatus("\u5DF2\u6062\u590D\u4E0A\u6B21\u672A\u4FDD\u5B58\u7684\u8349\u7A3F", false);
+        return true;
+      } catch (e) {
+        deps.clearEditorDraft();
+        return false;
+      }
+    }
+    state.preview = document.createElement("div");
+    state.preview.style.marginTop = "10px";
+    state.preview.style.height = "328px";
+    state.preview.style.border = "1px solid #d0d7de";
+    state.preview.style.display = "block";
+    state.preview.style.boxSizing = "border-box";
+    state.preview.style.overflow = "hidden";
+    state.preview.style.background = Editor.isDarkMode() ? "#111111" : "#fafafa";
+    container.appendChild(state.preview);
+    var buttons = document.createElement("div");
+    buttons.style.marginTop = "10px";
+    container.appendChild(buttons);
+    var previewButton = deps.createButton(
+      mxResources.get("electricalPreview"),
+      function() {
+        parseEditorSpec();
+      }
+    );
+    buttons.appendChild(previewButton);
+    var addLibraryButton = deps.createButton(
+      mxResources.get("electricalAddLibrary"),
+      function() {
+        deps.addToLibrary(parseEditorSpec(), function() {
+          deps.clearEditorDraft();
+          if (state.window != null && state.window.window != null) {
+            state.window.window.destroy();
+          }
+        });
+      }
+    );
+    buttons.appendChild(addLibraryButton);
+    state.status = document.createElement("div");
+    state.status.style.marginTop = "10px";
+    state.status.style.minHeight = "18px";
+    container.appendChild(state.status);
+    function setButtonEnabled(button, enabled) {
+      button.disabled = !enabled;
+      button.style.opacity = enabled ? "1" : "0.45";
+      button.style.pointerEvents = enabled ? "auto" : "none";
+    }
+    function updateTemplateNameState(showError) {
+      var name = deps.trim(
+        state.templateNameInput != null ? state.templateNameInput.value : ""
+      );
+      var symbolId = deps.trim(
+        state.symbolIdInput != null ? state.symbolIdInput.value : ""
+      );
+      var valid = name.length > 0 && !deps.isTemplateNameTaken(name, symbolId);
+      if (state.templateNameInput != null) {
+        state.templateNameInput.style.borderColor = !valid ? "#b3261e" : "";
+        state.templateNameInput.style.boxShadow = !valid ? "0 0 0 1px rgba(179,38,30,0.2)" : "";
+        state.templateNameInput.title = name.length == 0 ? "\u56FE\u5143\u7C7B\u578B\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A" : !valid ? "\u56FE\u5143\u7C7B\u578B\u540D\u79F0\u4E0D\u80FD\u91CD\u590D" : "";
+      }
+      setButtonEnabled(addLibraryButton, valid);
+      if (!valid && showError) {
+        deps.showStatus(
+          name.length == 0 ? "\u8BF7\u5148\u586B\u5199\u56FE\u5143\u7C7B\u578B\u540D\u79F0" : "\u56FE\u5143\u7C7B\u578B\u540D\u79F0\u4E0D\u80FD\u91CD\u590D",
+          true
+        );
+      }
+      return valid;
+    }
+    function updateVariantFieldState(showError) {
+      var valid = true;
+      if (state.variantEnabled) {
+        valid = validateVariantField(showError) != null;
+      }
+      if (state.variantFieldInput != null) {
+        state.variantFieldInput.style.borderColor = !valid ? "#b3261e" : "";
+        state.variantFieldInput.style.boxShadow = !valid ? "0 0 0 1px rgba(179,38,30,0.2)" : "";
+        state.variantFieldInput.title = !valid ? "\u53D8\u4F53\u5B57\u6BB5\u5FC5\u987B\u5148\u5728 JSON \u7C7B\u578B\u5B9A\u4E49\u4E2D\u58F0\u660E" : "";
+      }
+      setButtonEnabled(addVariantButton, !state.variantEnabled || valid);
+      setButtonEnabled(previewButton, !state.variantEnabled || valid);
+      setButtonEnabled(
+        addLibraryButton,
+        (!state.variantEnabled || valid) && updateTemplateNameState(false)
+      );
+      return valid;
+    }
+    bindSvgUpload(
+      primaryInput,
+      primaryName,
+      "uploadedPrimarySvg",
+      "uploadedPrimarySvgName",
+      "\u9ED8\u8BA4SVG \u5DF2\u52A0\u8F7D",
+      true,
+      function() {
+        state.previewVariantId = "";
+        updateSelectedItem(null, null);
+        if (state.templateWidthInput != null && state.uploadedPrimarySvgSize != null) {
+          state.templateWidthInput.value = String(
+            state.uploadedPrimarySvgSize.width
+          );
+        }
+        if (state.templateHeightInput != null && state.uploadedPrimarySvgSize != null) {
+          state.templateHeightInput.value = String(
+            state.uploadedPrimarySvgSize.height
+          );
+        }
+      }
+    );
+    mxEvent.addListener(primaryInput, "change", function() {
+      if (state.symbolIdInput != null && !state.symbolIdTouched) {
+        state.symbolIdInput.value = deps.generateSymbolId(
+          state.uploadedPrimarySvgName || "electrical-symbol"
+        );
+        updateTemplateNameState(false);
+      }
+    });
+    mxEvent.addListener(state.templateNameInput, "input", function() {
+      updateTemplateNameState(false);
+      deps.scheduleEditorDraftSave();
+    });
+    mxEvent.addListener(state.templateNameInput, "blur", function() {
+      updateTemplateNameState(true);
+    });
+    mxEvent.addListener(state.templateWidthInput, "change", function() {
+      if (deps.trim(state.uploadedPrimarySvg).length > 0) {
+        try {
+          parseEditorSpec();
+        } catch (e) {
+        }
       } else {
-        state.window.window.setVisible(!state.window.window.isVisible());
+        deps.scheduleEditorDraftSave();
       }
+    });
+    mxEvent.addListener(state.templateHeightInput, "change", function() {
+      if (deps.trim(state.uploadedPrimarySvg).length > 0) {
+        try {
+          parseEditorSpec();
+        } catch (e) {
+        }
+      } else {
+        deps.scheduleEditorDraftSave();
+      }
+    });
+    mxEvent.addListener(state.variantFieldInput, "change", function() {
+      var currentValue = deps.trim(state.variantFieldInput.value);
+      if (state.variantEnabled) {
+        if (!updateVariantFieldState(true)) {
+          return;
+        }
+        state.lastValidVariantField = currentValue;
+      }
+      if (deps.trim(state.uploadedPrimarySvg).length > 0) {
+        parseEditorSpec();
+      }
+      deps.scheduleEditorDraftSave();
+    });
+    mxEvent.addListener(state.variantFieldInput, "input", function() {
+      updateVariantFieldState(false);
+      deps.scheduleEditorDraftSave();
+    });
+    mxEvent.addListener(state.variantFieldInput, "blur", function() {
+      updateVariantFieldState(true);
+    });
+    mxEvent.addListener(variantToggle, "change", function() {
+      state.variantEnabled = variantToggle.checked;
+      if (state.variantEnabled) {
+        var validField = validateVariantField(false);
+        if (validField != null) {
+          state.lastValidVariantField = validField;
+        }
+      } else {
+        state.previewVariantId = "";
+        updateSelectedItem(null, null);
+      }
+      refreshVariantSection();
+      updateVariantFieldState(false);
+      deps.scheduleEditorDraftSave();
+      if (deps.trim(state.uploadedPrimarySvg).length > 0) {
+        try {
+          parseEditorSpec();
+        } catch (e) {
+        }
+      }
+    });
+    refreshVariantSection();
+    renderVariantList();
+    updateTemplateNameState(false);
+    updateVariantFieldState(false);
+    restoreDraftIfExists();
+    var x = Math.max(20, (document.body.offsetWidth - 560) / 2);
+    var y = 80;
+    var wnd = new mxWindow(
+      mxResources.get("electricalSymbols"),
+      container,
+      x,
+      y,
+      560,
+      620,
+      true,
+      true
+    );
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(true);
+    wnd.setScrollable(true);
+    wnd.addListener(mxEvent.DESTROY, function() {
+      state.window = null;
+      state.status = null;
+      state.symbolIdInput = null;
+      state.templateNameInput = null;
+      state.templateWidthInput = null;
+      state.templateHeightInput = null;
+      state.variantFieldInput = null;
+      state.schemaFields = [];
+      state.preview = null;
+      state.variantEnabled = false;
+      state.lastValidVariantField = "";
+      state.previewVariantId = "";
+      state.variantItems = [];
+      state.currentSpec = null;
+      deps.clearDraftSaveTimer();
+    });
+    if (state.currentSpec == null) {
+      updatePreview(null);
     }
-    function openEditorWithTemplate(template) {
-      if (state.window == null) {
-        state.window = createWindow();
-      }
-      state.window.window.setVisible(true);
-      if (typeof state.window.loadTemplate === "function") {
-        state.window.loadTemplate(template);
-      }
-      if (typeof state.window.window.toFront === "function") {
-        state.window.window.toFront();
-      }
-    }
+    deps.loadStoredLibrary(null, true);
     return {
-      createWindow,
-      deleteSelectedItem,
-      openEditorWithTemplate,
-      toggleWindow,
-      updatePreview,
-      updateSelectedItem
+      window: wnd,
+      container,
+      loadTemplate: function(template) {
+        loadTemplateIntoEditor(template);
+      }
     };
   }
+  function toggleWindow() {
+    var state = getTemplateEditorRuntime().state;
+    if (state.window == null) {
+      state.window = createWindow();
+      state.window.window.setVisible(true);
+    } else {
+      state.window.window.setVisible(!state.window.window.isVisible());
+    }
+  }
+  function openEditorWithTemplate(template) {
+    var state = getTemplateEditorRuntime().state;
+    if (state.window == null) {
+      state.window = createWindow();
+    }
+    state.window.window.setVisible(true);
+    if (typeof state.window.loadTemplate === "function") {
+      state.window.loadTemplate(template);
+    }
+    if (typeof state.window.window.toFront === "function") {
+      state.window.window.toFront();
+    }
+  }
+  var templateEditorApi = {
+    createWindow,
+    deleteSelectedItem,
+    openEditorWithTemplate,
+    toggleWindow,
+    updatePreview,
+    updateSelectedItem
+  };
 
   // ui/instanceEditor.js
   function buildInstanceEditorDeps() {
     var app = getApp();
     return {
       ctx: app.ctx,
-      findElectricalRoot: app.helpers.findElectricalRoot,
-      showStatus: app.showStatus,
+      findElectricalRoot,
+      showStatus,
       extractSpec: app.domains.symbol.extractSpec,
       normalizePortLayout: app.domains.spec.normalizePortLayout,
       normalizeLabels: app.domains.spec.normalizeLabels,
-      trim: app.utils.trim,
+      trim,
       getValueByPath: app.domains.spec.getValueByPath,
-      createButton: app.utils.createButton,
+      createButton: createPluginButton,
       normalizePortMarker: app.domains.spec.normalizePortMarker,
       normalizePortDirection: app.domains.spec.normalizePortDirection,
       normalizePortIoMode: app.domains.spec.normalizePortIoMode,
@@ -8074,7 +8112,7 @@
       portEdgeSnapThresholdPx: app.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
       normalizePortPoint: app.domains.spec.normalizePortPoint,
       normalizeLabelItem: app.domains.spec.normalizeLabelItem,
-      applyInstanceSpec: app.commands.applyInstanceSpec
+      applyInstanceSpec: commandApi.applyInstanceSpec
     };
   }
   function openEditInstanceDialog() {
@@ -8522,25 +8560,25 @@
   }
 
   // runtime/portSwapMode.js
-  function buildPortSwapDeps() {
+  function getPortSwapDeps() {
     var app = getApp();
     var ctx = app.ctx;
     return {
       ctx,
-      trim: app.utils.trim,
-      cloneJson: app.utils.cloneJson,
+      trim,
+      cloneJson,
       parsePortLayout: app.domains.spec.parsePortLayout,
-      getAttr: app.utils.getAttr,
+      getAttr,
       findCabinetSegments: app.domains.cabinet.findCabinetSegments,
-      findPortHostRoot: app.helpers.findPortHostRoot,
-      isCabinetSegment: app.helpers.isCabinetSegment,
+      findPortHostRoot,
+      isCabinetSegment,
       isMovableConnectedTerminal: app.domains.connectionConstraints.isMovableConnectedTerminal,
       closeGapDialogWindow: function() {
         return app.ui != null && typeof app.ui.closeGapDialogWindow === "function" ? app.ui.closeGapDialogWindow() : null;
       },
       setSelectedCabinetGap: app.domains.cabinet.setSelectedCabinetGap,
-      showStatus: app.showStatus,
-      setCanvasStatus: app.setCanvasStatus,
+      showStatus,
+      setCanvasStatus,
       getPortAbsolutePosition: app.domains.cabinet.getPortAbsolutePosition,
       getPortMetaByConstraint: app.domains.connectionConstraints.getPortMetaByConstraint,
       mapPortDirectionToConstraint: app.domains.connectionConstraints.mapPortDirectionToConstraint,
@@ -8556,898 +8594,1019 @@
       }
     };
   }
-  function createPortSwapMode() {
-    var deps = arguments.length > 0 ? arguments[0] : buildPortSwapDeps();
+  function getPortSwapRuntime() {
+    var deps = getPortSwapDeps();
     var ctx = deps.ctx;
-    var graph = ctx.graph;
-    var model = ctx.model;
-    var state = ctx.state;
-    function clearPortSwapOverlay() {
-      if (state.portSwapOverlay != null && state.portSwapOverlay.parentNode != null) {
-        state.portSwapOverlay.parentNode.removeChild(state.portSwapOverlay);
-      }
-      state.portSwapOverlay = null;
-    }
-    function exitPortSwapMode(clearStatus) {
-      clearPortSwapOverlay();
-      state.portSwapSession = null;
-      if (clearStatus !== false) {
-        deps.setCanvasStatus("");
-      }
-    }
-    function buildPortSwapContextFromEdge(edge) {
-      var sourceTerminal = model.getTerminal(edge, true);
-      var targetTerminal = model.getTerminal(edge, false);
-      var sourceRoot = deps.findPortHostRoot(sourceTerminal);
-      var targetRoot = deps.findPortHostRoot(targetTerminal);
-      var sourceCabinet = deps.isCabinetSegment(sourceRoot);
-      var targetCabinet = deps.isCabinetSegment(targetRoot);
-      if (sourceCabinet == targetCabinet) {
-        return null;
-      }
-      return {
-        edge,
-        source: sourceCabinet,
-        cabinetRoot: sourceCabinet ? sourceRoot : targetRoot,
-        portId: deps.trim(
-          mxUtils.getValue(
-            graph.getCellStyle(edge) || {},
-            sourceCabinet ? "sourcePortId" : "targetPortId",
-            ""
-          )
-        ),
-        otherTerminal: sourceCabinet ? targetTerminal : sourceTerminal
-      };
-    }
-    function getPortSwapContextFromSelection() {
-      var cell = graph.getSelectionCell();
-      var i;
-      if (model.isEdge(cell)) {
-        return buildPortSwapContextFromEdge(cell);
-      }
-      if (deps.isMovableConnectedTerminal(cell)) {
-        var match = null;
-        for (i = 0; i < model.getEdgeCount(cell); i++) {
-          var edge = model.getEdgeAt(cell, i);
-          var context = buildPortSwapContextFromEdge(edge);
-          if (context != null && context.otherTerminal == cell && context.portId.length > 0) {
-            if (match != null) {
-              return {
-                error: "\u8BE5\u56FE\u5143\u8FDE\u63A5\u4E86\u591A\u4E2A\u914D\u7535\u67DC\u7AEF\u5B50\uFF0C\u8BF7\u76F4\u63A5\u9009\u4E2D\u7B2C\u4E00\u6761\u8FB9\u518D\u6267\u884C\u66F4\u6362\u6302\u70B9"
-              };
-            }
-            match = context;
-          }
-        }
-        return match;
-      }
+    return {
+      deps,
+      graph: ctx.graph,
+      model: ctx.model,
+      state: ctx.state
+    };
+  }
+  function buildPortSwapContextFromEdge(edge) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var model = runtime.model;
+    var sourceTerminal = model.getTerminal(edge, true);
+    var targetTerminal = model.getTerminal(edge, false);
+    var sourceRoot = deps.findPortHostRoot(sourceTerminal);
+    var targetRoot = deps.findPortHostRoot(targetTerminal);
+    var sourceCabinet = deps.isCabinetSegment(sourceRoot);
+    var targetCabinet = deps.isCabinetSegment(targetRoot);
+    if (sourceCabinet == targetCabinet) {
       return null;
     }
-    function renderPortSwapOverlay(session) {
-      var container = document.createElement("div");
-      var segments = deps.findCabinetSegments(
-        deps.trim(deps.getAttr(session.cabinetRoot, "logicalCabinetId"))
-      );
-      var i;
-      var j;
-      clearPortSwapOverlay();
-      container.style.position = "absolute";
-      container.style.left = "0";
-      container.style.top = "0";
-      container.style.width = "100%";
-      container.style.height = "100%";
-      container.style.pointerEvents = "none";
-      container.style.zIndex = "3";
-      for (i = 0; i < segments.length; i++) {
-        var stateView = graph.view.getState(segments[i]);
-        var ports = deps.parsePortLayout(deps.getAttr(segments[i], "portsJson"));
-        if (stateView == null) {
-          continue;
-        }
-        for (j = 0; j < ports.length; j++) {
-          var marker = document.createElement("div");
-          var portId = deps.trim(ports[j].id);
-          var selected = deps.trim(ports[j].id) == deps.trim(session.portId);
-          marker.style.position = "absolute";
-          marker.style.width = "14px";
-          marker.style.height = "14px";
-          marker.style.borderRadius = "50%";
-          marker.style.boxSizing = "border-box";
-          marker.style.border = selected ? "2px solid #1a73e8" : "2px solid #16a34a";
-          marker.style.background = selected ? "rgba(26,115,232,0.15)" : "rgba(22,163,74,0.18)";
-          marker.style.pointerEvents = "auto";
-          marker.style.cursor = selected ? "default" : "pointer";
-          marker.style.left = Math.round(stateView.x + ports[j].x * stateView.width - 7) + "px";
-          marker.style.top = Math.round(stateView.y + ports[j].y * stateView.height - 7) + "px";
-          marker.title = selected ? "\u5F53\u524D\u6302\u70B9" : "\u70B9\u51FB\u5207\u6362\u5230\u8BE5\u6302\u70B9";
-          if (!selected) {
-            mxEvent.addListener(
-              marker,
-              "click",
-              /* @__PURE__ */ (function(root, port) {
-                return function(evt) {
-                  mxEvent.consume(evt);
-                  commitPortSwap(state.portSwapSession, root, port);
-                };
-              })(segments[i], deps.cloneJson(ports[j]))
-            );
+    return {
+      edge,
+      source: sourceCabinet,
+      cabinetRoot: sourceCabinet ? sourceRoot : targetRoot,
+      portId: deps.trim(
+        mxUtils.getValue(
+          graph.getCellStyle(edge) || {},
+          sourceCabinet ? "sourcePortId" : "targetPortId",
+          ""
+        )
+      ),
+      otherTerminal: sourceCabinet ? targetTerminal : sourceTerminal
+    };
+  }
+  function getPortSwapContextFromSelection() {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var model = runtime.model;
+    var cell = graph.getSelectionCell();
+    var i;
+    if (model.isEdge(cell)) {
+      return buildPortSwapContextFromEdge(cell);
+    }
+    if (deps.isMovableConnectedTerminal(cell)) {
+      var match = null;
+      for (i = 0; i < model.getEdgeCount(cell); i++) {
+        var edge = model.getEdgeAt(cell, i);
+        var context = buildPortSwapContextFromEdge(edge);
+        if (context != null && context.otherTerminal == cell && context.portId.length > 0) {
+          if (match != null) {
+            return {
+              error: "\u8BE5\u56FE\u5143\u8FDE\u63A5\u4E86\u591A\u4E2A\u914D\u7535\u67DC\u7AEF\u5B50\uFF0C\u8BF7\u76F4\u63A5\u9009\u4E2D\u7B2C\u4E00\u6761\u8FB9\u518D\u6267\u884C\u66F4\u6362\u6302\u70B9"
+            };
           }
-          container.appendChild(marker);
+          match = context;
         }
       }
-      graph.container.appendChild(container);
-      state.portSwapOverlay = container;
+      return match;
     }
-    function installGraphClickBehavior(extraDeps) {
-      graph.addListener(mxEvent.CLICK, function(sender, evt) {
-        var cell = evt.getProperty("cell");
-        var mouseEvent = evt.getProperty("event");
-        if (state.portSwapSession != null) {
-          var portRoot = deps.findPortHostRoot(cell);
-          var sessionLogicalId = state.portSwapSession.cabinetRoot != null ? deps.trim(
-            deps.getAttr(state.portSwapSession.cabinetRoot, "logicalCabinetId")
-          ) : "";
-          if (deps.isCabinetSegment(portRoot) && deps.trim(deps.getAttr(portRoot, "logicalCabinetId")) == sessionLogicalId) {
-            var nextPort = getNearestCabinetPortFromClick(portRoot, mouseEvent);
-            if (nextPort != null) {
-              commitPortSwap(state.portSwapSession, portRoot, nextPort);
-              evt.consume();
-              return;
-            }
-          }
-          if (cell == null) {
-            exitPortSwapMode();
+    return null;
+  }
+  function clearPortSwapOverlay() {
+    var runtime = getPortSwapRuntime();
+    var state = runtime.state;
+    if (state.portSwapOverlay != null && state.portSwapOverlay.parentNode != null) {
+      state.portSwapOverlay.parentNode.removeChild(state.portSwapOverlay);
+    }
+    state.portSwapOverlay = null;
+  }
+  function exitPortSwapMode(clearStatus) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    clearPortSwapOverlay();
+    state.portSwapSession = null;
+    if (clearStatus !== false) {
+      deps.setCanvasStatus("");
+    }
+  }
+  function renderPortSwapOverlay(session) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var state = runtime.state;
+    var container = document.createElement("div");
+    var segments = deps.findCabinetSegments(
+      deps.trim(deps.getAttr(session.cabinetRoot, "logicalCabinetId"))
+    );
+    var i;
+    var j;
+    clearPortSwapOverlay();
+    container.style.position = "absolute";
+    container.style.left = "0";
+    container.style.top = "0";
+    container.style.width = "100%";
+    container.style.height = "100%";
+    container.style.pointerEvents = "none";
+    container.style.zIndex = "3";
+    for (i = 0; i < segments.length; i++) {
+      var stateView = graph.view.getState(segments[i]);
+      var ports = deps.parsePortLayout(deps.getAttr(segments[i], "portsJson"));
+      if (stateView == null) {
+        continue;
+      }
+      for (j = 0; j < ports.length; j++) {
+        var marker = document.createElement("div");
+        var portId = deps.trim(ports[j].id);
+        var selected = deps.trim(ports[j].id) == deps.trim(session.portId);
+        var occupied = !selected && isCabinetPortOccupied(segments[i], portId, session.edge);
+        marker.style.position = "absolute";
+        marker.style.width = "14px";
+        marker.style.height = "14px";
+        marker.style.borderRadius = "50%";
+        marker.style.boxSizing = "border-box";
+        marker.style.border = selected ? "2px solid #1a73e8" : occupied ? "2px solid #94a3b8" : "2px solid #16a34a";
+        marker.style.background = selected ? "rgba(26,115,232,0.15)" : occupied ? "rgba(148,163,184,0.18)" : "rgba(22,163,74,0.18)";
+        marker.style.pointerEvents = "auto";
+        marker.style.cursor = selected || occupied ? "default" : "pointer";
+        marker.style.left = Math.round(stateView.x + ports[j].x * stateView.width - 7) + "px";
+        marker.style.top = Math.round(stateView.y + ports[j].y * stateView.height - 7) + "px";
+        marker.title = selected ? "\u5F53\u524D\u6302\u70B9" : occupied ? "\u8BE5\u6302\u70B9\u5DF2\u8FDE\u63A5\u5176\u4ED6\u8BBE\u5907\uFF0C\u4E0D\u80FD\u518D\u9009\u62E9" : "\u70B9\u51FB\u5207\u6362\u5230\u8BE5\u6302\u70B9";
+        if (!selected && !occupied) {
+          mxEvent.addListener(
+            marker,
+            "click",
+            /* @__PURE__ */ (function(root, port) {
+              return function(evt) {
+                mxEvent.consume(evt);
+                commitPortSwap(state.portSwapSession, root, port);
+              };
+            })(segments[i], deps.cloneJson(ports[j]))
+          );
+        }
+        container.appendChild(marker);
+      }
+    }
+    graph.container.appendChild(container);
+    state.portSwapOverlay = container;
+  }
+  function isCabinetPortOccupied(root, portId, ignoreEdge) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var model = runtime.model;
+    var targetPortId = deps.trim(portId);
+    var i;
+    if (root == null || targetPortId.length == 0) {
+      return false;
+    }
+    for (i = 0; i < model.getEdgeCount(root); i++) {
+      var edge = model.getEdgeAt(root, i);
+      var sourceRoot = deps.findPortHostRoot(model.getTerminal(edge, true));
+      var targetRoot = deps.findPortHostRoot(model.getTerminal(edge, false));
+      var sourcePortId = sourceRoot == root ? deps.trim(
+        mxUtils.getValue(graph.getCellStyle(edge) || {}, "sourcePortId", "")
+      ) : "";
+      var targetPortIdOnEdge = targetRoot == root ? deps.trim(
+        mxUtils.getValue(graph.getCellStyle(edge) || {}, "targetPortId", "")
+      ) : "";
+      if (edge == ignoreEdge) {
+        continue;
+      }
+      if (sourcePortId == targetPortId || targetPortIdOnEdge == targetPortId) {
+        return true;
+      }
+    }
+    return false;
+  }
+  function installGraphClickBehavior(extraDeps) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var state = runtime.state;
+    graph.addListener(mxEvent.CLICK, function(sender, evt) {
+      var cell = evt.getProperty("cell");
+      var mouseEvent = evt.getProperty("event");
+      if (state.portSwapSession != null) {
+        var portRoot = deps.findPortHostRoot(cell);
+        var sessionLogicalId = state.portSwapSession.cabinetRoot != null ? deps.trim(
+          deps.getAttr(state.portSwapSession.cabinetRoot, "logicalCabinetId")
+        ) : "";
+        if (deps.isCabinetSegment(portRoot) && deps.trim(deps.getAttr(portRoot, "logicalCabinetId")) == sessionLogicalId) {
+          var nextPort = getNearestCabinetPortFromClick(portRoot, mouseEvent);
+          if (nextPort != null) {
+            commitPortSwap(state.portSwapSession, portRoot, nextPort);
             evt.consume();
             return;
           }
         }
-        if (extraDeps.isCabinetGap(cell)) {
-          extraDeps.setSelectedCabinetGap(
-            deps.getAttr(cell, "logicalCabinetId"),
-            deps.getAttr(cell, "gapIndex")
-          );
-          extraDeps.openCabinetGapDialog(cell, mouseEvent);
+        if (cell == null) {
+          exitPortSwapMode();
           evt.consume();
-        } else if (state.selectedCabinetGap != null) {
-          extraDeps.closeGapDialogWindow();
-          extraDeps.setSelectedCabinetGap(null, null);
-        }
-      });
-    }
-    function getNearestCabinetPortFromClick(root, mouseEvent) {
-      var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
-      var graphX = mouseEvent != null && typeof mouseEvent.getGraphX === "function" ? mouseEvent.getGraphX() : null;
-      var graphY = mouseEvent != null && typeof mouseEvent.getGraphY === "function" ? mouseEvent.getGraphY() : null;
-      var threshold = 18 / graph.view.scale;
-      var best = null;
-      var bestDistance = Infinity;
-      var i;
-      if (graphX == null || graphY == null) {
-        return null;
-      }
-      for (i = 0; i < ports.length; i++) {
-        var position = deps.getPortAbsolutePosition(root, ports[i]);
-        var dx = position.x - graphX;
-        var dy = position.y - graphY;
-        var distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance <= threshold && distance < bestDistance) {
-          best = ports[i];
-          bestDistance = distance;
+          return;
         }
       }
-      return best;
-    }
-    function applyEdgePortConstraintMetadata(edge, root, source, constraint) {
-      var port = deps.getPortMetaByConstraint(root, constraint);
-      var direction = port != null ? deps.mapPortDirectionToConstraint(port.direction) : "";
-      var key = source ? "sourcePortConstraint" : "targetPortConstraint";
-      var portKey = source ? "sourcePortId" : "targetPortId";
-      var style = model.getStyle(edge) || "";
-      style = mxUtils.setStyle(
-        style,
-        key,
-        direction.length > 0 ? direction : null
-      );
-      style = mxUtils.setStyle(
-        style,
-        portKey,
-        port != null && deps.trim(port.id).length > 0 ? deps.trim(port.id) : null
-      );
-      model.setStyle(edge, style);
-    }
-    function commitPortSwap(session, newRoot, newPort) {
-      var edge = session.edge;
-      var source = !!session.source;
-      var oldRoot = session.cabinetRoot;
-      var oldPortId = deps.trim(session.portId);
-      var constraint = new mxConnectionConstraint(
-        new mxPoint(newPort.x, newPort.y),
-        false,
-        newPort.id
-      );
-      if (edge == null || newRoot == null || newPort == null || oldPortId.length == 0 || oldRoot == newRoot && oldPortId == deps.trim(newPort.id)) {
-        exitPortSwapMode();
-        return;
+      if (extraDeps.isCabinetGap(cell)) {
+        extraDeps.setSelectedCabinetGap(
+          deps.getAttr(cell, "logicalCabinetId"),
+          deps.getAttr(cell, "gapIndex")
+        );
+        extraDeps.openCabinetGapDialog(cell, mouseEvent);
+        evt.consume();
+      } else if (state.selectedCabinetGap != null) {
+        extraDeps.closeGapDialogWindow();
+        extraDeps.setSelectedCabinetGap(null, null);
       }
-      state.updatingModel = true;
-      model.beginUpdate();
-      try {
-        model.setTerminal(edge, newRoot, source);
-        deps.setConnectionConstraint(edge, newRoot, source, constraint);
-        applyEdgePortConstraintMetadata(edge, newRoot, source, constraint);
-        deps.clearEdgePoints(edge);
-      } finally {
-        model.endUpdate();
-        state.updatingModel = false;
-      }
-      deps.moveConnectedGroupToCabinetPort(
-        edge,
-        source,
-        oldRoot,
-        oldPortId,
-        newRoot,
-        newPort
-      );
-      exitPortSwapMode();
-      deps.showStatus("\u5DF2\u66F4\u6362\u6302\u70B9", false);
-      deps.setCanvasStatus("\u5DF2\u66F4\u6362\u6302\u70B9");
-    }
-    function enterPortSwapMode() {
-      if (state.portSwapSession != null) {
-        exitPortSwapMode();
-        return;
-      }
-      deps.closeGapDialogWindow();
-      deps.setSelectedCabinetGap(null, null);
-      var context = getPortSwapContextFromSelection();
-      if (context == null) {
-        deps.showStatus("\u8BF7\u5148\u9009\u4E2D\u4E0E\u914D\u7535\u67DC\u76F4\u63A5\u76F8\u8FDE\u7684\u7B2C\u4E00\u6761\u8FB9\u6216\u7B2C\u4E00\u4E2A\u56FE\u5143", true);
-        deps.setCanvasStatus("\u8BF7\u5148\u9009\u4E2D\u4E0E\u914D\u7535\u67DC\u76F4\u63A5\u76F8\u8FDE\u7684\u7B2C\u4E00\u6761\u8FB9\u6216\u7B2C\u4E00\u4E2A\u56FE\u5143");
-        return;
-      }
-      if (context.error != null) {
-        deps.showStatus(context.error, true);
-        deps.setCanvasStatus(context.error);
-        return;
-      }
-      if (context.portId.length == 0 || context.cabinetRoot == null) {
-        deps.showStatus("\u5F53\u524D\u9009\u4E2D\u5BF9\u8C61\u672A\u7ED1\u5B9A\u5230\u6709\u6548\u7684\u914D\u7535\u67DC\u7AEF\u5B50", true);
-        deps.setCanvasStatus("\u5F53\u524D\u9009\u4E2D\u5BF9\u8C61\u672A\u7ED1\u5B9A\u5230\u6709\u6548\u7684\u914D\u7535\u67DC\u7AEF\u5B50");
-        return;
-      }
-      state.portSwapSession = context;
-      renderPortSwapOverlay(context);
-      deps.setCanvasStatus("\u66F4\u6362\u6302\u70B9\u6A21\u5F0F\uFF1A\u70B9\u51FB\u540C\u4E00\u914D\u7535\u67DC\u4E0A\u7684\u76EE\u6807\u8FDE\u63A5\u70B9\uFF0C\u6216\u70B9\u7A7A\u767D\u53D6\u6D88");
-    }
-    return {
-      applyEdgePortConstraintMetadata,
-      clearPortSwapOverlay,
-      commitPortSwap,
-      enterPortSwapMode,
-      exitPortSwapMode,
-      getNearestCabinetPortFromClick,
-      installGraphClickBehavior
-    };
+    });
   }
+  function getNearestCabinetPortFromClick(root, mouseEvent) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var state = runtime.state;
+    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
+    var graphX = mouseEvent != null && typeof mouseEvent.getGraphX === "function" ? mouseEvent.getGraphX() : null;
+    var graphY = mouseEvent != null && typeof mouseEvent.getGraphY === "function" ? mouseEvent.getGraphY() : null;
+    var threshold = 18 / graph.view.scale;
+    var best = null;
+    var bestDistance = Infinity;
+    var i;
+    if (graphX == null || graphY == null) {
+      return null;
+    }
+    for (i = 0; i < ports.length; i++) {
+      if (deps.trim(ports[i].id) != deps.trim(state.portSwapSession.portId) && isCabinetPortOccupied(root, ports[i].id, state.portSwapSession.edge)) {
+        continue;
+      }
+      var position = deps.getPortAbsolutePosition(root, ports[i]);
+      var dx = position.x - graphX;
+      var dy = position.y - graphY;
+      var distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance <= threshold && distance < bestDistance) {
+        best = ports[i];
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+  function applyEdgePortConstraintMetadata(edge, root, source, constraint) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var port = deps.getPortMetaByConstraint(root, constraint);
+    var direction = port != null ? deps.mapPortDirectionToConstraint(port.direction) : "";
+    var key = source ? "sourcePortConstraint" : "targetPortConstraint";
+    var portKey = source ? "sourcePortId" : "targetPortId";
+    var style = model.getStyle(edge) || "";
+    style = mxUtils.setStyle(
+      style,
+      key,
+      direction.length > 0 ? direction : null
+    );
+    style = mxUtils.setStyle(
+      style,
+      portKey,
+      port != null && deps.trim(port.id).length > 0 ? deps.trim(port.id) : null
+    );
+    model.setStyle(edge, style);
+  }
+  function commitPortSwap(session, newRoot, newPort) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var state = runtime.state;
+    var edge = session.edge;
+    var source = !!session.source;
+    var oldRoot = session.cabinetRoot;
+    var oldPortId = deps.trim(session.portId);
+    var constraint = new mxConnectionConstraint(
+      new mxPoint(newPort.x, newPort.y),
+      false,
+      newPort.id
+    );
+    if (edge == null || newRoot == null || newPort == null || oldPortId.length == 0 || oldRoot == newRoot && oldPortId == deps.trim(newPort.id)) {
+      exitPortSwapMode();
+      return;
+    }
+    if (isCabinetPortOccupied(newRoot, newPort.id, edge)) {
+      deps.showStatus("\u76EE\u6807\u6302\u70B9\u5DF2\u8FDE\u63A5\u5176\u4ED6\u8BBE\u5907\uFF0C\u4E0D\u80FD\u91CD\u590D\u9009\u62E9", true);
+      deps.setCanvasStatus("\u76EE\u6807\u6302\u70B9\u5DF2\u8FDE\u63A5\u5176\u4ED6\u8BBE\u5907\uFF0C\u4E0D\u80FD\u91CD\u590D\u9009\u62E9");
+      return;
+    }
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      model.setTerminal(edge, newRoot, source);
+      deps.setConnectionConstraint(edge, newRoot, source, constraint);
+      applyEdgePortConstraintMetadata(edge, newRoot, source, constraint);
+      deps.clearEdgePoints(edge);
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+    deps.moveConnectedGroupToCabinetPort(
+      edge,
+      source,
+      oldRoot,
+      oldPortId,
+      newRoot,
+      newPort
+    );
+    exitPortSwapMode();
+    deps.showStatus("\u5DF2\u66F4\u6362\u6302\u70B9", false);
+    deps.setCanvasStatus("\u5DF2\u66F4\u6362\u6302\u70B9");
+  }
+  function enterPortSwapMode() {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    if (state.portSwapSession != null) {
+      exitPortSwapMode();
+      return;
+    }
+    deps.closeGapDialogWindow();
+    deps.setSelectedCabinetGap(null, null);
+    var context = getPortSwapContextFromSelection();
+    if (context == null) {
+      deps.showStatus("\u8BF7\u5148\u9009\u4E2D\u4E0E\u914D\u7535\u67DC\u76F4\u63A5\u76F8\u8FDE\u7684\u7B2C\u4E00\u6761\u8FB9\u6216\u7B2C\u4E00\u4E2A\u56FE\u5143", true);
+      deps.setCanvasStatus("\u8BF7\u5148\u9009\u4E2D\u4E0E\u914D\u7535\u67DC\u76F4\u63A5\u76F8\u8FDE\u7684\u7B2C\u4E00\u6761\u8FB9\u6216\u7B2C\u4E00\u4E2A\u56FE\u5143");
+      return;
+    }
+    if (context.error != null) {
+      deps.showStatus(context.error, true);
+      deps.setCanvasStatus(context.error);
+      return;
+    }
+    if (context.portId.length == 0 || context.cabinetRoot == null) {
+      deps.showStatus("\u5F53\u524D\u9009\u4E2D\u5BF9\u8C61\u672A\u7ED1\u5B9A\u5230\u6709\u6548\u7684\u914D\u7535\u67DC\u7AEF\u5B50", true);
+      deps.setCanvasStatus("\u5F53\u524D\u9009\u4E2D\u5BF9\u8C61\u672A\u7ED1\u5B9A\u5230\u6709\u6548\u7684\u914D\u7535\u67DC\u7AEF\u5B50");
+      return;
+    }
+    state.portSwapSession = context;
+    renderPortSwapOverlay(context);
+    deps.setCanvasStatus("\u66F4\u6362\u6302\u70B9\u6A21\u5F0F\uFF1A\u70B9\u51FB\u540C\u4E00\u914D\u7535\u67DC\u4E0A\u7684\u76EE\u6807\u8FDE\u63A5\u70B9\uFF0C\u6216\u70B9\u7A7A\u767D\u53D6\u6D88");
+  }
+  var portSwapModeApi = {
+    applyEdgePortConstraintMetadata,
+    clearPortSwapOverlay,
+    commitPortSwap,
+    enterPortSwapMode,
+    exitPortSwapMode,
+    getNearestCabinetPortFromClick,
+    installGraphClickBehavior
+  };
 
   // runtime/composeMode.js
-  function buildComposeDeps() {
+  function getComposeDeps() {
     var app = getApp();
     return {
       ctx: app.ctx,
-      trim: app.utils.trim,
-      clamp: app.utils.clamp,
+      trim,
+      clamp,
       padding: app.constants.INSTANCE_COMPOSE_ZONE_PADDING,
       minWidth: app.constants.INSTANCE_COMPOSE_ZONE_MIN_WIDTH,
       minHeight: app.constants.INSTANCE_COMPOSE_ZONE_MIN_HEIGHT,
-      showStatus: app.showStatus,
-      setCanvasStatus: app.setCanvasStatus,
+      showStatus,
+      setCanvasStatus,
       closeGapDialogWindow: function() {
         return app.ui != null && typeof app.ui.closeGapDialogWindow === "function" ? app.ui.closeGapDialogWindow() : null;
       },
       exitPortSwapMode: function(clearStatus) {
         return app.runtime != null && typeof app.runtime.exitPortSwapMode === "function" ? app.runtime.exitPortSwapMode(clearStatus) : null;
       },
-      isDrawingFrame: app.helpers.isDrawingFrame,
-      isCabinetSegment: app.helpers.isCabinetSegment,
-      isCabinetGap: app.helpers.isCabinetGap,
+      isDrawingFrame,
+      isCabinetSegment,
+      isCabinetGap,
       isPluginInternalCell: app.domains.snapshot.isPluginInternalCell,
-      isElectricalRoot: app.helpers.isElectricalRoot,
+      isElectricalRoot,
       shouldExportGenericObject: app.domains.snapshot.shouldExportGenericObject,
-      findElectricalRoot: app.helpers.findElectricalRoot
+      findElectricalRoot
     };
   }
-  function createComposeMode() {
-    var deps = arguments.length > 0 ? arguments[0] : buildComposeDeps();
+  function getComposeRuntime() {
+    var deps = getComposeDeps();
     var ctx = deps.ctx;
-    var graph = ctx.graph;
-    var model = ctx.model;
-    var state = ctx.state;
-    function isCellDescendantOf(cell, ancestor) {
-      while (cell != null) {
-        if (cell == ancestor) {
-          return true;
-        }
-        cell = model.getParent(cell);
-      }
-      return false;
-    }
-    function getCellViewBounds(cell) {
-      var stateView = graph.view.getState(cell);
-      if (stateView == null) {
-        return null;
-      }
-      return {
-        x: stateView.x,
-        y: stateView.y,
-        width: stateView.width,
-        height: stateView.height
-      };
-    }
-    function getCellModelBounds(cell) {
-      var stateView = graph.view.getState(cell);
-      var scale = graph.view.scale || 1;
-      var translate = graph.view.translate || { x: 0, y: 0 };
-      if (stateView != null) {
-        return {
-          x: stateView.x / scale - translate.x,
-          y: stateView.y / scale - translate.y,
-          width: stateView.width / scale,
-          height: stateView.height / scale
-        };
-      }
-      var geometry = model.getGeometry(cell);
-      if (geometry == null) {
-        return null;
-      }
-      return {
-        x: geometry.x,
-        y: geometry.y,
-        width: geometry.width,
-        height: geometry.height
-      };
-    }
-    function getUnionViewBounds(cells) {
-      var bounds = null;
-      var i;
-      for (i = 0; i < cells.length; i++) {
-        var cellBounds = getCellViewBounds(cells[i]);
-        if (cellBounds == null) {
-          continue;
-        }
-        if (bounds == null) {
-          bounds = {
-            x: cellBounds.x,
-            y: cellBounds.y,
-            width: cellBounds.width,
-            height: cellBounds.height
-          };
-        } else {
-          var right = Math.max(
-            bounds.x + bounds.width,
-            cellBounds.x + cellBounds.width
-          );
-          var bottom = Math.max(
-            bounds.y + bounds.height,
-            cellBounds.y + cellBounds.height
-          );
-          bounds.x = Math.min(bounds.x, cellBounds.x);
-          bounds.y = Math.min(bounds.y, cellBounds.y);
-          bounds.width = right - bounds.x;
-          bounds.height = bottom - bounds.y;
-        }
-      }
-      return bounds;
-    }
-    function getInstanceComposeZoneBounds(root, extraCells) {
-      var candidates = [root];
-      var bounds;
-      var container = graph.container;
-      var scrollLeft = container.scrollLeft;
-      var scrollTop = container.scrollTop;
-      var viewportLeft = scrollLeft + 20;
-      var viewportTop = scrollTop + 20;
-      var viewportRight = scrollLeft + container.clientWidth - 20;
-      var viewportBottom = scrollTop + container.clientHeight - 20;
-      var width;
-      var height;
-      var left;
-      var top;
-      var maxLeft;
-      var maxTop;
-      if (Array.isArray(extraCells) && extraCells.length > 0) {
-        candidates = candidates.concat(extraCells);
-      }
-      bounds = getUnionViewBounds(candidates);
-      if (bounds == null) {
-        return null;
-      }
-      width = Math.max(
-        deps.minWidth,
-        bounds.width + deps.padding * 2
-      );
-      height = Math.max(
-        deps.minHeight,
-        bounds.height + deps.padding * 2
-      );
-      left = bounds.x + (bounds.width - width) / 2;
-      top = bounds.y + (bounds.height - height) / 2;
-      maxLeft = Math.max(viewportLeft, viewportRight - width);
-      maxTop = Math.max(viewportTop, viewportBottom - height);
-      return {
-        left: deps.clamp(Math.round(left), viewportLeft, maxLeft),
-        top: deps.clamp(Math.round(top), viewportTop, maxTop),
-        width: Math.round(Math.min(width, viewportRight - viewportLeft)),
-        height: Math.round(Math.min(height, viewportBottom - viewportTop))
-      };
-    }
-    function clearInstanceComposeOverlay() {
-      if (state.instanceComposeOverlay != null && state.instanceComposeOverlay.parentNode != null) {
-        state.instanceComposeOverlay.parentNode.removeChild(
-          state.instanceComposeOverlay
-        );
-      }
-      state.instanceComposeOverlay = null;
-    }
-    function completeInstanceComposeMode() {
-      var session = state.instanceComposeSession;
-      var root;
-      var candidates;
-      var matched = [];
-      var attached;
-      var i;
-      if (session == null) {
-        return;
-      }
-      root = session.root;
-      if (root == null || root.parent == null) {
-        exitInstanceComposeMode();
-        return;
-      }
-      candidates = collectComposableCellsInZone(root, session.zoneBounds);
-      for (i = 0; i < candidates.length; i++) {
-        if (!session.initialZoneCellIds[candidates[i].id]) {
-          matched.push(candidates[i]);
-        }
-      }
-      if (matched.length == 0) {
-        deps.showStatus("\u7EFF\u8272\u533A\u57DF\u5185\u6CA1\u6709\u65B0\u7684\u53EF\u7EC4\u5408\u56FE\u5143", true);
-        return;
-      }
-      attached = attachCellsToElectricalRoot(root, matched);
-      if (attached.length == 0) {
-        deps.showStatus("\u6CA1\u6709\u68C0\u6D4B\u5230\u53EF\u7EC4\u5408\u7684\u56FE\u5143", true);
-        return;
-      }
-      exitInstanceComposeMode(false);
-      graph.setSelectionCell(root);
-      deps.showStatus("\u5DF2\u7EC4\u5408\u5230\u5F53\u524D\u56FE\u5143\u5B9E\u4F8B", false);
-      deps.setCanvasStatus("");
-    }
-    function renderInstanceComposeOverlay(session) {
-      var containerRect = graph.container.getBoundingClientRect();
-      var zone = getInstanceComposeZoneBounds(
-        session.root,
-        session.dragging ? session.dragCandidates : null
-      );
-      var scrollLeft = graph.container.scrollLeft || 0;
-      var scrollTop = graph.container.scrollTop || 0;
-      var container = document.createElement("div");
-      var shade = document.createElement("div");
-      var zoneNode = document.createElement("div");
-      var hint = document.createElement("div");
-      var actions = document.createElement("div");
-      var completeButton = document.createElement("button");
-      var cancelButton = document.createElement("button");
-      var controlsTop;
-      clearInstanceComposeOverlay();
-      if (zone == null) {
-        return;
-      }
-      session.zoneBounds = zone;
-      container.style.position = "fixed";
-      container.style.left = Math.round(containerRect.left) + "px";
-      container.style.top = Math.round(containerRect.top) + "px";
-      container.style.width = graph.container.clientWidth + "px";
-      container.style.height = graph.container.clientHeight + "px";
-      container.style.pointerEvents = "none";
-      container.style.zIndex = "3";
-      shade.style.position = "absolute";
-      shade.style.left = "0";
-      shade.style.top = "0";
-      shade.style.width = "100%";
-      shade.style.height = "100%";
-      shade.style.background = "rgba(15, 23, 42, 0.18)";
-      container.appendChild(shade);
-      zoneNode.style.position = "absolute";
-      zoneNode.style.left = zone.left - scrollLeft + "px";
-      zoneNode.style.top = zone.top - scrollTop + "px";
-      zoneNode.style.width = zone.width + "px";
-      zoneNode.style.height = zone.height + "px";
-      zoneNode.style.border = "3px solid #16a34a";
-      zoneNode.style.borderRadius = "10px";
-      zoneNode.style.background = "rgba(22,163,74,0.06)";
-      zoneNode.style.boxSizing = "border-box";
-      zoneNode.style.backdropFilter = "none";
-      container.appendChild(zoneNode);
-      hint.style.position = "absolute";
-      hint.style.left = zone.left - scrollLeft + "px";
-      hint.style.top = Math.max(8, zone.top - 28 - scrollTop) + "px";
-      hint.style.padding = "4px 10px";
-      hint.style.maxWidth = Math.max(120, zone.width - 176) + "px";
-      hint.style.borderRadius = "6px";
-      hint.style.background = "rgba(22,163,74,0.92)";
-      hint.style.color = "#ffffff";
-      hint.style.fontSize = "12px";
-      hint.style.fontWeight = "bold";
-      hint.style.whiteSpace = "nowrap";
-      hint.style.overflow = "hidden";
-      hint.style.textOverflow = "ellipsis";
-      hint.innerText = "\u62D6\u5165\u7EFF\u8272\u533A\u57DF\u5373\u53EF\u7EC4\u5408\u5230\u5F53\u524D\u56FE\u5143\u5B9E\u4F8B";
-      container.appendChild(hint);
-      controlsTop = Math.max(8, zone.top - 30 - scrollTop);
-      actions.style.position = "absolute";
-      actions.style.right = Math.max(
-        8,
-        graph.container.clientWidth - (zone.left + zone.width - scrollLeft)
-      ) + "px";
-      actions.style.top = controlsTop + "px";
-      actions.style.display = "flex";
-      actions.style.gap = "8px";
-      actions.style.pointerEvents = "auto";
-      completeButton.type = "button";
-      completeButton.innerText = "\u5B8C\u6210";
-      completeButton.style.height = "28px";
-      completeButton.style.padding = "0 14px";
-      completeButton.style.border = "1px solid #16a34a";
-      completeButton.style.borderRadius = "6px";
-      completeButton.style.background = "#16a34a";
-      completeButton.style.color = "#ffffff";
-      completeButton.style.cursor = "pointer";
-      mxEvent.addListener(completeButton, "click", function(evt) {
-        mxEvent.consume(evt);
-        completeInstanceComposeMode();
-      });
-      actions.appendChild(completeButton);
-      cancelButton.type = "button";
-      cancelButton.innerText = "\u53D6\u6D88";
-      cancelButton.style.height = "28px";
-      cancelButton.style.padding = "0 14px";
-      cancelButton.style.border = "1px solid #cbd5e1";
-      cancelButton.style.borderRadius = "6px";
-      cancelButton.style.background = "#ffffff";
-      cancelButton.style.color = "#334155";
-      cancelButton.style.cursor = "pointer";
-      mxEvent.addListener(cancelButton, "click", function(evt) {
-        mxEvent.consume(evt);
-        exitInstanceComposeMode();
-      });
-      actions.appendChild(cancelButton);
-      container.appendChild(actions);
-      document.body.appendChild(container);
-      state.instanceComposeOverlay = container;
-    }
-    function refreshInstanceComposeOverlay() {
-      if (state.instanceComposeSession == null) {
-        return;
-      }
-      renderInstanceComposeOverlay(state.instanceComposeSession);
-    }
-    function exitInstanceComposeMode(clearStatus) {
-      clearInstanceComposeOverlay();
-      state.instanceComposeSession = null;
-      if (state.instanceComposeKeyHandler != null) {
-        mxEvent.removeListener(
-          document,
-          "keydown",
-          state.instanceComposeKeyHandler
-        );
-        state.instanceComposeKeyHandler = null;
-      }
-      if (clearStatus !== false) {
-        deps.setCanvasStatus("");
-      }
-    }
-    function findOwningElectricalRoot(cell) {
-      var current = cell;
-      while (current != null) {
-        if (deps.isElectricalRoot(current)) {
-          return current;
-        }
-        current = model.getParent(current);
-      }
-      return null;
-    }
-    function isBlockedComposeTarget(cell) {
-      var session = state.instanceComposeSession;
-      var ownerRoot;
-      if (session == null || session.root == null || cell == null) {
-        return false;
-      }
-      if (cell == session.root) {
+    return {
+      deps,
+      graph: ctx.graph,
+      model: ctx.model,
+      state: ctx.state
+    };
+  }
+  function isCellDescendantOf(cell, ancestor) {
+    var model = getComposeRuntime().model;
+    while (cell != null) {
+      if (cell == ancestor) {
         return true;
       }
-      ownerRoot = findOwningElectricalRoot(cell);
-      return ownerRoot == session.root && deps.isPluginInternalCell(cell);
+      cell = model.getParent(cell);
     }
-    function isLockedComposedChild(cell) {
-      var composeSession = state.instanceComposeSession;
-      if (cell == null || deps.isDrawingFrame(cell) || deps.isCabinetSegment(cell)) {
-        return false;
-      }
-      var ownerRoot = findOwningElectricalRoot(model.getParent(cell));
-      if (ownerRoot == null) {
-        return false;
-      }
-      if (composeSession != null && composeSession.root == ownerRoot) {
-        return false;
-      }
-      return true;
-    }
-    function isComposableCandidateCell(cell, root) {
-      return cell != null && !model.isEdge(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isCabinetGap(cell) && !deps.isPluginInternalCell(cell) && cell != root && !isCellDescendantOf(cell, root) && (deps.isElectricalRoot(cell) || deps.shouldExportGenericObject(cell));
-    }
-    function filterTopLevelSelection(cells) {
-      var result = [];
-      var i;
-      var j;
-      var nested;
-      for (i = 0; i < cells.length; i++) {
-        nested = false;
-        for (j = 0; j < cells.length; j++) {
-          if (i != j && isCellDescendantOf(cells[i], cells[j])) {
-            nested = true;
-            break;
-          }
-        }
-        if (!nested) {
-          result.push(cells[i]);
-        }
-      }
-      return result;
-    }
-    function collectComposableSelection(root) {
-      var selection = graph.getSelectionCells();
-      var candidates = [];
-      var i;
-      for (i = 0; i < selection.length; i++) {
-        if (isComposableCandidateCell(selection[i], root)) {
-          candidates.push(selection[i]);
-        }
-      }
-      return filterTopLevelSelection(candidates);
-    }
-    function collectComposeDragCandidates(root, eventCell) {
-      var candidates = collectComposableSelection(root);
-      if (candidates.length == 0 && isComposableCandidateCell(eventCell, root)) {
-        candidates = [eventCell];
-      }
-      return filterTopLevelSelection(candidates);
-    }
-    function collectComposableCells(root) {
-      var cells = model.cells || {};
-      var result = [];
-      var id;
-      var cell;
-      for (id in cells) {
-        if (!Object.prototype.hasOwnProperty.call(cells, id)) {
-          continue;
-        }
-        cell = cells[id];
-        if (isComposableCandidateCell(cell, root)) {
-          result.push(cell);
-        }
-      }
-      return filterTopLevelSelection(result);
-    }
-    function intersectsComposeZone(cell, zone) {
-      var bounds = getCellViewBounds(cell);
-      if (bounds == null || zone == null) {
-        return false;
-      }
-      return !(bounds.x + bounds.width < zone.left || bounds.x > zone.left + zone.width || bounds.y + bounds.height < zone.top || bounds.y > zone.top + zone.height);
-    }
-    function collectComposableCellsInZone(root, zone) {
-      var candidates = collectComposableCells(root);
-      var result = [];
-      var i;
-      for (i = 0; i < candidates.length; i++) {
-        if (intersectsComposeZone(candidates[i], zone)) {
-          result.push(candidates[i]);
-        }
-      }
-      return result;
-    }
-    function toCellIdMap(cells) {
-      var map = {};
-      var i;
-      for (i = 0; i < cells.length; i++) {
-        if (cells[i] != null && deps.trim(cells[i].id).length > 0) {
-          map[cells[i].id] = true;
-        }
-      }
-      return map;
-    }
-    function attachCellsToElectricalRoot(root, cells) {
-      var rootBounds = getCellModelBounds(root);
-      var attached = [];
-      var i;
-      if (rootBounds == null) {
-        throw new Error("\u5F53\u524D\u76EE\u6807\u56FE\u5143\u65E0\u6CD5\u8BA1\u7B97\u4F4D\u7F6E\uFF0C\u4E0D\u80FD\u6267\u884C\u7EC4\u5408");
-      }
-      state.updatingModel = true;
-      model.beginUpdate();
-      try {
-        for (i = 0; i < cells.length; i++) {
-          var cell = cells[i];
-          var geometry = model.getGeometry(cell);
-          var cellBounds = getCellModelBounds(cell);
-          if (geometry == null || cellBounds == null || model.getParent(cell) == root) {
-            continue;
-          }
-          geometry = geometry.clone();
-          geometry.relative = false;
-          geometry.x = cellBounds.x - rootBounds.x;
-          geometry.y = cellBounds.y - rootBounds.y;
-          model.add(root, cell, model.getChildCount(root));
-          model.setGeometry(cell, geometry);
-          attached.push(cell);
-        }
-      } finally {
-        model.endUpdate();
-        state.updatingModel = false;
-      }
-      return attached;
-    }
-    function enterInstanceComposeMode() {
-      if (state.instanceComposeSession != null) {
-        exitInstanceComposeMode();
-        return;
-      }
-      var root = deps.findElectricalRoot(graph.getSelectionCell());
-      if (root == null) {
-        deps.showStatus("\u8BF7\u5148\u9009\u4E2D\u4E00\u4E2A\u81EA\u5B9A\u4E49\u56FE\u5143\u5B9E\u4F8B\uFF0C\u518D\u6267\u884C\u7EC4\u5408\u56FE\u5143\u5B9E\u4F8B", true);
-        deps.setCanvasStatus("\u8BF7\u5148\u9009\u4E2D\u4E00\u4E2A\u81EA\u5B9A\u4E49\u56FE\u5143\u5B9E\u4F8B\uFF0C\u518D\u6267\u884C\u7EC4\u5408\u56FE\u5143\u5B9E\u4F8B");
-        return;
-      }
-      state.instanceComposeSession = {
-        root,
-        pointerDown: false,
-        dragging: false,
-        startPoint: null,
-        dragCandidates: [],
-        zoneBounds: null,
-        initialZoneCellIds: {}
-      };
-      deps.closeGapDialogWindow();
-      deps.exitPortSwapMode(false);
-      graph.clearSelection();
-      if (graph.selectionCellsHandler != null && typeof graph.selectionCellsHandler.clear === "function") {
-        graph.selectionCellsHandler.clear();
-      }
-      refreshInstanceComposeOverlay();
-      state.instanceComposeSession.initialZoneCellIds = toCellIdMap(
-        collectComposableCellsInZone(
-          root,
-          state.instanceComposeSession.zoneBounds
-        )
-      );
-      deps.setCanvasStatus(
-        "\u7EC4\u5408\u6A21\u5F0F\uFF1A\u628A\u666E\u901A\u56FE\u5143\u6216\u81EA\u5B9A\u4E49\u56FE\u5143\u62D6\u5165\u7EFF\u8272\u533A\u57DF\uFF0C\u7136\u540E\u70B9\u51FB\u5B8C\u6210"
-      );
-      state.instanceComposeKeyHandler = function(evt) {
-        if (evt.key == "Escape") {
-          exitInstanceComposeMode();
-        }
-      };
-      mxEvent.addListener(document, "keydown", state.instanceComposeKeyHandler);
+    return false;
+  }
+  function getCellViewBounds(cell) {
+    var graph = getComposeRuntime().graph;
+    var stateView = graph.view.getState(cell);
+    if (stateView == null) {
+      return null;
     }
     return {
-      collectComposeDragCandidates,
-      enterInstanceComposeMode,
-      exitInstanceComposeMode,
-      isBlockedComposeTarget,
-      isLockedComposedChild,
-      refreshInstanceComposeOverlay
+      x: stateView.x,
+      y: stateView.y,
+      width: stateView.width,
+      height: stateView.height
     };
   }
+  function getCellModelBounds(cell) {
+    var runtime = getComposeRuntime();
+    var graph = runtime.graph;
+    var model = runtime.model;
+    var stateView = graph.view.getState(cell);
+    var scale = graph.view.scale || 1;
+    var translate = graph.view.translate || { x: 0, y: 0 };
+    if (stateView != null) {
+      return {
+        x: stateView.x / scale - translate.x,
+        y: stateView.y / scale - translate.y,
+        width: stateView.width / scale,
+        height: stateView.height / scale
+      };
+    }
+    var geometry = model.getGeometry(cell);
+    if (geometry == null) {
+      return null;
+    }
+    return {
+      x: geometry.x,
+      y: geometry.y,
+      width: geometry.width,
+      height: geometry.height
+    };
+  }
+  function getUnionViewBounds(cells) {
+    var bounds = null;
+    var i;
+    for (i = 0; i < cells.length; i++) {
+      var cellBounds = getCellViewBounds(cells[i]);
+      if (cellBounds == null) {
+        continue;
+      }
+      if (bounds == null) {
+        bounds = {
+          x: cellBounds.x,
+          y: cellBounds.y,
+          width: cellBounds.width,
+          height: cellBounds.height
+        };
+      } else {
+        var right = Math.max(
+          bounds.x + bounds.width,
+          cellBounds.x + cellBounds.width
+        );
+        var bottom = Math.max(
+          bounds.y + bounds.height,
+          cellBounds.y + cellBounds.height
+        );
+        bounds.x = Math.min(bounds.x, cellBounds.x);
+        bounds.y = Math.min(bounds.y, cellBounds.y);
+        bounds.width = right - bounds.x;
+        bounds.height = bottom - bounds.y;
+      }
+    }
+    return bounds;
+  }
+  function getInstanceComposeZoneBounds(root, extraCells) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var candidates = [root];
+    var bounds;
+    var container = graph.container;
+    var scrollLeft = container.scrollLeft;
+    var scrollTop = container.scrollTop;
+    var viewportLeft = scrollLeft + 20;
+    var viewportTop = scrollTop + 20;
+    var viewportRight = scrollLeft + container.clientWidth - 20;
+    var viewportBottom = scrollTop + container.clientHeight - 20;
+    var width;
+    var height;
+    var left;
+    var top;
+    var maxLeft;
+    var maxTop;
+    if (Array.isArray(extraCells) && extraCells.length > 0) {
+      candidates = candidates.concat(extraCells);
+    }
+    bounds = getUnionViewBounds(candidates);
+    if (bounds == null) {
+      return null;
+    }
+    width = Math.max(deps.minWidth, bounds.width + deps.padding * 2);
+    height = Math.max(deps.minHeight, bounds.height + deps.padding * 2);
+    left = bounds.x + (bounds.width - width) / 2;
+    top = bounds.y + (bounds.height - height) / 2;
+    maxLeft = Math.max(viewportLeft, viewportRight - width);
+    maxTop = Math.max(viewportTop, viewportBottom - height);
+    return {
+      left: deps.clamp(Math.round(left), viewportLeft, maxLeft),
+      top: deps.clamp(Math.round(top), viewportTop, maxTop),
+      width: Math.round(Math.min(width, viewportRight - viewportLeft)),
+      height: Math.round(Math.min(height, viewportBottom - viewportTop))
+    };
+  }
+  function clearInstanceComposeOverlay() {
+    var state = getComposeRuntime().state;
+    if (state.instanceComposeOverlay != null && state.instanceComposeOverlay.parentNode != null) {
+      state.instanceComposeOverlay.parentNode.removeChild(
+        state.instanceComposeOverlay
+      );
+    }
+    state.instanceComposeOverlay = null;
+  }
+  function completeInstanceComposeMode() {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var state = runtime.state;
+    var session = state.instanceComposeSession;
+    var root;
+    var candidates;
+    var matched = [];
+    var attached;
+    var i;
+    if (session == null) {
+      return;
+    }
+    root = session.root;
+    if (root == null || root.parent == null) {
+      exitInstanceComposeMode();
+      return;
+    }
+    candidates = collectComposableCellsInZone(root, session.zoneBounds);
+    for (i = 0; i < candidates.length; i++) {
+      if (!session.initialZoneCellIds[candidates[i].id]) {
+        matched.push(candidates[i]);
+      }
+    }
+    if (matched.length == 0) {
+      deps.showStatus("\u7EFF\u8272\u533A\u57DF\u5185\u6CA1\u6709\u65B0\u7684\u53EF\u7EC4\u5408\u56FE\u5143", true);
+      return;
+    }
+    attached = attachCellsToElectricalRoot(root, matched);
+    if (attached.length == 0) {
+      deps.showStatus("\u6CA1\u6709\u68C0\u6D4B\u5230\u53EF\u7EC4\u5408\u7684\u56FE\u5143", true);
+      return;
+    }
+    exitInstanceComposeMode(false);
+    graph.setSelectionCell(root);
+    deps.showStatus("\u5DF2\u7EC4\u5408\u5230\u5F53\u524D\u56FE\u5143\u5B9E\u4F8B", false);
+    deps.setCanvasStatus("");
+  }
+  function renderInstanceComposeOverlay(session) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var state = runtime.state;
+    var containerRect = graph.container.getBoundingClientRect();
+    var zone = getInstanceComposeZoneBounds(
+      session.root,
+      session.dragging ? session.dragCandidates : null
+    );
+    var scrollLeft = graph.container.scrollLeft || 0;
+    var scrollTop = graph.container.scrollTop || 0;
+    var container = document.createElement("div");
+    var shade = document.createElement("div");
+    var zoneNode = document.createElement("div");
+    var hint = document.createElement("div");
+    var actions = document.createElement("div");
+    var completeButton = document.createElement("button");
+    var cancelButton = document.createElement("button");
+    var controlsTop;
+    clearInstanceComposeOverlay();
+    if (zone == null) {
+      return;
+    }
+    session.zoneBounds = zone;
+    container.style.position = "fixed";
+    container.style.left = Math.round(containerRect.left) + "px";
+    container.style.top = Math.round(containerRect.top) + "px";
+    container.style.width = graph.container.clientWidth + "px";
+    container.style.height = graph.container.clientHeight + "px";
+    container.style.pointerEvents = "none";
+    container.style.zIndex = "3";
+    shade.style.position = "absolute";
+    shade.style.left = "0";
+    shade.style.top = "0";
+    shade.style.width = "100%";
+    shade.style.height = "100%";
+    shade.style.background = "rgba(15, 23, 42, 0.18)";
+    container.appendChild(shade);
+    zoneNode.style.position = "absolute";
+    zoneNode.style.left = zone.left - scrollLeft + "px";
+    zoneNode.style.top = zone.top - scrollTop + "px";
+    zoneNode.style.width = zone.width + "px";
+    zoneNode.style.height = zone.height + "px";
+    zoneNode.style.border = "3px solid #16a34a";
+    zoneNode.style.borderRadius = "10px";
+    zoneNode.style.background = "rgba(22,163,74,0.06)";
+    zoneNode.style.boxSizing = "border-box";
+    zoneNode.style.backdropFilter = "none";
+    container.appendChild(zoneNode);
+    hint.style.position = "absolute";
+    hint.style.left = zone.left - scrollLeft + "px";
+    hint.style.top = Math.max(8, zone.top - 28 - scrollTop) + "px";
+    hint.style.padding = "4px 10px";
+    hint.style.maxWidth = Math.max(120, zone.width - 176) + "px";
+    hint.style.borderRadius = "6px";
+    hint.style.background = "rgba(22,163,74,0.92)";
+    hint.style.color = "#ffffff";
+    hint.style.fontSize = "12px";
+    hint.style.fontWeight = "bold";
+    hint.style.whiteSpace = "nowrap";
+    hint.style.overflow = "hidden";
+    hint.style.textOverflow = "ellipsis";
+    hint.innerText = "\u62D6\u5165\u7EFF\u8272\u533A\u57DF\u5373\u53EF\u7EC4\u5408\u5230\u5F53\u524D\u56FE\u5143\u5B9E\u4F8B";
+    container.appendChild(hint);
+    controlsTop = Math.max(8, zone.top - 30 - scrollTop);
+    actions.style.position = "absolute";
+    actions.style.right = Math.max(
+      8,
+      graph.container.clientWidth - (zone.left + zone.width - scrollLeft)
+    ) + "px";
+    actions.style.top = controlsTop + "px";
+    actions.style.display = "flex";
+    actions.style.gap = "8px";
+    actions.style.pointerEvents = "auto";
+    completeButton.type = "button";
+    completeButton.innerText = "\u5B8C\u6210";
+    completeButton.style.height = "28px";
+    completeButton.style.padding = "0 14px";
+    completeButton.style.border = "1px solid #16a34a";
+    completeButton.style.borderRadius = "6px";
+    completeButton.style.background = "#16a34a";
+    completeButton.style.color = "#ffffff";
+    completeButton.style.cursor = "pointer";
+    mxEvent.addListener(completeButton, "click", function(evt) {
+      mxEvent.consume(evt);
+      completeInstanceComposeMode();
+    });
+    actions.appendChild(completeButton);
+    cancelButton.type = "button";
+    cancelButton.innerText = "\u53D6\u6D88";
+    cancelButton.style.height = "28px";
+    cancelButton.style.padding = "0 14px";
+    cancelButton.style.border = "1px solid #cbd5e1";
+    cancelButton.style.borderRadius = "6px";
+    cancelButton.style.background = "#ffffff";
+    cancelButton.style.color = "#334155";
+    cancelButton.style.cursor = "pointer";
+    mxEvent.addListener(cancelButton, "click", function(evt) {
+      mxEvent.consume(evt);
+      exitInstanceComposeMode();
+    });
+    actions.appendChild(cancelButton);
+    container.appendChild(actions);
+    document.body.appendChild(container);
+    state.instanceComposeOverlay = container;
+  }
+  function refreshInstanceComposeOverlay() {
+    var state = getComposeRuntime().state;
+    if (state.instanceComposeSession == null) {
+      return;
+    }
+    renderInstanceComposeOverlay(state.instanceComposeSession);
+  }
+  function exitInstanceComposeMode(clearStatus) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    clearInstanceComposeOverlay();
+    state.instanceComposeSession = null;
+    if (state.instanceComposeKeyHandler != null) {
+      mxEvent.removeListener(
+        document,
+        "keydown",
+        state.instanceComposeKeyHandler
+      );
+      state.instanceComposeKeyHandler = null;
+    }
+    if (clearStatus !== false) {
+      deps.setCanvasStatus("");
+    }
+  }
+  function findOwningElectricalRoot(cell) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var current = cell;
+    while (current != null) {
+      if (deps.isElectricalRoot(current)) {
+        return current;
+      }
+      current = model.getParent(current);
+    }
+    return null;
+  }
+  function isBlockedComposeTarget(cell) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    var session = state.instanceComposeSession;
+    var ownerRoot;
+    if (session == null || session.root == null || cell == null) {
+      return false;
+    }
+    if (cell == session.root) {
+      return true;
+    }
+    ownerRoot = findOwningElectricalRoot(cell);
+    return ownerRoot == session.root && deps.isPluginInternalCell(cell);
+  }
+  function isLockedComposedChild(cell) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var state = runtime.state;
+    var composeSession = state.instanceComposeSession;
+    if (cell == null || deps.isDrawingFrame(cell) || deps.isCabinetSegment(cell)) {
+      return false;
+    }
+    var ownerRoot = findOwningElectricalRoot(model.getParent(cell));
+    if (ownerRoot == null) {
+      return false;
+    }
+    if (composeSession != null && composeSession.root == ownerRoot) {
+      return false;
+    }
+    return true;
+  }
+  function isComposableCandidateCell(cell, root) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    return cell != null && !model.isEdge(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isCabinetGap(cell) && !deps.isPluginInternalCell(cell) && cell != root && !isCellDescendantOf(cell, root) && (deps.isElectricalRoot(cell) || deps.shouldExportGenericObject(cell));
+  }
+  function filterTopLevelSelection(cells) {
+    var result = [];
+    var i;
+    var j;
+    var nested;
+    for (i = 0; i < cells.length; i++) {
+      nested = false;
+      for (j = 0; j < cells.length; j++) {
+        if (i != j && isCellDescendantOf(cells[i], cells[j])) {
+          nested = true;
+          break;
+        }
+      }
+      if (!nested) {
+        result.push(cells[i]);
+      }
+    }
+    return result;
+  }
+  function collectComposableSelection(root) {
+    var graph = getComposeRuntime().graph;
+    var selection = graph.getSelectionCells();
+    var candidates = [];
+    var i;
+    for (i = 0; i < selection.length; i++) {
+      if (isComposableCandidateCell(selection[i], root)) {
+        candidates.push(selection[i]);
+      }
+    }
+    return filterTopLevelSelection(candidates);
+  }
+  function collectComposeDragCandidates(root, eventCell) {
+    var candidates = collectComposableSelection(root);
+    if (candidates.length == 0 && isComposableCandidateCell(eventCell, root)) {
+      candidates = [eventCell];
+    }
+    return filterTopLevelSelection(candidates);
+  }
+  function collectComposableCells(root) {
+    var model = getComposeRuntime().model;
+    var cells = model.cells || {};
+    var result = [];
+    var id;
+    var cell;
+    for (id in cells) {
+      if (!Object.prototype.hasOwnProperty.call(cells, id)) {
+        continue;
+      }
+      cell = cells[id];
+      if (isComposableCandidateCell(cell, root)) {
+        result.push(cell);
+      }
+    }
+    return filterTopLevelSelection(result);
+  }
+  function intersectsComposeZone(cell, zone) {
+    var bounds = getCellViewBounds(cell);
+    if (bounds == null || zone == null) {
+      return false;
+    }
+    return !(bounds.x + bounds.width < zone.left || bounds.x > zone.left + zone.width || bounds.y + bounds.height < zone.top || bounds.y > zone.top + zone.height);
+  }
+  function collectComposableCellsInZone(root, zone) {
+    var candidates = collectComposableCells(root);
+    var result = [];
+    var i;
+    for (i = 0; i < candidates.length; i++) {
+      if (intersectsComposeZone(candidates[i], zone)) {
+        result.push(candidates[i]);
+      }
+    }
+    return result;
+  }
+  function toCellIdMap(cells) {
+    var trim2 = getComposeRuntime().deps.trim;
+    var map = {};
+    var i;
+    for (i = 0; i < cells.length; i++) {
+      if (cells[i] != null && trim2(cells[i].id).length > 0) {
+        map[cells[i].id] = true;
+      }
+    }
+    return map;
+  }
+  function attachCellsToElectricalRoot(root, cells) {
+    var runtime = getComposeRuntime();
+    var model = runtime.model;
+    var state = runtime.state;
+    var rootBounds = getCellModelBounds(root);
+    var attached = [];
+    var i;
+    if (rootBounds == null) {
+      throw new Error("\u5F53\u524D\u76EE\u6807\u56FE\u5143\u65E0\u6CD5\u8BA1\u7B97\u4F4D\u7F6E\uFF0C\u4E0D\u80FD\u6267\u884C\u7EC4\u5408");
+    }
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      for (i = 0; i < cells.length; i++) {
+        var cell = cells[i];
+        var geometry = model.getGeometry(cell);
+        var cellBounds = getCellModelBounds(cell);
+        if (geometry == null || cellBounds == null || model.getParent(cell) == root) {
+          continue;
+        }
+        geometry = geometry.clone();
+        geometry.relative = false;
+        geometry.x = cellBounds.x - rootBounds.x;
+        geometry.y = cellBounds.y - rootBounds.y;
+        model.add(root, cell, model.getChildCount(root));
+        model.setGeometry(cell, geometry);
+        attached.push(cell);
+      }
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+    return attached;
+  }
+  function enterInstanceComposeMode() {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var state = runtime.state;
+    if (state.instanceComposeSession != null) {
+      exitInstanceComposeMode();
+      return;
+    }
+    var root = deps.findElectricalRoot(graph.getSelectionCell());
+    if (root == null) {
+      deps.showStatus("\u8BF7\u5148\u9009\u4E2D\u4E00\u4E2A\u81EA\u5B9A\u4E49\u56FE\u5143\u5B9E\u4F8B\uFF0C\u518D\u6267\u884C\u7EC4\u5408\u56FE\u5143\u5B9E\u4F8B", true);
+      deps.setCanvasStatus("\u8BF7\u5148\u9009\u4E2D\u4E00\u4E2A\u81EA\u5B9A\u4E49\u56FE\u5143\u5B9E\u4F8B\uFF0C\u518D\u6267\u884C\u7EC4\u5408\u56FE\u5143\u5B9E\u4F8B");
+      return;
+    }
+    state.instanceComposeSession = {
+      root,
+      pointerDown: false,
+      dragging: false,
+      startPoint: null,
+      dragCandidates: [],
+      zoneBounds: null,
+      initialZoneCellIds: {}
+    };
+    deps.closeGapDialogWindow();
+    deps.exitPortSwapMode(false);
+    graph.clearSelection();
+    if (graph.selectionCellsHandler != null && typeof graph.selectionCellsHandler.clear === "function") {
+      graph.selectionCellsHandler.clear();
+    }
+    refreshInstanceComposeOverlay();
+    state.instanceComposeSession.initialZoneCellIds = toCellIdMap(
+      collectComposableCellsInZone(
+        root,
+        state.instanceComposeSession.zoneBounds
+      )
+    );
+    deps.setCanvasStatus(
+      "\u7EC4\u5408\u6A21\u5F0F\uFF1A\u628A\u666E\u901A\u56FE\u5143\u6216\u81EA\u5B9A\u4E49\u56FE\u5143\u62D6\u5165\u7EFF\u8272\u533A\u57DF\uFF0C\u7136\u540E\u70B9\u51FB\u5B8C\u6210"
+    );
+    state.instanceComposeKeyHandler = function(evt) {
+      if (evt.key == "Escape") {
+        exitInstanceComposeMode();
+      }
+    };
+    mxEvent.addListener(document, "keydown", state.instanceComposeKeyHandler);
+  }
+  var composeModeApi = {
+    collectComposeDragCandidates,
+    enterInstanceComposeMode,
+    exitInstanceComposeMode,
+    isBlockedComposeTarget,
+    isLockedComposedChild,
+    refreshInstanceComposeOverlay
+  };
 
   // runtime/modelSync.js
   function buildModelSyncDeps() {
     var app = getApp();
     return {
       ctx: app.ctx,
-      isObject: app.utils.isObject,
-      cloneJson: app.utils.cloneJson,
+      isObject,
+      cloneJson,
       exportDiagramSnapshot: app.domains.snapshot.exportDiagramSnapshot,
       computeSnapshotChanges: app.domains.snapshot.computeSnapshotChanges,
-      isElectricalRoot: app.helpers.isElectricalRoot,
+      isElectricalRoot,
       refreshRoot: app.domains.symbol.refreshRoot
     };
   }
-  function createModelSync() {
-    var deps = arguments.length > 0 ? arguments[0] : buildModelSyncDeps();
+  function getModelSyncDeps() {
+    return buildModelSyncDeps();
+  }
+  function recordCanvasOperation(sender, evt) {
+    var deps = getModelSyncDeps();
+    var ctx = deps.ctx;
+    var state = ctx.state;
+    if (state.suspendOperationRecording || state.updatingModel) {
+      return;
+    }
+    var edit = evt != null ? evt.getProperty("edit") : null;
+    var modelChanges = edit != null ? edit.changes : null;
+    var previousSnapshot = state.lastOperationSnapshot;
+    var currentSnapshot;
+    var diff;
+    var createdAt;
+    var sequence;
+    var i;
+    if (!Array.isArray(modelChanges) || modelChanges.length == 0) {
+      return;
+    }
+    currentSnapshot = deps.exportDiagramSnapshot();
+    previousSnapshot = deps.isObject(previousSnapshot) ? previousSnapshot : deps.cloneJson(currentSnapshot);
+    diff = deps.computeSnapshotChanges(previousSnapshot, currentSnapshot);
+    state.lastOperationSnapshot = deps.cloneJson(currentSnapshot);
+    if (!Array.isArray(diff.changes) || diff.changes.length == 0) {
+      return;
+    }
+    createdAt = (/* @__PURE__ */ new Date()).toISOString();
+    sequence = state.nextChangeSequence++;
+    for (i = 0; i < diff.changes.length; i++) {
+      var change = deps.cloneJson(diff.changes[i]);
+      change.sequence = sequence;
+      change.createdAt = createdAt;
+      state.pendingChangeRecords.push(change);
+    }
+  }
+  function handleModelChange(sender, evt) {
+    var deps = getModelSyncDeps();
     var ctx = deps.ctx;
     var model = ctx.model;
     var state = ctx.state;
-    function recordCanvasOperation(sender, evt) {
-      if (state.suspendOperationRecording || state.updatingModel) {
-        return;
-      }
-      var edit = evt != null ? evt.getProperty("edit") : null;
-      var modelChanges = edit != null ? edit.changes : null;
-      var previousSnapshot = state.lastOperationSnapshot;
-      var currentSnapshot;
-      var diff;
-      var createdAt;
-      var sequence;
-      var i;
-      if (!Array.isArray(modelChanges) || modelChanges.length == 0) {
-        return;
-      }
-      currentSnapshot = deps.exportDiagramSnapshot();
-      previousSnapshot = deps.isObject(previousSnapshot) ? previousSnapshot : deps.cloneJson(currentSnapshot);
-      diff = deps.computeSnapshotChanges(previousSnapshot, currentSnapshot);
-      state.lastOperationSnapshot = deps.cloneJson(currentSnapshot);
-      if (!Array.isArray(diff.changes) || diff.changes.length == 0) {
-        return;
-      }
-      createdAt = (/* @__PURE__ */ new Date()).toISOString();
-      sequence = state.nextChangeSequence++;
-      for (i = 0; i < diff.changes.length; i++) {
-        var change = deps.cloneJson(diff.changes[i]);
-        change.sequence = sequence;
-        change.createdAt = createdAt;
-        state.pendingChangeRecords.push(change);
-      }
+    if (state.updatingModel) {
+      return;
     }
-    function handleModelChange(sender, evt) {
-      if (state.updatingModel) {
-        return;
-      }
-      var changes = evt.getProperty("edit").changes;
-      var resizeRoots = {};
-      var hasResize = false;
-      var i;
-      for (i = 0; i < changes.length; i++) {
-        var change = changes[i];
-        if (change.constructor == mxGeometryChange && change.cell != null) {
-          if (deps.isElectricalRoot(change.cell)) {
-            var previous = change.previous;
-            var geometry = model.getGeometry(change.cell);
-            if (previous != null && geometry != null && (previous.width != geometry.width || previous.height != geometry.height)) {
-              resizeRoots[change.cell.id] = change.cell;
-            }
+    var changes = evt.getProperty("edit").changes;
+    var resizeRoots = {};
+    var hasResize = false;
+    var i;
+    for (i = 0; i < changes.length; i++) {
+      var change = changes[i];
+      if (change.constructor == mxGeometryChange && change.cell != null) {
+        if (deps.isElectricalRoot(change.cell)) {
+          var previous = change.previous;
+          var geometry = model.getGeometry(change.cell);
+          if (previous != null && geometry != null && (previous.width != geometry.width || previous.height != geometry.height)) {
+            resizeRoots[change.cell.id] = change.cell;
           }
         }
       }
-      for (var key in resizeRoots) {
-        if (resizeRoots.hasOwnProperty(key)) {
-          hasResize = true;
-          break;
-        }
-      }
-      if (!hasResize) {
-        return;
-      }
-      state.updatingModel = true;
-      model.beginUpdate();
-      try {
-        for (var id in resizeRoots) {
-          if (resizeRoots.hasOwnProperty(id)) {
-            deps.refreshRoot(resizeRoots[id]);
-          }
-        }
-      } finally {
-        model.endUpdate();
-        state.updatingModel = false;
+    }
+    for (var key in resizeRoots) {
+      if (resizeRoots.hasOwnProperty(key)) {
+        hasResize = true;
+        break;
       }
     }
-    return {
-      handleModelChange,
-      recordCanvasOperation
-    };
+    if (!hasResize) {
+      return;
+    }
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      for (var id in resizeRoots) {
+        if (resizeRoots.hasOwnProperty(id)) {
+          deps.refreshRoot(resizeRoots[id]);
+        }
+      }
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
   }
+  var modelSyncApi = {
+    handleModelChange,
+    recordCanvasOperation
+  };
 
   // runtime/canvasFeatures.js
   var ACTION_ITEMS = [
@@ -9697,260 +9856,21 @@
 
   // bootstrap/createApp.js
   function createDomains(app) {
-    var ctx = app.ctx;
-    var constants = app.constants;
-    var utils = app.utils;
-    var helpers = app.helpers;
-    var domains = {};
-    domains.spec = createSpecDomain({
-      trim: utils.trim,
-      isObject: utils.isObject,
-      cloneJson: utils.cloneJson,
-      validateSvg: app.utils.validateSvg,
-      generateSymbolId: helpers.generateSymbolId,
-      clamp: utils.clamp,
-      toInt: utils.toInt,
-      toFloat: utils.toFloat,
-      nextItemId: helpers.nextItemId,
-      normalizeMode: helpers.normalizeMode,
-      deepMerge: utils.deepMerge,
-      generateInstanceId: helpers.generateInstanceId
-    });
-    domains.symbol = createSymbolDomain({
-      model: ctx.model,
-      ROOT_TAG: constants.ROOT_TAG,
-      ROOT_TYPE: constants.ROOT_TYPE,
-      BODY_TAG: constants.BODY_TAG,
-      BODY_KIND: constants.BODY_KIND,
-      LABEL_TAG: constants.LABEL_TAG,
-      LABEL_KIND: constants.LABEL_KIND,
-      trim: utils.trim,
-      isObject: utils.isObject,
-      normalizeMode: helpers.normalizeMode,
-      normalizeSpec: domains.spec.normalizeSpec,
-      normalizePortLayout: domains.spec.normalizePortLayout,
-      normalizeLabels: domains.spec.normalizeLabels,
-      parsePortLayout: domains.spec.parsePortLayout,
-      getAttr: utils.getAttr,
-      createNode: utils.createNode,
-      createMetaCell: utils.createMetaCell,
-      cloneValue: utils.cloneValue,
-      toStyleImageUri: domains.spec.toStyleImageUri,
-      serializePortLayout: domains.spec.serializePortLayout,
-      buildPortLayout: domains.spec.buildPortLayout,
-      buildResolvedLabels: domains.spec.buildResolvedLabels
-    });
-    domains.frame = createFrameDomain({
-      graph: ctx.graph,
-      model: ctx.model,
-      state: ctx.state,
-      frameTag: constants.FRAME_TAG,
-      frameType: constants.FRAME_TYPE,
-      frameLabelTag: constants.FRAME_LABEL_TAG,
-      frameLabelKind: constants.FRAME_LABEL_KIND,
-      frameMarginRatio: constants.FRAME_MARGIN_RATIO,
-      defaultWidth: constants.FRAME_DEFAULT_WIDTH,
-      defaultHeight: constants.FRAME_DEFAULT_HEIGHT,
-      trim: utils.trim,
-      toInt: utils.toInt,
-      isObject: utils.isObject,
-      getAttr: utils.getAttr,
-      createNode: utils.createNode,
-      createMetaCell: utils.createMetaCell,
-      generateFrameId: helpers.generateFrameId,
-      isDrawingFrame: helpers.isDrawingFrame,
-      showStatus: app.showStatus,
-      setCanvasStatus: app.setCanvasStatus
-    });
-    domains.connectionConstraints = createConnectionConstraints({
-      ctx,
-      trim: utils.trim,
-      clamp: utils.clamp,
-      parsePortLayout: domains.spec.parsePortLayout,
-      getAttr: utils.getAttr,
-      buildPortLayout: domains.spec.buildPortLayout,
-      findPortHostRoot: helpers.findPortHostRoot,
-      normalizePortDirection: domains.spec.normalizePortDirection,
-      normalizePortIoMode: domains.spec.normalizePortIoMode,
-      isDrawingFrame: helpers.isDrawingFrame,
-      isCabinetSegment: helpers.isCabinetSegment,
-      isCabinetGap: helpers.isCabinetGap,
-      findDrawingFrame: domains.frame.findDrawingFrame,
-      getCellAbsoluteGeometry: function(cell) {
-        return domains.cabinet.getCellAbsoluteGeometry(cell);
-      },
-      getPortAbsolutePosition: function(root, port) {
-        return domains.cabinet.getPortAbsolutePosition(root, port);
-      }
-    });
-    domains.cabinet = createCabinetDomain({
-      model: ctx.model,
-      state: ctx.state,
-      cabinetTag: constants.CABINET_TAG,
-      cabinetType: constants.CABINET_TYPE,
-      cabinetBodyTag: constants.CABINET_BODY_TAG,
-      cabinetBodyKind: constants.CABINET_BODY_KIND,
-      cabinetGapTag: constants.CABINET_GAP_TAG,
-      cabinetGapType: constants.CABINET_GAP_TYPE,
-      cabinetGapKind: constants.CABINET_GAP_KIND,
-      frameLabelKind: constants.FRAME_LABEL_KIND,
-      frameContentRatio: constants.FRAME_CONTENT_RATIO,
-      frameMarginRatio: constants.FRAME_MARGIN_RATIO,
-      frameHorizontalGap: constants.FRAME_HORIZONTAL_GAP,
-      minPortFollowSpaceRatio: constants.CABINET_MIN_PORT_FOLLOW_SPACE_RATIO,
-      defaultWidth: constants.CABINET_DEFAULT_WIDTH,
-      defaultPortCount: constants.CABINET_DEFAULT_PORT_COUNT,
-      defaultX: constants.CABINET_DEFAULT_X,
-      tailPadding: constants.CABINET_TAIL_PADDING,
-      trim: utils.trim,
-      toInt: utils.toInt,
-      toFloat: utils.toFloat,
-      clamp: utils.clamp,
-      isObject: utils.isObject,
-      cloneJson: utils.cloneJson,
-      normalizePortPoint: domains.spec.normalizePortPoint,
-      generateLogicalCabinetId: helpers.generateLogicalCabinetId,
-      createNode: utils.createNode,
-      createMetaCell: utils.createMetaCell,
-      serializePortLayout: domains.spec.serializePortLayout,
-      getAttr: utils.getAttr,
-      isCabinetSegment: helpers.isCabinetSegment,
-      isCabinetGap: helpers.isCabinetGap,
-      getNormalizedFrameConfig: domains.frame.normalizeFrameConfig,
-      getAllDrawingFrames: domains.frame.getAllDrawingFrames,
-      getFrameConfig: domains.frame.getFrameConfig,
-      getFrameGroupId: domains.frame.getFrameGroupId,
-      getFramePageNumber: domains.frame.getFramePageNumber,
-      getMaxFramePageNumberInGroup: domains.frame.getMaxFramePageNumberInGroup,
-      getRightmostFrameInGroup: domains.frame.getRightmostFrameInGroup,
-      findFrameById: domains.frame.findFrameById,
-      findDrawingFrame: domains.frame.findDrawingFrame,
-      createDrawingFrameCell: domains.frame.createDrawingFrameCell,
-      addTopLevelCell: domains.frame.addTopLevelCell,
-      getEdgePortId: function(edge, root, source) {
-        return domains.snapshot.getEdgePortId(edge, root, source);
-      },
-      getPortMetaById: domains.connectionConstraints.getPortMetaById,
-      parsePortLayout: domains.spec.parsePortLayout,
-      isMovableConnectedTerminal: domains.connectionConstraints.isMovableConnectedTerminal,
-      moveCellToFrameByDelta: domains.connectionConstraints.moveCellToFrameByDelta,
-      setConnectionConstraint: function(edge, root, source, constraint) {
-        ctx.graph.setConnectionConstraint(edge, root, source, constraint);
-      }
-    });
-    domains.snapshot = createSnapshotDomain({
-      graph: ctx.graph,
-      model: ctx.model,
-      state: ctx.state,
-      ui: ctx.ui,
-      BODY_KIND: constants.BODY_KIND,
-      LABEL_KIND: constants.LABEL_KIND,
-      FRAME_LABEL_KIND: constants.FRAME_LABEL_KIND,
-      CABINET_BODY_KIND: constants.CABINET_BODY_KIND,
-      CABINET_GAP_KIND: constants.CABINET_GAP_KIND,
-      FRAME_MARGIN_RATIO: constants.FRAME_MARGIN_RATIO,
-      trim: utils.trim,
-      toInt: utils.toInt,
-      isObject: utils.isObject,
-      cloneJson: utils.cloneJson,
-      createNode: utils.createNode,
-      getAttr: utils.getAttr,
-      uniqueStrings: utils.uniqueStrings,
-      isCabinetGap: helpers.isCabinetGap,
-      isDrawingFrame: helpers.isDrawingFrame,
-      isCabinetSegment: helpers.isCabinetSegment,
-      isElectricalRoot: helpers.isElectricalRoot,
-      extractSpec: domains.symbol.extractSpec,
-      getFrameConfig: domains.frame.getFrameConfig,
-      getFramePageNumber: domains.frame.getFramePageNumber,
-      getFrameGroupId: domains.frame.getFrameGroupId,
-      findFrameById: domains.frame.findFrameById,
-      extractCabinetModel: domains.cabinet.extractCabinetModel,
-      findCabinetSegments: domains.cabinet.findCabinetSegments,
-      getPortMetaById: domains.connectionConstraints.getPortMetaById,
-      findDrawingFrame: domains.frame.findDrawingFrame,
-      findPortHostRoot: helpers.findPortHostRoot,
-      parsePortLayout: domains.spec.parsePortLayout,
-      getAllDrawingFrames: domains.frame.getAllDrawingFrames,
-      exitInstanceComposeMode: function(clearStatus) {
-        return app.runtime != null && typeof app.runtime.exitInstanceComposeMode === "function" ? app.runtime.exitInstanceComposeMode(clearStatus) : null;
-      },
-      closeGapDialogWindow: function() {
-        return app.ui != null && typeof app.ui.closeGapDialogWindow === "function" ? app.ui.closeGapDialogWindow() : null;
-      },
-      setSelectedCabinetGap: function(logicalCabinetId, gapIndex) {
-        return domains.cabinet.setSelectedCabinetGap(logicalCabinetId, gapIndex);
-      },
-      exitPortSwapMode: function(clearStatus) {
-        return app.runtime != null && typeof app.runtime.exitPortSwapMode === "function" ? app.runtime.exitPortSwapMode(clearStatus) : null;
-      },
-      createDrawingFrameCell: domains.frame.createDrawingFrameCell,
-      addTopLevelCell: domains.frame.addTopLevelCell,
-      relayoutCabinetByModel: domains.cabinet.relayoutCabinetByModel,
-      normalizeSpec: domains.spec.normalizeSpec,
-      buildSymbolCell: domains.symbol.buildSymbolCell,
-      resetPendingChangeRecords: helpers.resetPendingChangeRecords
-    });
+    var domains = app.domains != null ? app.domains : {};
+    app.domains = domains;
+    domains.spec = specDomainApi;
+    domains.connectionConstraints = connectionConstraintsApi;
+    domains.symbol = createSymbolDomain();
+    domains.frame = createFrameDomain();
+    domains.cabinet = createCabinetDomain();
+    domains.snapshot = createSnapshotDomain();
     return domains;
   }
-  function createServices(app) {
-    var ctx = app.ctx;
-    var constants = app.constants;
-    var utils = app.utils;
-    var domains = app.domains;
-    var helpers = app.helpers;
-    return {
-      draftStore: createDraftStore({
-        state: ctx.state,
-        storageKey: constants.TEMPLATE_DRAFT_STORAGE_KEY,
-        trim: utils.trim,
-        cloneJson: utils.cloneJson
-      }),
-      libraryStore: createLibraryStore({
-        ui: ctx.ui,
-        graph: ctx.graph,
-        state: ctx.state,
-        libraryTitle: constants.LIBRARY_TITLE,
-        trim: utils.trim,
-        isObject: utils.isObject,
-        cloneJson: utils.cloneJson,
-        normalizeSpec: domains.spec.normalizeSpec,
-        isElectricalRoot: helpers.isElectricalRoot,
-        extractSpec: domains.symbol.extractSpec,
-        buildSymbolCell: domains.symbol.buildSymbolCell,
-        showStatus: app.showStatus
-      }),
-      backend: createBackendService({
-        state: ctx.state,
-        constants,
-        trim: utils.trim,
-        toInt: utils.toInt,
-        cloneJson: utils.cloneJson,
-        isObject: utils.isObject,
-        normalizeSnapshotGenericIds: domains.snapshot.normalizeSnapshotGenericIds,
-        exportDiagramSnapshot: domains.snapshot.exportDiagramSnapshot,
-        resetPendingChangeRecords: helpers.resetPendingChangeRecords,
-        computeSnapshotChanges: domains.snapshot.computeSnapshotChanges,
-        collectChangeObjectIds: domains.snapshot.collectChangeObjectIds,
-        uniqueStrings: utils.uniqueStrings,
-        showStatus: app.showStatus,
-        restoreDiagramSnapshot: domains.snapshot.restoreDiagramSnapshot
-      })
-    };
-  }
   function createUi(app) {
-    var utils = app.utils;
-    var helpers = app.helpers;
     var spec = app.domains.spec;
-    var symbol = app.domains.symbol;
-    var frame = app.domains.frame;
-    var cabinet = app.domains.cabinet;
-    var library = app.services.libraryStore;
-    var draftStore = app.services.draftStore;
-    var backend = app.services.backend;
-    var constants = app.constants;
+    var library = libraryStoreApi;
     var uiApi = {};
-    var cabinetDialogs = createCabinetDialogs();
+    var cabinetDialogs = cabinetDialogsApi;
     uiApi.closeGapDialogWindow = cabinetDialogs.closeGapDialogWindow;
     uiApi.openInsertCabinetDialog = cabinetDialogs.openInsertCabinetDialog;
     uiApi.openCabinetGapDialog = cabinetDialogs.openCabinetGapDialog;
@@ -9964,16 +9884,16 @@
       return openCreateFromLibraryDialog(
         {
           library,
-          trim: utils.trim,
+          trim,
           getLibraryEntrySpec: library.getLibraryEntrySpec,
-          showStatus: app.showStatus,
+          showStatus,
           flattenSchemaFields: spec.flattenSchemaFields,
           normalizeSchemaType: spec.normalizeSchemaType,
-          toFloat: utils.toFloat,
+          toFloat,
           setValueByPath: spec.setValueByPath,
           buildInstanceSpec: spec.buildInstanceSpec,
-          createButton: utils.createButton,
-          insertIntoGraph: app.commands.insertIntoGraph
+          createButton: createPluginButton,
+          insertIntoGraph: commandApi.insertIntoGraph
         },
         preferredSymbolId
       );
@@ -9981,7 +9901,7 @@
     uiApi.openTemplateBrowserDialog = function() {
       return openTemplateBrowserDialog();
     };
-    var templateEditorUi = createTemplateEditor();
+    var templateEditorUi = templateEditorApi;
     uiApi.updateSelectedItem = templateEditorUi.updateSelectedItem;
     uiApi.updatePreview = templateEditorUi.updatePreview;
     uiApi.createWindow = templateEditorUi.createWindow;
@@ -9990,7 +9910,7 @@
     uiApi.openEditInstanceDialog = function() {
       return openEditInstanceDialog();
     };
-    var backendDialogs = createBackendDialogs();
+    var backendDialogs = backendDialogsApi;
     uiApi.openBackendSaveDialog = backendDialogs.openBackendSaveDialog;
     uiApi.openBackendLoadDialog = backendDialogs.openBackendLoadDialog;
     uiApi.openBackendRollbackDialog = backendDialogs.openBackendRollbackDialog;
@@ -9998,26 +9918,26 @@
   }
   function createRuntime(app) {
     var runtimeApi = {};
-    var portSwapMode = createPortSwapMode();
+    var portSwapMode = portSwapModeApi;
     runtimeApi.applyEdgePortConstraintMetadata = portSwapMode.applyEdgePortConstraintMetadata;
     runtimeApi.clearPortSwapOverlay = portSwapMode.clearPortSwapOverlay;
     runtimeApi.commitPortSwap = portSwapMode.commitPortSwap;
     runtimeApi.enterPortSwapMode = portSwapMode.enterPortSwapMode;
     runtimeApi.exitPortSwapMode = portSwapMode.exitPortSwapMode;
     runtimeApi.getNearestCabinetPortFromClick = portSwapMode.getNearestCabinetPortFromClick;
-    var composeMode = createComposeMode();
+    var composeMode = composeModeApi;
     runtimeApi.collectComposeDragCandidates = composeMode.collectComposeDragCandidates;
     runtimeApi.enterInstanceComposeMode = composeMode.enterInstanceComposeMode;
     runtimeApi.exitInstanceComposeMode = composeMode.exitInstanceComposeMode;
     runtimeApi.isBlockedComposeTarget = composeMode.isBlockedComposeTarget;
     runtimeApi.isLockedComposedChild = composeMode.isLockedComposedChild;
     runtimeApi.refreshInstanceComposeOverlay = composeMode.refreshInstanceComposeOverlay;
-    var modelSync = createModelSync();
+    var modelSync = modelSyncApi;
     runtimeApi.recordCanvasOperation = modelSync.recordCanvasOperation;
     runtimeApi.handleModelChange = modelSync.handleModelChange;
     function activateRuntime() {
       portSwapMode.installGraphClickBehavior({
-        isCabinetGap: app.helpers.isCabinetGap,
+        isCabinetGap,
         openCabinetGapDialog: function() {
           var currentApp2 = getApp();
           if (currentApp2.ui == null || typeof currentApp2.ui.openCabinetGapDialog !== "function") {
@@ -10036,25 +9956,25 @@
       });
       app.domains.connectionConstraints.installGraphBehavior({
         applyEdgePortConstraintMetadata: runtimeApi.applyEdgePortConstraintMetadata,
-        setCanvasStatus: app.setCanvasStatus
+        setCanvasStatus
       });
       installCanvasFeatures(app);
       installTopActionBar({
         ui: app.ctx.ui,
-        createButton: app.utils.createButton,
+        createButton: createPluginButton,
         items: ACTION_ITEMS
       });
       app.ctx.ui.addListener("languageChanged", function() {
         installTopActionBar({
           ui: app.ctx.ui,
-          createButton: app.utils.createButton,
+          createButton: createPluginButton,
           items: ACTION_ITEMS
         });
       });
       app.ctx.ui.addListener("currentThemeChanged", function() {
         installTopActionBar({
           ui: app.ctx.ui,
-          createButton: app.utils.createButton,
+          createButton: createPluginButton,
           items: ACTION_ITEMS
         });
       });
@@ -10074,58 +9994,8 @@
       runtime: null,
       ui: null
     };
-    app.utils = {
-      clamp,
-      cloneJson,
-      createBaseUtils,
-      createButton: createPluginButton,
-      createMetaCell,
-      createNode,
-      createXmlUtils,
-      deepMerge,
-      extractSvgSize: function(svg) {
-        return extractSvgSize(svg, toFloat, trim);
-      },
-      generateUuid,
-      getAttr,
-      isObject,
-      normalizeSvg: function(svg) {
-        return validateSvg(svg, trim);
-      },
-      stripFileExtension,
-      toFloat,
-      toInt,
-      toSlug,
-      trim,
-      uniqueStrings,
-      cloneValue: function(node) {
-        return cloneValue(node, constants.ROOT_TAG);
-      },
-      validateSvg: function(svg) {
-        return validateSvg(svg, trim);
-      }
-    };
-    app.helpers = createRuntimeHelpers({
-      ctx,
-      constants,
-      trim,
-      cloneJson,
-      getAttr,
-      toSlug,
-      stripFileExtension,
-      generateUuid,
-      shouldExportGenericObject: function(cell) {
-        return app.domains != null && app.domains.snapshot != null && typeof app.domains.snapshot.shouldExportGenericObject === "function" && app.domains.snapshot.shouldExportGenericObject(cell);
-      }
-    });
-    app.showStatus = app.helpers.showStatus;
-    app.setCanvasStatus = app.helpers.setCanvasStatus;
     setApp(app);
-    app.selection = selectionApi;
-    app.commands = commandApi;
-    app.actions = createActionApi();
     app.domains = createDomains(app);
-    app.services = createServices(app);
     app.ui = createUi(app);
     var runtime = createRuntime(app);
     app.runtime = runtime.runtimeApi;
@@ -10137,7 +10007,7 @@
   function installElectricalSymbols(ctx) {
     var app = createApp(ctx);
     setApp(app);
-    app.services.backend.loadBackendSession();
+    backendServiceApi.loadBackendSession();
     app.activateRuntime();
   }
 

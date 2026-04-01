@@ -8,6 +8,10 @@ import {
   snapPortPointToEdge,
 } from "./shared/previewSurface.js";
 import { getApp } from "../core/appRuntime.js";
+import { trim } from "../utils/base.js";
+import { findElectricalRoot, showStatus } from "../core/runtimeHelpers.js";
+import { commandApi } from "../application/commands.js";
+import { createPluginButton } from "./shared/buttonFactory.js";
 
 // 实例编辑器只作用于当前选中的电气图元实例。
 function buildInstanceEditorDeps() {
@@ -15,14 +19,14 @@ function buildInstanceEditorDeps() {
 
   return {
     ctx: app.ctx,
-    findElectricalRoot: app.helpers.findElectricalRoot,
-    showStatus: app.showStatus,
+    findElectricalRoot,
+    showStatus,
     extractSpec: app.domains.symbol.extractSpec,
     normalizePortLayout: app.domains.spec.normalizePortLayout,
     normalizeLabels: app.domains.spec.normalizeLabels,
-    trim: app.utils.trim,
+    trim,
     getValueByPath: app.domains.spec.getValueByPath,
-    createButton: app.utils.createButton,
+    createButton: createPluginButton,
     normalizePortMarker: app.domains.spec.normalizePortMarker,
     normalizePortDirection: app.domains.spec.normalizePortDirection,
     normalizePortIoMode: app.domains.spec.normalizePortIoMode,
@@ -31,7 +35,7 @@ function buildInstanceEditorDeps() {
     portEdgeSnapThresholdPx: app.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
     normalizePortPoint: app.domains.spec.normalizePortPoint,
     normalizeLabelItem: app.domains.spec.normalizeLabelItem,
-    applyInstanceSpec: app.commands.applyInstanceSpec,
+    applyInstanceSpec: commandApi.applyInstanceSpec,
   };
 }
 

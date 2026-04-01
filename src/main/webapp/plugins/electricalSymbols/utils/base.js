@@ -104,20 +104,3 @@ export function uniqueStrings(values) {
 
   return result;
 }
-
-// 兼容旧的工厂调用方式，便于边重构边过渡到直接 import/export。
-export function createBaseUtils() {
-  return {
-    clamp,
-    cloneJson,
-    deepMerge,
-    generateUuid,
-    isObject,
-    stripFileExtension,
-    toFloat,
-    toInt,
-    toSlug,
-    trim,
-    uniqueStrings,
-  };
-}

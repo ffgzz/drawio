@@ -4,15 +4,18 @@
  */
 // 导出逻辑和 UI 在这里闭合，避免在入口层散落按钮处理代码。
 import { getApp } from "../core/appRuntime.js";
+import { toInt } from "../utils/base.js";
+import { showStatus } from "../core/runtimeHelpers.js";
+import { createPluginButton } from "./shared/buttonFactory.js";
 
 function buildExportDialogDeps() {
   var app = getApp();
 
   return {
     ctx: app.ctx,
-    toInt: app.utils.toInt,
-    createButton: app.utils.createButton,
-    showStatus: app.showStatus,
+    toInt,
+    createButton: createPluginButton,
+    showStatus,
   };
 }
 

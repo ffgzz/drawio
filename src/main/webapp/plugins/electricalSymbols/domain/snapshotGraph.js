@@ -11,6 +11,22 @@ import {
   toNumber,
 } from "./snapshotCore.js";
 import { getApp } from "../core/appRuntime.js";
+import {
+  cloneJson,
+  isObject,
+  toInt,
+  trim,
+  uniqueStrings,
+} from "../utils/base.js";
+import { createNode, getAttr } from "../utils/xml.js";
+import {
+  findPortHostRoot,
+  isCabinetGap,
+  isCabinetSegment,
+  isDrawingFrame,
+  isElectricalRoot,
+  resetPendingChangeRecords,
+} from "../core/runtimeHelpers.js";
 
 /**
  * 快照域模型。
@@ -32,17 +48,17 @@ function buildSnapshotDeps() {
     CABINET_BODY_KIND: app.constants.CABINET_BODY_KIND,
     CABINET_GAP_KIND: app.constants.CABINET_GAP_KIND,
     FRAME_MARGIN_RATIO: app.constants.FRAME_MARGIN_RATIO,
-    trim: app.utils.trim,
-    toInt: app.utils.toInt,
-    isObject: app.utils.isObject,
-    cloneJson: app.utils.cloneJson,
-    createNode: app.utils.createNode,
-    getAttr: app.utils.getAttr,
-    uniqueStrings: app.utils.uniqueStrings,
-    isCabinetGap: app.helpers.isCabinetGap,
-    isDrawingFrame: app.helpers.isDrawingFrame,
-    isCabinetSegment: app.helpers.isCabinetSegment,
-    isElectricalRoot: app.helpers.isElectricalRoot,
+    trim,
+    toInt,
+    isObject,
+    cloneJson,
+    createNode,
+    getAttr,
+    uniqueStrings,
+    isCabinetGap,
+    isDrawingFrame,
+    isCabinetSegment,
+    isElectricalRoot,
     extractSpec: app.domains.symbol.extractSpec,
     getFrameConfig: app.domains.frame.getFrameConfig,
     getFramePageNumber: app.domains.frame.getFramePageNumber,
@@ -52,7 +68,7 @@ function buildSnapshotDeps() {
     findCabinetSegments: app.domains.cabinet.findCabinetSegments,
     getPortMetaById: app.domains.connectionConstraints.getPortMetaById,
     findDrawingFrame: app.domains.frame.findDrawingFrame,
-    findPortHostRoot: app.helpers.findPortHostRoot,
+    findPortHostRoot,
     parsePortLayout: app.domains.spec.parsePortLayout,
     getAllDrawingFrames: app.domains.frame.getAllDrawingFrames,
     exitInstanceComposeMode: function (clearStatus) {
@@ -80,7 +96,7 @@ function buildSnapshotDeps() {
     relayoutCabinetByModel: app.domains.cabinet.relayoutCabinetByModel,
     normalizeSpec: app.domains.spec.normalizeSpec,
     buildSymbolCell: app.domains.symbol.buildSymbolCell,
-    resetPendingChangeRecords: app.helpers.resetPendingChangeRecords,
+    resetPendingChangeRecords,
   };
 }
 

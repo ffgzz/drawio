@@ -9,12 +9,18 @@ import {
   normalizeFrameConfig,
 } from "./frameCore.js";
 import { getApp } from "../core/appRuntime.js";
+import { isObject, toInt, trim } from "../utils/base.js";
+import { createMetaCell, createNode, getAttr } from "../utils/xml.js";
+import {
+  generateFrameId,
+  isDrawingFrame,
+  setCanvasStatus,
+  showStatus,
+} from "../core/runtimeHelpers.js";
 
 function buildFrameDeps() {
   var app = getApp();
   var constants = app.constants;
-  var utils = app.utils;
-  var helpers = app.helpers;
   var graphApi = app.graphApi;
 
   return {
@@ -28,16 +34,16 @@ function buildFrameDeps() {
     frameMarginRatio: constants.FRAME_MARGIN_RATIO,
     defaultWidth: constants.FRAME_DEFAULT_WIDTH,
     defaultHeight: constants.FRAME_DEFAULT_HEIGHT,
-    trim: utils.trim,
-    toInt: utils.toInt,
-    isObject: utils.isObject,
-    getAttr: utils.getAttr,
-    createNode: utils.createNode,
-    createMetaCell: utils.createMetaCell,
-    generateFrameId: helpers.generateFrameId,
-    isDrawingFrame: helpers.isDrawingFrame,
-    showStatus: app.showStatus,
-    setCanvasStatus: app.setCanvasStatus,
+    trim,
+    toInt,
+    isObject,
+    getAttr,
+    createNode,
+    createMetaCell,
+    generateFrameId,
+    isDrawingFrame,
+    showStatus,
+    setCanvasStatus,
   };
 }
 

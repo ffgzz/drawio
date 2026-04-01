@@ -4,19 +4,23 @@
  */
 // 这个窗口本质上是“图库首页”，因此聚合了查看和跳转动作。
 import { getApp } from "../core/appRuntime.js";
+import { trim } from "../utils/base.js";
+import { showStatus } from "../core/runtimeHelpers.js";
+import { libraryStoreApi } from "../services/libraryStore.js";
+import { createPluginButton } from "./shared/buttonFactory.js";
 
 function buildTemplateBrowserDeps() {
   var app = getApp();
 
   return {
     ctx: app.ctx,
-    library: app.services.libraryStore,
-    getLibraryEntrySpec: app.services.libraryStore.getLibraryEntrySpec,
-    showStatus: app.showStatus,
+    library: libraryStoreApi,
+    getLibraryEntrySpec: libraryStoreApi.getLibraryEntrySpec,
+    showStatus,
     normalizePortLayout: app.domains.spec.normalizePortLayout,
     normalizeLabels: app.domains.spec.normalizeLabels,
-    trim: app.utils.trim,
-    createButton: app.utils.createButton,
+    trim,
+    createButton: createPluginButton,
     openEditorWithTemplate: function (template) {
       return app.ui != null && typeof app.ui.openEditorWithTemplate === "function"
         ? app.ui.openEditorWithTemplate(template)

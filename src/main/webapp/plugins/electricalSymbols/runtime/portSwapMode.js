@@ -4,20 +4,28 @@
  */
 // 这个模式和配电柜 gap 点击共用部分点击监听，因此集中放在一个 runtime 模块里。
 import { getApp } from "../core/appRuntime.js";
+import { cloneJson, trim } from "../utils/base.js";
+import { getAttr } from "../utils/xml.js";
+import {
+  findPortHostRoot,
+  isCabinetSegment,
+  setCanvasStatus,
+  showStatus,
+} from "../core/runtimeHelpers.js";
 
-function buildPortSwapDeps() {
+function getPortSwapDeps() {
   var app = getApp();
   var ctx = app.ctx;
 
   return {
     ctx,
-    trim: app.utils.trim,
-    cloneJson: app.utils.cloneJson,
+    trim,
+    cloneJson,
     parsePortLayout: app.domains.spec.parsePortLayout,
-    getAttr: app.utils.getAttr,
+    getAttr,
     findCabinetSegments: app.domains.cabinet.findCabinetSegments,
-    findPortHostRoot: app.helpers.findPortHostRoot,
-    isCabinetSegment: app.helpers.isCabinetSegment,
+    findPortHostRoot,
+    isCabinetSegment,
     isMovableConnectedTerminal:
       app.domains.connectionConstraints.isMovableConnectedTerminal,
     closeGapDialogWindow: function () {
@@ -27,8 +35,8 @@ function buildPortSwapDeps() {
         : null;
     },
     setSelectedCabinetGap: app.domains.cabinet.setSelectedCabinetGap,
-    showStatus: app.showStatus,
-    setCanvasStatus: app.setCanvasStatus,
+    showStatus,
+    setCanvasStatus,
     getPortAbsolutePosition: app.domains.cabinet.getPortAbsolutePosition,
     getPortMetaByConstraint:
       app.domains.connectionConstraints.getPortMetaByConstraint,
@@ -48,358 +56,465 @@ function buildPortSwapDeps() {
   };
 }
 
-export function createPortSwapMode() {
-  var deps = arguments.length > 0 ? arguments[0] : buildPortSwapDeps();
+function getPortSwapRuntime() {
+  var deps = getPortSwapDeps();
   var ctx = deps.ctx;
-  var graph = ctx.graph;
-  var model = ctx.model;
-  var state = ctx.state;
 
-  function clearPortSwapOverlay() {
-    if (
-      state.portSwapOverlay != null &&
-      state.portSwapOverlay.parentNode != null
-    ) {
-      state.portSwapOverlay.parentNode.removeChild(state.portSwapOverlay);
-    }
+  return {
+    deps,
+    graph: ctx.graph,
+    model: ctx.model,
+    state: ctx.state,
+  };
+}
 
-    state.portSwapOverlay = null;
-  }
+function buildPortSwapContextFromEdge(edge) {
+  var runtime = getPortSwapRuntime();
+  var deps = runtime.deps;
+  var graph = runtime.graph;
+  var model = runtime.model;
+  var sourceTerminal = model.getTerminal(edge, true);
+  var targetTerminal = model.getTerminal(edge, false);
+  var sourceRoot = deps.findPortHostRoot(sourceTerminal);
+  var targetRoot = deps.findPortHostRoot(targetTerminal);
+  var sourceCabinet = deps.isCabinetSegment(sourceRoot);
+  var targetCabinet = deps.isCabinetSegment(targetRoot);
 
-  function exitPortSwapMode(clearStatus) {
-    clearPortSwapOverlay();
-    state.portSwapSession = null;
-
-    if (clearStatus !== false) {
-      deps.setCanvasStatus("");
-    }
-  }
-
-  function buildPortSwapContextFromEdge(edge) {
-    var sourceTerminal = model.getTerminal(edge, true);
-    var targetTerminal = model.getTerminal(edge, false);
-    var sourceRoot = deps.findPortHostRoot(sourceTerminal);
-    var targetRoot = deps.findPortHostRoot(targetTerminal);
-    var sourceCabinet = deps.isCabinetSegment(sourceRoot);
-    var targetCabinet = deps.isCabinetSegment(targetRoot);
-
-    if (sourceCabinet == targetCabinet) {
-      return null;
-    }
-
-    return {
-      edge,
-      source: sourceCabinet,
-      cabinetRoot: sourceCabinet ? sourceRoot : targetRoot,
-      portId: deps.trim(
-        mxUtils.getValue(
-          graph.getCellStyle(edge) || {},
-          sourceCabinet ? "sourcePortId" : "targetPortId",
-          "",
-        ),
-      ),
-      otherTerminal: sourceCabinet ? targetTerminal : sourceTerminal,
-    };
-  }
-
-  function getPortSwapContextFromSelection() {
-    var cell = graph.getSelectionCell();
-    var i;
-
-    if (model.isEdge(cell)) {
-      return buildPortSwapContextFromEdge(cell);
-    }
-
-    if (deps.isMovableConnectedTerminal(cell)) {
-      var match = null;
-
-      for (i = 0; i < model.getEdgeCount(cell); i++) {
-        var edge = model.getEdgeAt(cell, i);
-        var context = buildPortSwapContextFromEdge(edge);
-
-        if (
-          context != null &&
-          context.otherTerminal == cell &&
-          context.portId.length > 0
-        ) {
-          if (match != null) {
-            return {
-              error:
-                "该图元连接了多个配电柜端子，请直接选中第一条边再执行更换挂点",
-            };
-          }
-
-          match = context;
-        }
-      }
-
-      return match;
-    }
-
+  if (sourceCabinet == targetCabinet) {
     return null;
   }
 
-  function renderPortSwapOverlay(session) {
-    var container = document.createElement("div");
-    var segments = deps.findCabinetSegments(
-      deps.trim(deps.getAttr(session.cabinetRoot, "logicalCabinetId")),
-    );
-    var i;
-    var j;
+  return {
+    edge,
+    source: sourceCabinet,
+    cabinetRoot: sourceCabinet ? sourceRoot : targetRoot,
+    portId: deps.trim(
+      mxUtils.getValue(
+        graph.getCellStyle(edge) || {},
+        sourceCabinet ? "sourcePortId" : "targetPortId",
+        "",
+      ),
+    ),
+    otherTerminal: sourceCabinet ? targetTerminal : sourceTerminal,
+  };
+}
 
-    clearPortSwapOverlay();
-    container.style.position = "absolute";
-    container.style.left = "0";
-    container.style.top = "0";
-    container.style.width = "100%";
-    container.style.height = "100%";
-    container.style.pointerEvents = "none";
-    container.style.zIndex = "3";
+function getPortSwapContextFromSelection() {
+  var runtime = getPortSwapRuntime();
+  var deps = runtime.deps;
+  var graph = runtime.graph;
+  var model = runtime.model;
+  var cell = graph.getSelectionCell();
+  var i;
 
-    for (i = 0; i < segments.length; i++) {
-      var stateView = graph.view.getState(segments[i]);
-      var ports = deps.parsePortLayout(deps.getAttr(segments[i], "portsJson"));
+  if (model.isEdge(cell)) {
+    return buildPortSwapContextFromEdge(cell);
+  }
 
-      if (stateView == null) {
-        continue;
-      }
+  if (deps.isMovableConnectedTerminal(cell)) {
+    var match = null;
 
-      for (j = 0; j < ports.length; j++) {
-        var marker = document.createElement("div");
-        var portId = deps.trim(ports[j].id);
-        var selected = deps.trim(ports[j].id) == deps.trim(session.portId);
-        marker.style.position = "absolute";
-        marker.style.width = "14px";
-        marker.style.height = "14px";
-        marker.style.borderRadius = "50%";
-        marker.style.boxSizing = "border-box";
-        marker.style.border = selected
-          ? "2px solid #1a73e8"
-          : "2px solid #16a34a";
-        marker.style.background = selected
-          ? "rgba(26,115,232,0.15)"
-          : "rgba(22,163,74,0.18)";
-        marker.style.pointerEvents = "auto";
-        marker.style.cursor = selected ? "default" : "pointer";
-        marker.style.left =
-          Math.round(stateView.x + ports[j].x * stateView.width - 7) + "px";
-        marker.style.top =
-          Math.round(stateView.y + ports[j].y * stateView.height - 7) + "px";
-        marker.title = selected ? "当前挂点" : "点击切换到该挂点";
+    for (i = 0; i < model.getEdgeCount(cell); i++) {
+      var edge = model.getEdgeAt(cell, i);
+      var context = buildPortSwapContextFromEdge(edge);
 
-        if (!selected) {
-          mxEvent.addListener(
-            marker,
-            "click",
-            (function (root, port) {
-              return function (evt) {
-                mxEvent.consume(evt);
-                commitPortSwap(state.portSwapSession, root, port);
-              };
-            })(segments[i], deps.cloneJson(ports[j])),
-          );
+      if (
+        context != null &&
+        context.otherTerminal == cell &&
+        context.portId.length > 0
+      ) {
+        if (match != null) {
+          return {
+            error:
+              "该图元连接了多个配电柜端子，请直接选中第一条边再执行更换挂点",
+          };
         }
 
-        container.appendChild(marker);
+        match = context;
       }
     }
 
-    graph.container.appendChild(container);
-    state.portSwapOverlay = container;
+    return match;
   }
 
-  function installGraphClickBehavior(extraDeps) {
-    graph.addListener(mxEvent.CLICK, function (sender, evt) {
-      var cell = evt.getProperty("cell");
-      var mouseEvent = evt.getProperty("event");
+  return null;
+}
 
-      if (state.portSwapSession != null) {
-        var portRoot = deps.findPortHostRoot(cell);
-        var sessionLogicalId =
-          state.portSwapSession.cabinetRoot != null
-            ? deps.trim(
-                deps.getAttr(state.portSwapSession.cabinetRoot, "logicalCabinetId"),
-              )
-            : "";
+export function clearPortSwapOverlay() {
+  var runtime = getPortSwapRuntime();
+  var state = runtime.state;
 
-        if (
-          deps.isCabinetSegment(portRoot) &&
-          deps.trim(deps.getAttr(portRoot, "logicalCabinetId")) == sessionLogicalId
-        ) {
-          var nextPort = getNearestCabinetPortFromClick(portRoot, mouseEvent);
+  if (
+    state.portSwapOverlay != null &&
+    state.portSwapOverlay.parentNode != null
+  ) {
+    state.portSwapOverlay.parentNode.removeChild(state.portSwapOverlay);
+  }
 
-          if (nextPort != null) {
-            commitPortSwap(state.portSwapSession, portRoot, nextPort);
-            evt.consume();
-            return;
-          }
-        }
+  state.portSwapOverlay = null;
+}
 
-        if (cell == null) {
-          exitPortSwapMode();
+export function exitPortSwapMode(clearStatus) {
+  var runtime = getPortSwapRuntime();
+  var deps = runtime.deps;
+  var state = runtime.state;
+
+  clearPortSwapOverlay();
+  state.portSwapSession = null;
+
+  if (clearStatus !== false) {
+    deps.setCanvasStatus("");
+  }
+}
+
+function renderPortSwapOverlay(session) {
+  var runtime = getPortSwapRuntime();
+  var deps = runtime.deps;
+  var graph = runtime.graph;
+  var state = runtime.state;
+  var container = document.createElement("div");
+  var segments = deps.findCabinetSegments(
+    deps.trim(deps.getAttr(session.cabinetRoot, "logicalCabinetId")),
+  );
+  var i;
+  var j;
+
+  clearPortSwapOverlay();
+  container.style.position = "absolute";
+  container.style.left = "0";
+  container.style.top = "0";
+  container.style.width = "100%";
+  container.style.height = "100%";
+  container.style.pointerEvents = "none";
+  container.style.zIndex = "3";
+
+  for (i = 0; i < segments.length; i++) {
+    var stateView = graph.view.getState(segments[i]);
+    var ports = deps.parsePortLayout(deps.getAttr(segments[i], "portsJson"));
+
+    if (stateView == null) {
+      continue;
+    }
+
+    for (j = 0; j < ports.length; j++) {
+      var marker = document.createElement("div");
+      var portId = deps.trim(ports[j].id);
+      var selected = deps.trim(ports[j].id) == deps.trim(session.portId);
+      var occupied =
+        !selected && isCabinetPortOccupied(segments[i], portId, session.edge);
+      marker.style.position = "absolute";
+      marker.style.width = "14px";
+      marker.style.height = "14px";
+      marker.style.borderRadius = "50%";
+      marker.style.boxSizing = "border-box";
+      marker.style.border = selected
+        ? "2px solid #1a73e8"
+        : occupied
+          ? "2px solid #94a3b8"
+          : "2px solid #16a34a";
+      marker.style.background = selected
+        ? "rgba(26,115,232,0.15)"
+        : occupied
+          ? "rgba(148,163,184,0.18)"
+          : "rgba(22,163,74,0.18)";
+      marker.style.pointerEvents = "auto";
+      marker.style.cursor = selected || occupied ? "default" : "pointer";
+      marker.style.left =
+        Math.round(stateView.x + ports[j].x * stateView.width - 7) + "px";
+      marker.style.top =
+        Math.round(stateView.y + ports[j].y * stateView.height - 7) + "px";
+      marker.title = selected
+        ? "当前挂点"
+        : occupied
+          ? "该挂点已连接其他设备，不能再选择"
+          : "点击切换到该挂点";
+
+      if (!selected && !occupied) {
+        mxEvent.addListener(
+          marker,
+          "click",
+          (function (root, port) {
+            return function (evt) {
+              mxEvent.consume(evt);
+              commitPortSwap(state.portSwapSession, root, port);
+            };
+          })(segments[i], deps.cloneJson(ports[j])),
+        );
+      }
+
+      container.appendChild(marker);
+    }
+  }
+
+  graph.container.appendChild(container);
+  state.portSwapOverlay = container;
+}
+
+function isCabinetPortOccupied(root, portId, ignoreEdge) {
+  var runtime = getPortSwapRuntime();
+  var deps = runtime.deps;
+  var graph = runtime.graph;
+  var model = runtime.model;
+  var targetPortId = deps.trim(portId);
+  var i;
+
+  if (root == null || targetPortId.length == 0) {
+    return false;
+  }
+
+  for (i = 0; i < model.getEdgeCount(root); i++) {
+    var edge = model.getEdgeAt(root, i);
+    var sourceRoot = deps.findPortHostRoot(model.getTerminal(edge, true));
+    var targetRoot = deps.findPortHostRoot(model.getTerminal(edge, false));
+    var sourcePortId =
+      sourceRoot == root
+        ? deps.trim(
+            mxUtils.getValue(graph.getCellStyle(edge) || {}, "sourcePortId", ""),
+          )
+        : "";
+    var targetPortIdOnEdge =
+      targetRoot == root
+        ? deps.trim(
+            mxUtils.getValue(graph.getCellStyle(edge) || {}, "targetPortId", ""),
+          )
+        : "";
+
+    if (edge == ignoreEdge) {
+      continue;
+    }
+
+    if (sourcePortId == targetPortId || targetPortIdOnEdge == targetPortId) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function installGraphClickBehavior(extraDeps) {
+  var runtime = getPortSwapRuntime();
+  var deps = runtime.deps;
+  var graph = runtime.graph;
+  var state = runtime.state;
+
+  graph.addListener(mxEvent.CLICK, function (sender, evt) {
+    var cell = evt.getProperty("cell");
+    var mouseEvent = evt.getProperty("event");
+
+    if (state.portSwapSession != null) {
+      var portRoot = deps.findPortHostRoot(cell);
+      var sessionLogicalId =
+        state.portSwapSession.cabinetRoot != null
+          ? deps.trim(
+              deps.getAttr(state.portSwapSession.cabinetRoot, "logicalCabinetId"),
+            )
+          : "";
+
+      if (
+        deps.isCabinetSegment(portRoot) &&
+        deps.trim(deps.getAttr(portRoot, "logicalCabinetId")) == sessionLogicalId
+      ) {
+        var nextPort = getNearestCabinetPortFromClick(portRoot, mouseEvent);
+
+        if (nextPort != null) {
+          commitPortSwap(state.portSwapSession, portRoot, nextPort);
           evt.consume();
           return;
         }
       }
 
-      if (extraDeps.isCabinetGap(cell)) {
-        extraDeps.setSelectedCabinetGap(
-          deps.getAttr(cell, "logicalCabinetId"),
-          deps.getAttr(cell, "gapIndex"),
-        );
-        extraDeps.openCabinetGapDialog(cell, mouseEvent);
+      if (cell == null) {
+        exitPortSwapMode();
         evt.consume();
-      } else if (state.selectedCabinetGap != null) {
-        extraDeps.closeGapDialogWindow();
-        extraDeps.setSelectedCabinetGap(null, null);
-      }
-    });
-  }
-
-  function getNearestCabinetPortFromClick(root, mouseEvent) {
-    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
-    var graphX =
-      mouseEvent != null && typeof mouseEvent.getGraphX === "function"
-        ? mouseEvent.getGraphX()
-        : null;
-    var graphY =
-      mouseEvent != null && typeof mouseEvent.getGraphY === "function"
-        ? mouseEvent.getGraphY()
-        : null;
-    var threshold = 18 / graph.view.scale;
-    var best = null;
-    var bestDistance = Infinity;
-    var i;
-
-    if (graphX == null || graphY == null) {
-      return null;
-    }
-
-    for (i = 0; i < ports.length; i++) {
-      var position = deps.getPortAbsolutePosition(root, ports[i]);
-      var dx = position.x - graphX;
-      var dy = position.y - graphY;
-      var distance = Math.sqrt(dx * dx + dy * dy);
-
-      if (distance <= threshold && distance < bestDistance) {
-        best = ports[i];
-        bestDistance = distance;
+        return;
       }
     }
 
-    return best;
-  }
-
-  function applyEdgePortConstraintMetadata(edge, root, source, constraint) {
-    var port = deps.getPortMetaByConstraint(root, constraint);
-    var direction =
-      port != null ? deps.mapPortDirectionToConstraint(port.direction) : "";
-    var key = source ? "sourcePortConstraint" : "targetPortConstraint";
-    var portKey = source ? "sourcePortId" : "targetPortId";
-    var style = model.getStyle(edge) || "";
-
-    style = mxUtils.setStyle(
-      style,
-      key,
-      direction.length > 0 ? direction : null,
-    );
-    style = mxUtils.setStyle(
-      style,
-      portKey,
-      port != null && deps.trim(port.id).length > 0 ? deps.trim(port.id) : null,
-    );
-    model.setStyle(edge, style);
-  }
-
-  function commitPortSwap(session, newRoot, newPort) {
-    var edge = session.edge;
-    var source = !!session.source;
-    var oldRoot = session.cabinetRoot;
-    var oldPortId = deps.trim(session.portId);
-    var constraint = new mxConnectionConstraint(
-      new mxPoint(newPort.x, newPort.y),
-      false,
-      newPort.id,
-    );
-
-    if (
-      edge == null ||
-      newRoot == null ||
-      newPort == null ||
-      oldPortId.length == 0 ||
-      (oldRoot == newRoot && oldPortId == deps.trim(newPort.id))
-    ) {
-      exitPortSwapMode();
-      return;
+    if (extraDeps.isCabinetGap(cell)) {
+      extraDeps.setSelectedCabinetGap(
+        deps.getAttr(cell, "logicalCabinetId"),
+        deps.getAttr(cell, "gapIndex"),
+      );
+      extraDeps.openCabinetGapDialog(cell, mouseEvent);
+      evt.consume();
+    } else if (state.selectedCabinetGap != null) {
+      extraDeps.closeGapDialogWindow();
+      extraDeps.setSelectedCabinetGap(null, null);
     }
-
-    state.updatingModel = true;
-    model.beginUpdate();
-
-    try {
-      model.setTerminal(edge, newRoot, source);
-      deps.setConnectionConstraint(edge, newRoot, source, constraint);
-      applyEdgePortConstraintMetadata(edge, newRoot, source, constraint);
-      deps.clearEdgePoints(edge);
-    } finally {
-      model.endUpdate();
-      state.updatingModel = false;
-    }
-
-    deps.moveConnectedGroupToCabinetPort(
-      edge,
-      source,
-      oldRoot,
-      oldPortId,
-      newRoot,
-      newPort,
-    );
-    exitPortSwapMode();
-    deps.showStatus("已更换挂点", false);
-    deps.setCanvasStatus("已更换挂点");
-  }
-
-  function enterPortSwapMode() {
-    if (state.portSwapSession != null) {
-      exitPortSwapMode();
-      return;
-    }
-
-    deps.closeGapDialogWindow();
-    deps.setSelectedCabinetGap(null, null);
-
-    var context = getPortSwapContextFromSelection();
-
-    if (context == null) {
-      deps.showStatus("请先选中与配电柜直接相连的第一条边或第一个图元", true);
-      deps.setCanvasStatus("请先选中与配电柜直接相连的第一条边或第一个图元");
-      return;
-    }
-
-    if (context.error != null) {
-      deps.showStatus(context.error, true);
-      deps.setCanvasStatus(context.error);
-      return;
-    }
-
-    if (context.portId.length == 0 || context.cabinetRoot == null) {
-      deps.showStatus("当前选中对象未绑定到有效的配电柜端子", true);
-      deps.setCanvasStatus("当前选中对象未绑定到有效的配电柜端子");
-      return;
-    }
-
-    state.portSwapSession = context;
-    renderPortSwapOverlay(context);
-    deps.setCanvasStatus("更换挂点模式：点击同一配电柜上的目标连接点，或点空白取消");
-  }
-
-  return {
-    applyEdgePortConstraintMetadata,
-    clearPortSwapOverlay,
-    commitPortSwap,
-    enterPortSwapMode,
-    exitPortSwapMode,
-    getNearestCabinetPortFromClick,
-    installGraphClickBehavior,
-  };
+  });
 }
+
+export function getNearestCabinetPortFromClick(root, mouseEvent) {
+  var runtime = getPortSwapRuntime();
+  var deps = runtime.deps;
+  var graph = runtime.graph;
+  var state = runtime.state;
+  var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
+  var graphX =
+    mouseEvent != null && typeof mouseEvent.getGraphX === "function"
+      ? mouseEvent.getGraphX()
+      : null;
+  var graphY =
+    mouseEvent != null && typeof mouseEvent.getGraphY === "function"
+      ? mouseEvent.getGraphY()
+      : null;
+  var threshold = 18 / graph.view.scale;
+  var best = null;
+  var bestDistance = Infinity;
+  var i;
+
+  if (graphX == null || graphY == null) {
+    return null;
+  }
+
+  for (i = 0; i < ports.length; i++) {
+    if (
+      deps.trim(ports[i].id) != deps.trim(state.portSwapSession.portId) &&
+      isCabinetPortOccupied(root, ports[i].id, state.portSwapSession.edge)
+    ) {
+      continue;
+    }
+
+    var position = deps.getPortAbsolutePosition(root, ports[i]);
+    var dx = position.x - graphX;
+    var dy = position.y - graphY;
+    var distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance <= threshold && distance < bestDistance) {
+      best = ports[i];
+      bestDistance = distance;
+    }
+  }
+
+  return best;
+}
+
+export function applyEdgePortConstraintMetadata(edge, root, source, constraint) {
+  var runtime = getPortSwapRuntime();
+  var deps = runtime.deps;
+  var model = runtime.model;
+  var port = deps.getPortMetaByConstraint(root, constraint);
+  var direction =
+    port != null ? deps.mapPortDirectionToConstraint(port.direction) : "";
+  var key = source ? "sourcePortConstraint" : "targetPortConstraint";
+  var portKey = source ? "sourcePortId" : "targetPortId";
+  var style = model.getStyle(edge) || "";
+
+  style = mxUtils.setStyle(
+    style,
+    key,
+    direction.length > 0 ? direction : null,
+  );
+  style = mxUtils.setStyle(
+    style,
+    portKey,
+    port != null && deps.trim(port.id).length > 0 ? deps.trim(port.id) : null,
+  );
+  model.setStyle(edge, style);
+}
+
+export function commitPortSwap(session, newRoot, newPort) {
+  var runtime = getPortSwapRuntime();
+  var deps = runtime.deps;
+  var model = runtime.model;
+  var state = runtime.state;
+  var edge = session.edge;
+  var source = !!session.source;
+  var oldRoot = session.cabinetRoot;
+  var oldPortId = deps.trim(session.portId);
+  var constraint = new mxConnectionConstraint(
+    new mxPoint(newPort.x, newPort.y),
+    false,
+    newPort.id,
+  );
+
+  if (
+    edge == null ||
+    newRoot == null ||
+    newPort == null ||
+    oldPortId.length == 0 ||
+    (oldRoot == newRoot && oldPortId == deps.trim(newPort.id))
+  ) {
+    exitPortSwapMode();
+    return;
+  }
+
+  if (isCabinetPortOccupied(newRoot, newPort.id, edge)) {
+    deps.showStatus("目标挂点已连接其他设备，不能重复选择", true);
+    deps.setCanvasStatus("目标挂点已连接其他设备，不能重复选择");
+    return;
+  }
+
+  state.updatingModel = true;
+  model.beginUpdate();
+
+  try {
+    model.setTerminal(edge, newRoot, source);
+    deps.setConnectionConstraint(edge, newRoot, source, constraint);
+    applyEdgePortConstraintMetadata(edge, newRoot, source, constraint);
+    deps.clearEdgePoints(edge);
+  } finally {
+    model.endUpdate();
+    state.updatingModel = false;
+  }
+
+  deps.moveConnectedGroupToCabinetPort(
+    edge,
+    source,
+    oldRoot,
+    oldPortId,
+    newRoot,
+    newPort,
+  );
+  exitPortSwapMode();
+  deps.showStatus("已更换挂点", false);
+  deps.setCanvasStatus("已更换挂点");
+}
+
+export function enterPortSwapMode() {
+  var runtime = getPortSwapRuntime();
+  var deps = runtime.deps;
+  var state = runtime.state;
+
+  if (state.portSwapSession != null) {
+    exitPortSwapMode();
+    return;
+  }
+
+  deps.closeGapDialogWindow();
+  deps.setSelectedCabinetGap(null, null);
+
+  var context = getPortSwapContextFromSelection();
+
+  if (context == null) {
+    deps.showStatus("请先选中与配电柜直接相连的第一条边或第一个图元", true);
+    deps.setCanvasStatus("请先选中与配电柜直接相连的第一条边或第一个图元");
+    return;
+  }
+
+  if (context.error != null) {
+    deps.showStatus(context.error, true);
+    deps.setCanvasStatus(context.error);
+    return;
+  }
+
+  if (context.portId.length == 0 || context.cabinetRoot == null) {
+    deps.showStatus("当前选中对象未绑定到有效的配电柜端子", true);
+    deps.setCanvasStatus("当前选中对象未绑定到有效的配电柜端子");
+    return;
+  }
+
+  state.portSwapSession = context;
+  renderPortSwapOverlay(context);
+  deps.setCanvasStatus("更换挂点模式：点击同一配电柜上的目标连接点，或点空白取消");
+}
+
+export var portSwapModeApi = {
+  applyEdgePortConstraintMetadata,
+  clearPortSwapOverlay,
+  commitPortSwap,
+  enterPortSwapMode,
+  exitPortSwapMode,
+  getNearestCabinetPortFromClick,
+  installGraphClickBehavior,
+};

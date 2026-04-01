@@ -2,8 +2,11 @@
  * 电气图元 graph 子模块。
  * 负责 root/body/label 三层结构在 mxGraph 中的创建、提取和同步刷新。
  */
-import { createSymbolCore } from "./symbolCore.js";
+import { symbolCoreApi } from "./symbolCore.js";
 import { getApp } from "../core/appRuntime.js";
+import { isObject, trim } from "../utils/base.js";
+import { cloneValue, createMetaCell, createNode, getAttr } from "../utils/xml.js";
+import { normalizeMode } from "../core/runtimeHelpers.js";
 
 function buildSymbolGraphDeps() {
   var app = getApp();
@@ -17,17 +20,17 @@ function buildSymbolGraphDeps() {
     BODY_KIND: app.constants.BODY_KIND,
     LABEL_TAG: app.constants.LABEL_TAG,
     LABEL_KIND: app.constants.LABEL_KIND,
-    trim: app.utils.trim,
-    isObject: app.utils.isObject,
-    normalizeMode: app.helpers.normalizeMode,
+    trim,
+    isObject,
+    normalizeMode,
     normalizeSpec: app.domains.spec.normalizeSpec,
     normalizePortLayout: app.domains.spec.normalizePortLayout,
     normalizeLabels: app.domains.spec.normalizeLabels,
     parsePortLayout: app.domains.spec.parsePortLayout,
-    getAttr: app.utils.getAttr,
-    createNode: app.utils.createNode,
-    createMetaCell: app.utils.createMetaCell,
-    cloneValue: app.utils.cloneValue,
+    getAttr,
+    createNode,
+    createMetaCell,
+    cloneValue,
     toStyleImageUri: app.domains.spec.toStyleImageUri,
     serializePortLayout: app.domains.spec.serializePortLayout,
     buildPortLayout: app.domains.spec.buildPortLayout,
@@ -38,7 +41,7 @@ function buildSymbolGraphDeps() {
 export function createSymbolDomain() {
   var deps = arguments.length > 0 ? arguments[0] : buildSymbolGraphDeps();
   var model = deps.model;
-  var core = createSymbolCore(deps);
+  var core = symbolCoreApi;
 
   function addChild(root, child) {
     var index = arguments.length > 2 ? arguments[2] : null;

@@ -4,19 +4,27 @@
  */
 // 图框创建后的具体 cell 结构由 frame domain 负责。
 import { getApp } from "../core/appRuntime.js";
+import { cloneJson } from "../utils/base.js";
+import {
+  generateFrameGroupId,
+  setCanvasStatus,
+  showStatus,
+} from "../core/runtimeHelpers.js";
+import { commandApi } from "../application/commands.js";
+import { createPluginButton } from "./shared/buttonFactory.js";
 
 function buildFrameDialogDeps() {
   var app = getApp();
 
   return {
     ctx: app.ctx,
-    cloneJson: app.utils.cloneJson,
+    cloneJson,
     normalizeFrameConfig: app.domains.frame.normalizeFrameConfig,
     findDrawingFrame: app.domains.frame.findDrawingFrame,
     getAllDrawingFrames: app.domains.frame.getAllDrawingFrames,
-    createButton: app.utils.createButton,
+    createButton: createPluginButton,
     getFrameGroupId: app.domains.frame.getFrameGroupId,
-    generateFrameGroupId: app.helpers.generateFrameGroupId,
+    generateFrameGroupId,
     getMaxFramePageNumberInGroup:
       app.domains.frame.getMaxFramePageNumberInGroup,
     createDrawingFrameCell: app.domains.frame.createDrawingFrameCell,
@@ -24,9 +32,9 @@ function buildFrameDialogDeps() {
     addTopLevelCell: app.domains.frame.addTopLevelCell,
     getLeftmostFrame: app.domains.frame.getLeftmostFrame,
     getBottommostFrame: app.domains.frame.getBottommostFrame,
-    insertFrame: app.commands.insertFrame,
-    showStatus: app.showStatus,
-    setCanvasStatus: app.setCanvasStatus,
+    insertFrame: commandApi.insertFrame,
+    showStatus,
+    setCanvasStatus,
   };
 }
 
