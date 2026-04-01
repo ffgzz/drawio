@@ -228,6 +228,18 @@
     mxResources.parse(ELECTRICAL_RESOURCE_ENTRIES.join("\n"));
   }
 
+  // core/appRuntime.js
+  var currentApp = null;
+  function setApp(app) {
+    currentApp = app;
+  }
+  function getApp() {
+    if (currentApp == null) {
+      throw new Error("electricalSymbols app \u5C1A\u672A\u521D\u59CB\u5316");
+    }
+    return currentApp;
+  }
+
   // utils/base.js
   function trim(value) {
     return value != null ? mxUtils.trim(String(value)) : "";
@@ -353,60 +365,12 @@
     };
   }
 
-  // core/appContext.js
-  function createAppContext(ctx) {
-    return {
-      ui: ctx.ui,
-      graph: ctx.graph,
-      model: ctx.model,
-      constants: ctx.constants,
-      getState: function() {
-        return ctx.state;
-      },
-      updateState: function(mutator) {
-        if (typeof mutator === "function") {
-          mutator(ctx.state);
-        }
-        return ctx.state;
-      }
-    };
-  }
-
-  // core/appRuntime.js
-  var currentApp = null;
-  function setApp(app) {
-    currentApp = app;
-  }
-  function getApp() {
-    if (currentApp == null) {
-      throw new Error("electricalSymbols app \u5C1A\u672A\u521D\u59CB\u5316");
-    }
-    return currentApp;
-  }
-
-  // core/graphApi.js
-  function createGraphApi(ctx) {
-    return {
-      ui: ctx.ui,
-      graph: ctx.graph,
-      model: ctx.model,
-      state: ctx.state,
-      constants: ctx.constants,
-      getSelectionCell: function() {
-        return ctx.graph.getSelectionCell();
-      },
-      getDefaultParent: function() {
-        return ctx.graph.getDefaultParent();
-      }
-    };
-  }
-
   // core/runtimeHelpers.js
   function getGraphApi() {
-    return getApp().graphApi;
+    return getApp().ctx;
   }
   function getConstants() {
-    return getApp().constants;
+    return getApp().ctx.constants;
   }
   function getState() {
     return getApp().ctx.state;
@@ -443,10 +407,9 @@
     return isElectricalRoot(cell) || isCabinetSegment(cell);
   }
   function findPortHostRoot(cell) {
-    var app = getApp();
     var model = getGraphApi().model;
     while (cell != null) {
-      if (app.domains != null && app.domains.snapshot != null && typeof app.domains.snapshot.shouldExportGenericObject === "function" && app.domains.snapshot.shouldExportGenericObject(cell)) {
+      if (shouldExportGenericObject(cell)) {
         return null;
       }
       if (isPortHostRoot(cell)) {
@@ -455,6 +418,15 @@
       cell = model.getParent(cell);
     }
     return null;
+  }
+  function isPluginInternalCell(cell) {
+    var constants = getConstants();
+    var kind = trim(getAttr(cell, "esKind"));
+    return isCabinetGap(cell) || kind == constants.BODY_KIND || kind == constants.LABEL_KIND || kind == constants.FRAME_LABEL_KIND || kind == constants.CABINET_BODY_KIND || kind == constants.CABINET_GAP_KIND;
+  }
+  function shouldExportGenericObject(cell) {
+    var model = getGraphApi().model;
+    return cell != null && model.isVertex(cell) && !isDrawingFrame(cell) && !isCabinetSegment(cell) && !isElectricalRoot(cell) && !isPluginInternalCell(cell);
   }
   function normalizeMode(mode) {
     mode = trim(mode).toLowerCase();
@@ -511,259 +483,714 @@
     return id;
   }
 
-  // ui/shared/buttonFactory.js
-  function createPluginButton(label, fn) {
-    var button = mxUtils.button(label, fn);
-    button.className = "geBtn";
-    button.style.marginRight = "8px";
-    button.style.marginTop = "8px";
-    return button;
+  // domain/specPorts.js
+  function normalizePortMarker(marker) {
+    marker = trim(marker).toLowerCase();
+    return marker == "circle" || marker == "hidden" ? marker : "cross";
   }
-
-  // application/selection.js
-  function getSelectedCell() {
-    return getApp().ctx.graph.getSelectionCell();
+  function normalizePortDirection(direction) {
+    direction = trim(direction).toLowerCase();
+    return direction == "left" || direction == "right" || direction == "up" || direction == "down" ? direction : "any";
   }
-  function getSelectedRoot() {
-    return findElectricalRoot(getSelectedCell());
+  function normalizePortIoMode(mode) {
+    mode = trim(mode).toLowerCase();
+    return mode == "in" || mode == "out" ? mode : "both";
   }
-  function getSelectedFrame() {
-    var app = getApp();
-    return app.domains.frame.findDrawingFrame(getSelectedCell());
+  function defaultPortPosition(index, count) {
+    return count <= 0 ? 0.5 : (index + 1) / (count + 1);
   }
-  function getSelectedCabinetSegment() {
-    var app = getApp();
-    return app.domains.cabinet.findCabinetSegment(getSelectedCell());
+  function normalizePortPoint(raw, fallbackId, fallbackX, fallbackY) {
+    var id = fallbackId;
+    var x = fallbackX;
+    var y = fallbackY;
+    var name = "";
+    var marker = "cross";
+    var direction = "any";
+    var ioMode = "both";
+    if (isObject(raw)) {
+      id = trim(raw.id || raw.key || raw.name) || fallbackId;
+      x = toFloat(raw.x, fallbackX);
+      y = toFloat(raw.y, fallbackY);
+      name = trim(raw.name || raw.label || "");
+      marker = normalizePortMarker(raw.marker || raw.style);
+      direction = normalizePortDirection(raw.direction || raw.side);
+      ioMode = normalizePortIoMode(raw.ioMode || raw.io || raw.mode);
+    } else if (typeof raw == "number") {
+      y = raw;
+    }
+    return {
+      id,
+      x: clamp(x, 0, 1),
+      y: clamp(y, 0, 1),
+      name,
+      marker,
+      direction,
+      ioMode
+    };
   }
-  function getSelectedCabinetGap() {
-    var cell = getSelectedCell();
-    return isCabinetGap(cell) ? cell : null;
-  }
-  var selectionApi = {
-    getSelectedCabinetGap,
-    getSelectedCabinetSegment,
-    getSelectedCell,
-    getSelectedFrame,
-    getSelectedRoot
-  };
-
-  // application/commands.js
-  function getDefaultParentChildren() {
-    var app = getApp();
-    var graph = app.ctx.graph;
-    var model = app.ctx.model;
-    var parent = graph.getDefaultParent();
-    var cells = [];
+  function normalizePortLayout(rawPorts) {
+    var points = [];
     var i;
-    for (i = 0; i < model.getChildCount(parent); i++) {
-      cells.push(model.getChildAt(parent, i));
-    }
-    return cells;
-  }
-  function insertCellIntoFrame(cell, frame) {
-    var app = getApp();
-    var graph = app.ctx.graph;
-    var insertPoint = app.domains.frame.getFrameChildInsertPoint(
-      frame,
-      cell.geometry != null ? cell.geometry.width : 0,
-      cell.geometry != null ? cell.geometry.height : 0
-    );
-    graph.setSelectionCells(graph.importCells([cell], insertPoint.x, insertPoint.y, frame));
-    graph.scrollCellToVisible(graph.getSelectionCell());
-  }
-  function insertIntoGraph(spec) {
-    var app = getApp();
-    var graph = app.ctx.graph;
-    var root = app.domains.symbol.buildSymbolCell(spec);
-    var frame = app.domains.frame.getActiveFrame(false);
-    if (frame != null) {
-      insertCellIntoFrame(root, frame);
-    } else {
-      var pt = graph.getFreeInsertPoint();
-      graph.setSelectionCells(graph.importCells([root], pt.x, pt.y));
-    }
-    graph.scrollCellToVisible(graph.getSelectionCell());
-    showStatus("\u5DF2\u63D2\u5165\u56FE\u5143", false);
-    setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u5143");
-  }
-  function refreshSelection() {
-    var app = getApp();
-    var graph = app.ctx.graph;
-    var model = app.ctx.model;
-    var state = app.ctx.state;
-    var root = selectionApi.getSelectedRoot();
-    var cabinet = selectionApi.getSelectedCabinetSegment();
-    if (cabinet != null) {
-      try {
-        state.updatingModel = true;
-        model.beginUpdate();
-        app.domains.cabinet.relayoutCabinetByModel(
-          app.domains.cabinet.extractCabinetModel(cabinet)
+    if (Array.isArray(rawPorts)) {
+      for (i = 0; i < rawPorts.length; i++) {
+        points.push(
+          normalizePortPoint(
+            rawPorts[i],
+            "port:" + i,
+            0.5,
+            (i + 1) / (rawPorts.length + 1)
+          )
         );
-        showStatus("\u914D\u7535\u67DC\u5DF2\u5237\u65B0", false);
-        setCanvasStatus("\u914D\u7535\u67DC\u5DF2\u5237\u65B0");
-      } catch (e) {
-        showStatus(e.message || String(e), true);
-        setCanvasStatus(e.message || String(e));
-      } finally {
-        model.endUpdate();
-        state.updatingModel = false;
       }
-      return;
+      return points;
     }
-    if (root == null) {
-      showStatus("\u8BF7\u5148\u9009\u62E9\u4E00\u4E2A\u7535\u6C14\u56FE\u5143", true);
-      return;
+    if (!isObject(rawPorts)) {
+      return points;
     }
-    state.updatingModel = true;
-    model.beginUpdate();
+    if (Array.isArray(rawPorts.items)) {
+      for (i = 0; i < rawPorts.items.length; i++) {
+        points.push(
+          normalizePortPoint(
+            rawPorts.items[i],
+            "port:" + i,
+            0.5,
+            (i + 1) / (rawPorts.items.length + 1)
+          )
+        );
+      }
+      return points;
+    }
+    if (Array.isArray(rawPorts.left) || Array.isArray(rawPorts.right)) {
+      var left = Array.isArray(rawPorts.left) ? rawPorts.left : [];
+      var right = Array.isArray(rawPorts.right) ? rawPorts.right : [];
+      for (i = 0; i < left.length; i++) {
+        points.push(
+          normalizePortPoint(
+            { id: "left:" + i, x: 0, y: left[i] },
+            "left:" + i,
+            0,
+            defaultPortPosition(i, left.length)
+          )
+        );
+      }
+      for (i = 0; i < right.length; i++) {
+        points.push(
+          normalizePortPoint(
+            { id: "right:" + i, x: 1, y: right[i] },
+            "right:" + i,
+            1,
+            defaultPortPosition(i, right.length)
+          )
+        );
+      }
+      return points;
+    }
+    var leftCount = Math.max(0, toInt(rawPorts.leftCount, 0));
+    var rightCount = Math.max(0, toInt(rawPorts.rightCount, 0));
+    for (i = 0; i < leftCount; i++) {
+      points.push({
+        id: "left:" + i,
+        x: 0,
+        y: defaultPortPosition(i, leftCount)
+      });
+    }
+    for (i = 0; i < rightCount; i++) {
+      points.push({
+        id: "right:" + i,
+        x: 1,
+        y: defaultPortPosition(i, rightCount)
+      });
+    }
+    return points;
+  }
+  function parsePortLayout(raw) {
+    if (raw == null || raw.length == 0) {
+      return [];
+    }
     try {
-      app.domains.symbol.refreshRoot(root);
+      return normalizePortLayout(JSON.parse(raw));
     } catch (e) {
-      showStatus(e.message || String(e), true);
-      return;
-    } finally {
-      model.endUpdate();
-      state.updatingModel = false;
+      return [];
     }
-    showStatus("\u7535\u6C14\u56FE\u5143\u5DF2\u5237\u65B0", false);
   }
-  function insertFrame(config, selectedFrame, existingFrames) {
-    var app = getApp();
-    var graph = app.ctx.graph;
-    var model = app.ctx.model;
-    var state = app.ctx.state;
-    var constants = app.ctx.constants;
-    var normalizedConfig = app.domains.frame.normalizeFrameConfig(config || {});
-    var frames = Array.isArray(existingFrames) ? existingFrames : app.domains.frame.getAllDrawingFrames();
-    var groupId = selectedFrame != null ? app.domains.frame.getFrameGroupId(selectedFrame) : generateFrameGroupId();
-    var nextPageNumber = selectedFrame != null ? app.domains.frame.getMaxFramePageNumberInGroup(groupId) + 1 : 1;
-    var frame = app.domains.frame.createDrawingFrameCell(normalizedConfig, nextPageNumber, {
-      groupId
-    });
-    state.frameConfig = cloneJson(normalizedConfig);
-    if (selectedFrame != null) {
-      var anchorFrame = app.domains.frame.getRightmostFrameInGroup(groupId) || selectedFrame;
-      var anchorGeometry = model.getGeometry(anchorFrame);
-      frame.geometry = frame.geometry.clone();
-      frame.geometry.x = anchorGeometry.x + anchorGeometry.width + constants.FRAME_HORIZONTAL_GAP;
-      frame.geometry.y = anchorGeometry.y;
-      app.domains.frame.addTopLevelCell(frame);
-      graph.setSelectionCell(frame);
-    } else if (frames.length > 0) {
-      var leftmostFrame = app.domains.frame.getLeftmostFrame();
-      var bottommostFrame = app.domains.frame.getBottommostFrame();
-      var leftGeometry = leftmostFrame != null ? model.getGeometry(leftmostFrame) : null;
-      var bottomGeometry = bottommostFrame != null ? model.getGeometry(bottommostFrame) : null;
-      frame.geometry = frame.geometry.clone();
-      frame.geometry.x = leftGeometry != null ? leftGeometry.x : 0;
-      frame.geometry.y = bottomGeometry != null ? bottomGeometry.y + bottomGeometry.height + constants.FRAME_VERTICAL_GAP : 0;
-      app.domains.frame.addTopLevelCell(frame);
-      graph.setSelectionCell(frame);
+  function buildPortLayout(spec, base) {
+    var current = normalizePortLayout(spec.ports);
+    var fallback = normalizePortLayout(base);
+    return current.length > 0 ? current : fallback;
+  }
+  function serializePortLayout(layout) {
+    return JSON.stringify(normalizePortLayout(layout));
+  }
+
+  // domain/frameCore.js
+  function makeFrameStyle() {
+    return "shape=rectangle;fillColor=none;strokeColor=#6b7280;strokeWidth=2;rounded=0;html=1;whiteSpace=wrap;connectable=0;container=1;dropTarget=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;deletable=0;";
+  }
+  function makeFrameLabelStyle() {
+    return "text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontStyle=1;fontSize=13;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;deletable=0;pointerEvents=0;";
+  }
+  function normalizeFrameConfig(raw) {
+    raw = isObject(raw) ? raw : {};
+    return {
+      width: Math.max(320, toInt(raw.width, ELECTRICAL_CONSTANTS.FRAME_DEFAULT_WIDTH)),
+      height: Math.max(
+        240,
+        toInt(raw.height, ELECTRICAL_CONSTANTS.FRAME_DEFAULT_HEIGHT)
+      )
+    };
+  }
+  function applyFrameValueMetadata(node, frameId, pageNumber, frameConfig, extra) {
+    var config = normalizeFrameConfig(frameConfig);
+    var extras = isObject(extra) ? extra : {};
+    var key;
+    node.setAttribute("pluginType", ELECTRICAL_CONSTANTS.FRAME_TYPE);
+    node.setAttribute("frameId", trim(frameId));
+    node.setAttribute("pageNumber", String(Math.max(1, toInt(pageNumber, 1))));
+    node.setAttribute("frameConfigJson", JSON.stringify(config));
+    node.setAttribute("frameWidth", String(config.width));
+    node.setAttribute("frameHeight", String(config.height));
+    node.setAttribute("label", "");
+    for (key in extras) {
+      if (extras.hasOwnProperty(key) && extras[key] != null) {
+        node.setAttribute(key, String(extras[key]));
+      }
+    }
+    return node;
+  }
+  function createFramePageLabelCell(pageNumber, frameConfig) {
+    var config = normalizeFrameConfig(frameConfig);
+    var width = 140;
+    var height = 24;
+    var geometry = new mxGeometry(config.width - width - 16, 10, width, height);
+    var value = createMetaCell(
+      ELECTRICAL_CONSTANTS.FRAME_LABEL_TAG,
+      ELECTRICAL_CONSTANTS.FRAME_LABEL_KIND,
+      "page",
+      "PAGE " + pageNumber
+    );
+    var cell = new mxCell(value, geometry, makeFrameLabelStyle());
+    cell.vertex = true;
+    cell.setConnectable(false);
+    return cell;
+  }
+
+  // domain/cabinetCore.js
+  function makeCabinetRootStyle() {
+    return "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;";
+  }
+  function createCabinetBodySvg(descriptor) {
+    var width = Math.max(20, Math.round(descriptor.width));
+    var height = Math.max(20, Math.round(descriptor.height));
+    var strokeWidth = 4;
+    var inset = strokeWidth / 2;
+    var notchLeft = Math.max(14, Math.round(width * 0.16));
+    var notchWidth = Math.max(18, Math.round(width * 0.16));
+    var notchDepth = Math.max(8, Math.round(Math.min(height, 80) * 0.12));
+    var path;
+    if (!descriptor.continuesFromPrev && !descriptor.continuesToNext) {
+      path = "M " + inset + " " + inset + " L " + (width - inset) + " " + inset + " L " + (width - inset) + " " + (height - inset) + " L " + inset + " " + (height - inset) + " Z";
     } else {
-      var point = graph.getFreeInsertPoint();
-      graph.setSelectionCells(graph.importCells([frame], point.x, point.y));
+      var topY = descriptor.continuesFromPrev ? inset + notchDepth : inset;
+      var bottomY = descriptor.continuesToNext ? height - inset - notchDepth : height - inset;
+      path = "M " + inset + " " + topY + " L " + notchLeft + " " + topY + " " + (descriptor.continuesFromPrev ? "L " + (notchLeft + notchWidth) + " " + inset + " " : "") + "L " + (width - inset) + " " + inset + " L " + (width - inset) + " " + (height - inset) + " " + (descriptor.continuesToNext ? "L " + (notchLeft + notchWidth) + " " + (height - inset) + " L " + notchLeft + " " + bottomY + " " : "") + "L " + inset + " " + bottomY + " Z";
     }
-    graph.scrollCellToVisible(graph.getSelectionCell());
-    showStatus("\u5DF2\u63D2\u5165\u56FE\u6846", false);
-    setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u6846");
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + " " + height + '"><path d="' + path + '" fill="none" stroke="#111111" stroke-width="' + strokeWidth + '" stroke-linejoin="round" stroke-linecap="round"/></svg>';
   }
-  function insertCabinet(cabinetModel) {
+  function makeCabinetBodyStyle(descriptor) {
+    return "shape=image;image=data:image/svg+xml," + encodeURIComponent(createCabinetBodySvg(descriptor)) + ";imageAspect=0;aspect=fixed;html=1;strokeColor=none;fillColor=none;part=1;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;cloneable=0;deletable=0;pointerEvents=0;";
+  }
+  function makeCabinetGapStyle(selected) {
+    return "shape=rectangle;fillColor=#4dabf7;gradientColor=none;fillOpacity=" + (selected ? "38" : "14") + ";strokeColor=" + (selected ? "#1d4ed8" : "none") + ";strokeWidth=" + (selected ? "2" : "0") + ";connectable=0;editable=0;movable=0;resizable=0;rotatable=0;";
+  }
+  function normalizeGapRatio(value, fallbackValue) {
+    return clamp(toFloat(value, fallbackValue != null ? fallbackValue : 0.12), 0, 1);
+  }
+  function normalizeCabinetPort(raw, index) {
+    var base = normalizePortPoint(
+      raw,
+      trim(raw != null ? raw.id : "") || "cabinet-port:" + index,
+      1,
+      0
+    );
+    base.direction = "right";
+    base.ioMode = "out";
+    base.order = index;
+    return base;
+  }
+  function normalizeCabinetModel(raw) {
+    raw = isObject(raw) ? cloneJson(raw) : {};
+    var portCount = Math.max(
+      2,
+      Array.isArray(raw.ports) ? raw.ports.length : toInt(raw.portCount, ELECTRICAL_CONSTANTS.CABINET_DEFAULT_PORT_COUNT)
+    );
+    var ports = [];
+    var i;
+    var gapRatios = [];
+    if (Array.isArray(raw.ports) && raw.ports.length > 0) {
+      for (i = 0; i < raw.ports.length; i++) {
+        ports.push(normalizeCabinetPort(raw.ports[i], i));
+      }
+    } else {
+      for (i = 0; i < portCount; i++) {
+        ports.push(
+          normalizeCabinetPort(
+            {
+              id: "cabinet-port:" + i,
+              x: 1,
+              y: 0,
+              marker: "cross",
+              direction: "right",
+              ioMode: "out"
+            },
+            i
+          )
+        );
+      }
+    }
+    for (i = 0; i < Math.max(0, ports.length - 1); i++) {
+      gapRatios.push(
+        normalizeGapRatio(Array.isArray(raw.gapRatios) ? raw.gapRatios[i] : null, 0.12)
+      );
+    }
+    return {
+      logicalCabinetId: trim(raw.logicalCabinetId) || generateUuid(),
+      originFrameId: trim(raw.originFrameId),
+      title: trim(raw.title) || "\u914D\u7535\u67DC",
+      cabinetWidth: Math.max(
+        30,
+        toInt(raw.cabinetWidth, ELECTRICAL_CONSTANTS.CABINET_DEFAULT_WIDTH)
+      ),
+      cabinetX: Math.max(20, toInt(raw.cabinetX, ELECTRICAL_CONSTANTS.CABINET_DEFAULT_X)),
+      tailPadding: Math.max(
+        8,
+        toInt(raw.tailPadding, ELECTRICAL_CONSTANTS.CABINET_TAIL_PADDING)
+      ),
+      ports,
+      gapRatios
+    };
+  }
+  function buildCabinetOffsets(cabinetModel, frameConfig) {
+    var config = normalizeFrameConfig(frameConfig);
+    var modelData = normalizeCabinetModel(cabinetModel);
+    var usableHeight = config.height * ELECTRICAL_CONSTANTS.FRAME_CONTENT_RATIO;
+    var topMargin = config.height * ELECTRICAL_CONSTANTS.FRAME_MARGIN_RATIO;
+    var offsets = [];
+    var minFollowSpace = Math.max(
+      modelData.tailPadding * 2,
+      usableHeight * ELECTRICAL_CONSTANTS.CABINET_MIN_PORT_FOLLOW_SPACE_RATIO
+    );
+    var currentOffset = modelData.tailPadding;
+    var i;
+    if (modelData.ports.length == 0) {
+      modelData.ports = normalizeCabinetModel({ portCount: 2 }).ports;
+      modelData.gapRatios = [0.12];
+    }
+    for (i = 0; i < modelData.ports.length; i++) {
+      if (i > 0) {
+        var previousGap = modelData.gapRatios[i - 1] * usableHeight;
+        var nextGap = i < modelData.gapRatios.length ? modelData.gapRatios[i] * usableHeight : 0;
+        var candidateOffset = currentOffset + previousGap;
+        var candidatePage = Math.floor(Math.max(0, candidateOffset - 1e-4) / usableHeight);
+        var candidateLocalOffset = candidateOffset - candidatePage * usableHeight;
+        var remainingLocalSpace = usableHeight - candidateLocalOffset;
+        if (i < modelData.gapRatios.length && previousGap + nextGap > usableHeight && candidateLocalOffset > modelData.tailPadding) {
+          currentOffset = (candidatePage + 1) * usableHeight + modelData.tailPadding;
+        } else if (remainingLocalSpace < minFollowSpace && candidateLocalOffset > modelData.tailPadding) {
+          currentOffset = (candidatePage + 1) * usableHeight + modelData.tailPadding;
+        } else {
+          currentOffset = candidateOffset;
+        }
+      }
+      offsets.push(currentOffset);
+    }
+    return {
+      frameConfig: config,
+      cabinetModel: modelData,
+      usableHeight,
+      topMargin,
+      offsets,
+      totalLogicalHeight: (offsets.length > 0 ? offsets[offsets.length - 1] : modelData.tailPadding) + modelData.tailPadding
+    };
+  }
+  function getPageIndexForOffset(offset, usableHeight, pageCount) {
+    if (pageCount <= 1 || offset <= 0) {
+      return 0;
+    }
+    return clamp(Math.floor((offset - 1e-4) / usableHeight), 0, pageCount - 1);
+  }
+  function buildCabinetPageDescriptors(cabinetModel, frameConfig) {
+    var layout = buildCabinetOffsets(cabinetModel, frameConfig);
+    var pageCount = Math.max(1, Math.ceil(layout.totalLogicalHeight / layout.usableHeight));
+    var descriptors = [];
+    var pageIndex;
+    var i;
+    for (pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+      var pageStart = pageIndex * layout.usableHeight;
+      var remaining = Math.max(0, layout.totalLogicalHeight - pageStart);
+      var segmentHeight = pageCount > 1 ? layout.usableHeight : Math.max(
+        layout.cabinetModel.tailPadding,
+        Math.min(layout.usableHeight, remaining)
+      );
+      var ports = [];
+      var gaps = [];
+      for (i = 0; i < layout.cabinetModel.ports.length; i++) {
+        if (getPageIndexForOffset(layout.offsets[i], layout.usableHeight, pageCount) == pageIndex) {
+          var localOffset = layout.offsets[i] - pageStart;
+          var port = cloneJson(layout.cabinetModel.ports[i]);
+          port.x = 1;
+          port.y = segmentHeight > 0 ? clamp(localOffset / segmentHeight, 0, 1) : 0;
+          port.order = i;
+          port.logicalOffset = layout.offsets[i];
+          ports.push(port);
+        }
+      }
+      for (i = 0; i < layout.cabinetModel.gapRatios.length; i++) {
+        var gapAbsoluteStart = layout.offsets[i];
+        var gapAbsoluteEnd = i + 1 < layout.offsets.length ? layout.offsets[i + 1] : gapAbsoluteStart;
+        var visibleStart = Math.max(gapAbsoluteStart, pageStart);
+        var visibleEnd = Math.min(gapAbsoluteEnd, pageStart + segmentHeight);
+        if (visibleEnd > visibleStart) {
+          var gapStart = clamp(visibleStart - pageStart, 0, segmentHeight);
+          var gapEnd = clamp(visibleEnd - pageStart, gapStart, segmentHeight);
+          if (gapEnd - gapStart < 12) {
+            gapEnd = Math.min(segmentHeight, gapStart + 12);
+          }
+          gaps.push({
+            id: "cabinet-gap:" + i + ":" + pageIndex,
+            gapIndex: i,
+            y: segmentHeight > 0 ? clamp(gapStart / segmentHeight, 0, 1) : 0,
+            height: Math.max(12, gapEnd - gapStart)
+          });
+        }
+      }
+      descriptors.push({
+        segmentIndex: pageIndex,
+        pageCount,
+        continuesFromPrev: pageIndex > 0,
+        continuesToNext: pageIndex < pageCount - 1,
+        x: layout.cabinetModel.cabinetX,
+        y: layout.topMargin,
+        width: layout.cabinetModel.cabinetWidth,
+        height: segmentHeight,
+        segmentStartOffset: pageStart,
+        segmentEndOffset: pageStart + segmentHeight,
+        ports,
+        gaps,
+        frameConfig: layout.frameConfig,
+        cabinetModel: layout.cabinetModel
+      });
+    }
+    return descriptors;
+  }
+
+  // domain/frameGraph.js
+  function buildFrameDeps() {
     var app = getApp();
-    var graph = app.ctx.graph;
-    var model = app.ctx.model;
-    var state = app.ctx.state;
-    state.updatingModel = true;
-    model.beginUpdate();
-    try {
-      app.domains.cabinet.relayoutCabinetByModel(cabinetModel);
-    } finally {
-      model.endUpdate();
-      state.updatingModel = false;
-    }
-    var segments = app.domains.cabinet.findCabinetSegments(cabinetModel.logicalCabinetId);
-    if (segments.length > 0) {
-      graph.setSelectionCell(segments[0]);
-      graph.scrollCellToVisible(segments[0]);
-    }
-    showStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC", false);
-    setCanvasStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC");
+    var ctx = app.ctx;
+    var constants = ctx.constants;
+    return {
+      graph: ctx.graph,
+      model: ctx.model,
+      state: ctx.state,
+      frameTag: constants.FRAME_TAG,
+      frameType: constants.FRAME_TYPE,
+      frameLabelTag: constants.FRAME_LABEL_TAG,
+      frameLabelKind: constants.FRAME_LABEL_KIND,
+      frameMarginRatio: constants.FRAME_MARGIN_RATIO,
+      defaultWidth: constants.FRAME_DEFAULT_WIDTH,
+      defaultHeight: constants.FRAME_DEFAULT_HEIGHT,
+      trim,
+      toInt,
+      isObject,
+      getAttr,
+      createNode,
+      createMetaCell,
+      generateFrameId,
+      isDrawingFrame,
+      showStatus,
+      setCanvasStatus
+    };
   }
-  function updateCabinetGap(cabinetModel) {
-    var app = getApp();
-    var model = app.ctx.model;
-    var state = app.ctx.state;
-    state.updatingModel = true;
-    model.beginUpdate();
-    try {
-      app.domains.cabinet.relayoutCabinetByModel(cabinetModel);
-    } finally {
-      model.endUpdate();
-      state.updatingModel = false;
+  function createFrameDomain() {
+    var deps = arguments.length > 0 ? arguments[0] : buildFrameDeps();
+    var graph = deps.graph;
+    var model = deps.model;
+    function findDrawingFrame2(cell) {
+      while (cell != null) {
+        if (deps.isDrawingFrame(cell)) {
+          return cell;
+        }
+        cell = model.getParent(cell);
+      }
+      return null;
     }
-    showStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD", false);
-    setCanvasStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD");
+    function getFrameConfig2(frame) {
+      var raw = deps.getAttr(frame, "frameConfigJson");
+      var geometry;
+      if (raw != null && raw.length > 0) {
+        try {
+          return normalizeFrameConfig(JSON.parse(raw));
+        } catch (e) {
+        }
+      }
+      geometry = model.getGeometry(frame);
+      return normalizeFrameConfig({
+        width: geometry != null ? geometry.width : deps.defaultWidth,
+        height: geometry != null ? geometry.height : deps.defaultHeight
+      });
+    }
+    function getFramePageNumber2(frame) {
+      return Math.max(1, deps.toInt(deps.getAttr(frame, "pageNumber"), 1));
+    }
+    function getAllDrawingFrames2() {
+      var parent = graph.getDefaultParent();
+      var frames = [];
+      var i;
+      for (i = 0; i < model.getChildCount(parent); i++) {
+        var child = model.getChildAt(parent, i);
+        if (deps.isDrawingFrame(child)) {
+          frames.push(child);
+        }
+      }
+      return frames;
+    }
+    function findFrameById2(frameId) {
+      var target = deps.trim(frameId);
+      var frames = getAllDrawingFrames2();
+      var i;
+      for (i = 0; i < frames.length; i++) {
+        if (deps.trim(deps.getAttr(frames[i], "frameId")) == target) {
+          return frames[i];
+        }
+      }
+      return null;
+    }
+    function getFrameGroupId2(frame) {
+      if (frame == null) {
+        return "";
+      }
+      var groupId = deps.trim(deps.getAttr(frame, "groupId"));
+      if (groupId.length > 0) {
+        return groupId;
+      }
+      var originFrameId = deps.trim(deps.getAttr(frame, "originFrameId"));
+      var frameId = deps.trim(deps.getAttr(frame, "frameId"));
+      if (originFrameId.length > 0 && originFrameId != frameId) {
+        var originFrame = findFrameById2(originFrameId);
+        if (originFrame != null && originFrame != frame) {
+          return getFrameGroupId2(originFrame);
+        }
+        return originFrameId;
+      }
+      return frameId;
+    }
+    function getFramesInGroup(groupId) {
+      var target = deps.trim(groupId);
+      var frames = getAllDrawingFrames2();
+      var result = [];
+      var i;
+      for (i = 0; i < frames.length; i++) {
+        if (getFrameGroupId2(frames[i]) == target) {
+          result.push(frames[i]);
+        }
+      }
+      return result;
+    }
+    function getRightmostFrameInGroup2(groupId) {
+      var frames = getFramesInGroup(groupId);
+      var rightmost = null;
+      var i;
+      for (i = 0; i < frames.length; i++) {
+        var geometry = model.getGeometry(frames[i]);
+        if (geometry == null) {
+          continue;
+        }
+        if (rightmost == null || geometry.x + geometry.width > model.getGeometry(rightmost).x + model.getGeometry(rightmost).width) {
+          rightmost = frames[i];
+        }
+      }
+      return rightmost;
+    }
+    function getBottommostFrame2() {
+      var frames = getAllDrawingFrames2();
+      var bottommost = null;
+      var i;
+      for (i = 0; i < frames.length; i++) {
+        var geometry = model.getGeometry(frames[i]);
+        if (geometry == null) {
+          continue;
+        }
+        if (bottommost == null || geometry.y + geometry.height > model.getGeometry(bottommost).y + model.getGeometry(bottommost).height) {
+          bottommost = frames[i];
+        }
+      }
+      return bottommost;
+    }
+    function getLeftmostFrame2() {
+      var frames = getAllDrawingFrames2();
+      var leftmost = null;
+      var i;
+      for (i = 0; i < frames.length; i++) {
+        var geometry = model.getGeometry(frames[i]);
+        if (geometry == null) {
+          continue;
+        }
+        if (leftmost == null || geometry.x < model.getGeometry(leftmost).x) {
+          leftmost = frames[i];
+        }
+      }
+      return leftmost;
+    }
+    function getLastDrawingFrame() {
+      var frames = getAllDrawingFrames2();
+      var last = null;
+      var i;
+      for (i = 0; i < frames.length; i++) {
+        if (last == null || getFramePageNumber2(frames[i]) > getFramePageNumber2(last)) {
+          last = frames[i];
+        }
+      }
+      return last;
+    }
+    function getMaxFramePageNumberInGroup2(groupId) {
+      var frames = getFramesInGroup(groupId);
+      var maxPage = 0;
+      var i;
+      for (i = 0; i < frames.length; i++) {
+        maxPage = Math.max(maxPage, getFramePageNumber2(frames[i]));
+      }
+      return maxPage;
+    }
+    function getActiveFrame2(showError) {
+      var frame = findDrawingFrame2(graph.getSelectionCell());
+      if (frame == null) {
+        frame = getLastDrawingFrame();
+      }
+      if (frame == null && showError) {
+        deps.showStatus("\u8BF7\u5148\u63D2\u5165\u6216\u9009\u4E2D\u4E00\u4E2A\u56FE\u6846", true);
+        deps.setCanvasStatus("\u8BF7\u5148\u63D2\u5165\u6216\u9009\u4E2D\u4E00\u4E2A\u56FE\u6846");
+      }
+      return frame;
+    }
+    function getFrameChildInsertPoint2(frame, width, height) {
+      var frameConfig = getFrameConfig2(frame);
+      var childCount = 0;
+      var i;
+      for (i = 0; i < model.getChildCount(frame); i++) {
+        var child = model.getChildAt(frame, i);
+        if (deps.getAttr(child, "esKind") != deps.frameLabelKind) {
+          childCount += 1;
+        }
+      }
+      return {
+        x: 40 + childCount % 6 * 18,
+        y: Math.round(frameConfig.height * deps.frameMarginRatio) + 20 + Math.floor(childCount / 6) * 18
+      };
+    }
+    function createDrawingFrameCell2(frameConfig, pageNumber, extra) {
+      var config = normalizeFrameConfig(frameConfig);
+      var frameId = extra != null && deps.trim(extra.frameId).length > 0 ? deps.trim(extra.frameId) : deps.generateFrameId();
+      var root = new mxCell(
+        applyFrameValueMetadata(
+          deps.createNode(deps.frameTag),
+          frameId,
+          pageNumber,
+          config,
+          extra
+        ),
+        new mxGeometry(0, 0, config.width, config.height),
+        makeFrameStyle()
+      );
+      root.vertex = true;
+      root.setConnectable(false);
+      root.insert(createFramePageLabelCell(pageNumber, config));
+      return root;
+    }
+    function addTopLevelCell2(cell) {
+      model.add(graph.getDefaultParent(), cell);
+      return cell;
+    }
+    return {
+      addTopLevelCell: addTopLevelCell2,
+      createDrawingFrameCell: createDrawingFrameCell2,
+      findDrawingFrame: findDrawingFrame2,
+      findFrameById: findFrameById2,
+      getActiveFrame: getActiveFrame2,
+      getAllDrawingFrames: getAllDrawingFrames2,
+      getBottommostFrame: getBottommostFrame2,
+      getFrameChildInsertPoint: getFrameChildInsertPoint2,
+      getFrameConfig: getFrameConfig2,
+      getFrameGroupId: getFrameGroupId2,
+      getFramePageNumber: getFramePageNumber2,
+      getLeftmostFrame: getLeftmostFrame2,
+      getMaxFramePageNumberInGroup: getMaxFramePageNumberInGroup2,
+      getRightmostFrameInGroup: getRightmostFrameInGroup2,
+      normalizeFrameConfig
+    };
   }
-  function applyInstanceSpec(root, spec) {
-    var app = getApp();
-    var graph = app.ctx.graph;
-    var model = app.ctx.model;
-    var state = app.ctx.state;
-    if (root == null || root.parent == null) {
-      throw new Error("\u5F53\u524D\u56FE\u5143\u5DF2\u4E0D\u5B58\u5728\uFF0C\u65E0\u6CD5\u5E94\u7528\u4FEE\u6539");
-    }
-    state.updatingModel = true;
-    model.beginUpdate();
-    try {
-      app.domains.symbol.syncRoot(root, spec, spec.ports);
-      graph.setSelectionCell(root);
-    } finally {
-      model.endUpdate();
-      state.updatingModel = false;
-    }
-    showStatus("\u5DF2\u66F4\u65B0\u56FE\u5143\u5B9E\u4F8B", false);
+
+  // domain/frame.js
+  function getFrameDomain() {
+    return createFrameDomain();
   }
-  function clearCurrentPage() {
-    var app = getApp();
-    var graph = app.ctx.graph;
-    var state = app.ctx.state;
-    var cells = getDefaultParentChildren();
-    if (cells.length == 0) {
-      showStatus("\u5F53\u524D\u9875\u9762\u6CA1\u6709\u53EF\u6E05\u9664\u7684\u5185\u5BB9", false);
-      return;
-    }
-    if (!mxUtils.confirm("\u786E\u8BA4\u6E05\u9664\u5F53\u524D\u9875\u9762\u6240\u6709\u5185\u5BB9\uFF1F")) {
-      return;
-    }
-    if (!mxUtils.confirm("\u6B64\u64CD\u4F5C\u4E0D\u53EF\u6062\u590D\uFF0C\u786E\u5B9A\u7EE7\u7EED\u6E05\u9664\u5417\uFF1F")) {
-      return;
-    }
-    if (app.ui != null && typeof app.ui.closeGapDialogWindow === "function") {
-      app.ui.closeGapDialogWindow();
-    }
-    app.domains.cabinet.setSelectedCabinetGap(null, null);
-    if (app.runtime != null && typeof app.runtime.exitPortSwapMode === "function") {
-      app.runtime.exitPortSwapMode(false);
-    }
-    if (app.runtime != null && typeof app.runtime.exitInstanceComposeMode === "function") {
-      app.runtime.exitInstanceComposeMode(false);
-    }
-    state.allowProtectedDelete = true;
-    try {
-      graph.removeCells(cells, true);
-      showStatus("\u5DF2\u6E05\u7A7A\u5F53\u524D\u9875\u9762", false);
-    } finally {
-      state.allowProtectedDelete = false;
-    }
+  function addTopLevelCell() {
+    return getFrameDomain().addTopLevelCell.apply(null, arguments);
   }
-  var commandApi = {
-    applyInstanceSpec,
-    clearCurrentPage,
-    insertCabinet,
-    insertFrame,
-    insertIntoGraph,
-    refreshSelection,
-    updateCabinetGap
+  function createDrawingFrameCell() {
+    return getFrameDomain().createDrawingFrameCell.apply(null, arguments);
+  }
+  function findDrawingFrame() {
+    return getFrameDomain().findDrawingFrame.apply(null, arguments);
+  }
+  function findFrameById() {
+    return getFrameDomain().findFrameById.apply(null, arguments);
+  }
+  function getActiveFrame() {
+    return getFrameDomain().getActiveFrame.apply(null, arguments);
+  }
+  function getAllDrawingFrames() {
+    return getFrameDomain().getAllDrawingFrames.apply(null, arguments);
+  }
+  function getBottommostFrame() {
+    return getFrameDomain().getBottommostFrame.apply(null, arguments);
+  }
+  function getFrameChildInsertPoint() {
+    return getFrameDomain().getFrameChildInsertPoint.apply(null, arguments);
+  }
+  function getFrameConfig() {
+    return getFrameDomain().getFrameConfig.apply(null, arguments);
+  }
+  function getFrameGroupId() {
+    return getFrameDomain().getFrameGroupId.apply(null, arguments);
+  }
+  function getFramePageNumber() {
+    return getFrameDomain().getFramePageNumber.apply(null, arguments);
+  }
+  function getLeftmostFrame() {
+    return getFrameDomain().getLeftmostFrame.apply(null, arguments);
+  }
+  function getMaxFramePageNumberInGroup() {
+    return getFrameDomain().getMaxFramePageNumberInGroup.apply(null, arguments);
+  }
+  function getRightmostFrameInGroup() {
+    return getFrameDomain().getRightmostFrameInGroup.apply(null, arguments);
+  }
+  var frameDomainApi = {
+    addTopLevelCell,
+    createDrawingFrameCell,
+    findDrawingFrame,
+    findFrameById,
+    getActiveFrame,
+    getAllDrawingFrames,
+    getBottommostFrame,
+    getFrameChildInsertPoint,
+    getFrameConfig,
+    getFrameGroupId,
+    getFramePageNumber,
+    getLeftmostFrame,
+    getMaxFramePageNumberInGroup,
+    getRightmostFrameInGroup,
+    normalizeFrameConfig
   };
 
   // domain/specSchema.js
@@ -944,145 +1371,6 @@
       current = current[parts[i]];
     }
     return current;
-  }
-
-  // domain/specPorts.js
-  function normalizePortMarker(marker) {
-    marker = trim(marker).toLowerCase();
-    return marker == "circle" || marker == "hidden" ? marker : "cross";
-  }
-  function normalizePortDirection(direction) {
-    direction = trim(direction).toLowerCase();
-    return direction == "left" || direction == "right" || direction == "up" || direction == "down" ? direction : "any";
-  }
-  function normalizePortIoMode(mode) {
-    mode = trim(mode).toLowerCase();
-    return mode == "in" || mode == "out" ? mode : "both";
-  }
-  function defaultPortPosition(index, count) {
-    return count <= 0 ? 0.5 : (index + 1) / (count + 1);
-  }
-  function normalizePortPoint(raw, fallbackId, fallbackX, fallbackY) {
-    var id = fallbackId;
-    var x = fallbackX;
-    var y = fallbackY;
-    var name = "";
-    var marker = "cross";
-    var direction = "any";
-    var ioMode = "both";
-    if (isObject(raw)) {
-      id = trim(raw.id || raw.key || raw.name) || fallbackId;
-      x = toFloat(raw.x, fallbackX);
-      y = toFloat(raw.y, fallbackY);
-      name = trim(raw.name || raw.label || "");
-      marker = normalizePortMarker(raw.marker || raw.style);
-      direction = normalizePortDirection(raw.direction || raw.side);
-      ioMode = normalizePortIoMode(raw.ioMode || raw.io || raw.mode);
-    } else if (typeof raw == "number") {
-      y = raw;
-    }
-    return {
-      id,
-      x: clamp(x, 0, 1),
-      y: clamp(y, 0, 1),
-      name,
-      marker,
-      direction,
-      ioMode
-    };
-  }
-  function normalizePortLayout(rawPorts) {
-    var points = [];
-    var i;
-    if (Array.isArray(rawPorts)) {
-      for (i = 0; i < rawPorts.length; i++) {
-        points.push(
-          normalizePortPoint(
-            rawPorts[i],
-            "port:" + i,
-            0.5,
-            (i + 1) / (rawPorts.length + 1)
-          )
-        );
-      }
-      return points;
-    }
-    if (!isObject(rawPorts)) {
-      return points;
-    }
-    if (Array.isArray(rawPorts.items)) {
-      for (i = 0; i < rawPorts.items.length; i++) {
-        points.push(
-          normalizePortPoint(
-            rawPorts.items[i],
-            "port:" + i,
-            0.5,
-            (i + 1) / (rawPorts.items.length + 1)
-          )
-        );
-      }
-      return points;
-    }
-    if (Array.isArray(rawPorts.left) || Array.isArray(rawPorts.right)) {
-      var left = Array.isArray(rawPorts.left) ? rawPorts.left : [];
-      var right = Array.isArray(rawPorts.right) ? rawPorts.right : [];
-      for (i = 0; i < left.length; i++) {
-        points.push(
-          normalizePortPoint(
-            { id: "left:" + i, x: 0, y: left[i] },
-            "left:" + i,
-            0,
-            defaultPortPosition(i, left.length)
-          )
-        );
-      }
-      for (i = 0; i < right.length; i++) {
-        points.push(
-          normalizePortPoint(
-            { id: "right:" + i, x: 1, y: right[i] },
-            "right:" + i,
-            1,
-            defaultPortPosition(i, right.length)
-          )
-        );
-      }
-      return points;
-    }
-    var leftCount = Math.max(0, toInt(rawPorts.leftCount, 0));
-    var rightCount = Math.max(0, toInt(rawPorts.rightCount, 0));
-    for (i = 0; i < leftCount; i++) {
-      points.push({
-        id: "left:" + i,
-        x: 0,
-        y: defaultPortPosition(i, leftCount)
-      });
-    }
-    for (i = 0; i < rightCount; i++) {
-      points.push({
-        id: "right:" + i,
-        x: 1,
-        y: defaultPortPosition(i, rightCount)
-      });
-    }
-    return points;
-  }
-  function parsePortLayout(raw) {
-    if (raw == null || raw.length == 0) {
-      return [];
-    }
-    try {
-      return normalizePortLayout(JSON.parse(raw));
-    } catch (e) {
-      return [];
-    }
-  }
-  function buildPortLayout(spec, base) {
-    var current = normalizePortLayout(spec.ports);
-    var fallback = normalizePortLayout(base);
-    return current.length > 0 ? current : fallback;
-  }
-  function serializePortLayout(layout) {
-    return JSON.stringify(normalizePortLayout(layout));
   }
 
   // domain/specLabels.js
@@ -1381,1351 +1669,461 @@
     toSvgDataUri
   };
 
-  // domain/symbolCore.js
-  function buildSymbolCoreDeps() {
+  // runtime/connectionConstraints.js
+  function getConstraintDeps() {
     var app = getApp();
+    var ctx = app.ctx;
     return {
-      toStyleImageUri: app.domains.spec.toStyleImageUri,
-      ROOT_TYPE: app.constants.ROOT_TYPE,
+      ctx,
       trim,
-      serializePortLayout: app.domains.spec.serializePortLayout,
-      normalizeLabels: app.domains.spec.normalizeLabels
-    };
-  }
-  function getSymbolCoreDeps() {
-    return buildSymbolCoreDeps();
-  }
-  function makeRootStyle() {
-    return "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;";
-  }
-  function makeBodyStyle(spec) {
-    var deps = getSymbolCoreDeps();
-    return "shape=image;image=" + deps.toStyleImageUri(spec) + ";imageAspect=0;aspect=fixed;html=1;strokeColor=none;fillColor=none;part=1;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;cloneable=0;deletable=0;pointerEvents=0;";
-  }
-  function makeLabelStyle(align) {
-    return "text;part=1;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=" + align + ";verticalAlign=middle;spacing=2;rotatable=0;connectable=0;";
-  }
-  function applyValueMetadata(node, spec, layout) {
-    var deps = getSymbolCoreDeps();
-    node.setAttribute("pluginType", deps.ROOT_TYPE);
-    node.setAttribute("symbolId", spec.symbolId);
-    node.setAttribute("instanceId", deps.trim(spec.instanceId));
-    node.setAttribute("title", spec.title);
-    node.setAttribute("label", "");
-    node.setAttribute("deviceName", spec.device.name);
-    node.setAttribute("deviceCode", spec.device.code);
-    node.setAttribute("devicePower", spec.device.power);
-    node.setAttribute("mode", spec.device.mode);
-    node.setAttribute("variantField", deps.trim(spec.variantField || "mode"));
-    node.setAttribute("paramsJson", JSON.stringify(spec.device.params || {}));
-    node.setAttribute("portsJson", deps.serializePortLayout(layout));
-    node.setAttribute("portLayout", deps.serializePortLayout(layout));
-    node.setAttribute("labelsJson", JSON.stringify(deps.normalizeLabels(spec.labels)));
-    node.setAttribute("schemaJson", JSON.stringify(spec.schema || {}));
-    node.setAttribute("dataJson", JSON.stringify(spec.data || {}));
-    node.setAttribute("symbolPayload", JSON.stringify(spec));
-    return node;
-  }
-  var symbolCoreApi = {
-    applyValueMetadata,
-    makeBodyStyle,
-    makeLabelStyle,
-    makeRootStyle
-  };
-
-  // domain/symbolGraph.js
-  function buildSymbolGraphDeps() {
-    var app = getApp();
-    var graphApi = app.graphApi;
-    return {
-      model: graphApi.model,
-      ROOT_TAG: app.constants.ROOT_TAG,
-      ROOT_TYPE: app.constants.ROOT_TYPE,
-      BODY_TAG: app.constants.BODY_TAG,
-      BODY_KIND: app.constants.BODY_KIND,
-      LABEL_TAG: app.constants.LABEL_TAG,
-      LABEL_KIND: app.constants.LABEL_KIND,
-      trim,
-      isObject,
-      normalizeMode,
-      normalizeSpec: app.domains.spec.normalizeSpec,
-      normalizePortLayout: app.domains.spec.normalizePortLayout,
-      normalizeLabels: app.domains.spec.normalizeLabels,
-      parsePortLayout: app.domains.spec.parsePortLayout,
+      clamp,
+      parsePortLayout: specDomainApi.parsePortLayout,
       getAttr,
-      createNode,
-      createMetaCell,
-      cloneValue,
-      toStyleImageUri: app.domains.spec.toStyleImageUri,
-      serializePortLayout: app.domains.spec.serializePortLayout,
-      buildPortLayout: app.domains.spec.buildPortLayout,
-      buildResolvedLabels: app.domains.spec.buildResolvedLabels
-    };
-  }
-  function createSymbolDomain() {
-    var deps = arguments.length > 0 ? arguments[0] : buildSymbolGraphDeps();
-    var model = deps.model;
-    var core = symbolCoreApi;
-    function addChild(root, child) {
-      var index = arguments.length > 2 ? arguments[2] : null;
-      if (root.parent != null) {
-        model.add(root, child, index);
-      } else {
-        root.insert(child, index);
-      }
-    }
-    function ensureRootGeometry(root, spec) {
-      var geometry = model.getGeometry(root);
-      if (geometry == null) {
-        geometry = new mxGeometry(0, 0, spec.size.width, spec.size.height);
-      } else {
-        geometry = geometry.clone();
-        geometry.width = spec.size.width;
-        geometry.height = spec.size.height;
-      }
-      if (root.parent != null) {
-        model.setGeometry(root, geometry);
-      } else {
-        root.geometry = geometry;
-      }
-    }
-    function ensureRootValue(root, spec, layout) {
-      var value = core.applyValueMetadata(deps.cloneValue(root.value), spec, layout);
-      if (root.parent != null) {
-        model.setValue(root, value);
-        model.setStyle(root, core.makeRootStyle());
-      } else {
-        root.value = value;
-        root.style = core.makeRootStyle();
-        root.setConnectable(false);
-      }
-    }
-    function createBodyCell(spec) {
-      var geometry = new mxGeometry(0, 0, spec.size.width, spec.size.height);
-      geometry.relative = true;
-      geometry.offset = new mxPoint(0, 0);
-      var cell = new mxCell(
-        deps.createMetaCell(deps.BODY_TAG, deps.BODY_KIND, "main", ""),
-        geometry,
-        core.makeBodyStyle(spec)
-      );
-      cell.vertex = true;
-      cell.setConnectable(false);
-      return cell;
-    }
-    function applyBodyCell(cell, spec) {
-      var geometry = model.getGeometry(cell);
-      if (geometry == null) {
-        geometry = new mxGeometry();
-      } else {
-        geometry = geometry.clone();
-      }
-      geometry.x = 0;
-      geometry.y = 0;
-      geometry.width = spec.size.width;
-      geometry.height = spec.size.height;
-      geometry.relative = true;
-      geometry.offset = new mxPoint(0, 0);
-      model.setGeometry(cell, geometry);
-      var value = deps.cloneValue(cell.value);
-      value.setAttribute("esKind", deps.BODY_KIND);
-      value.setAttribute("esKey", "main");
-      value.setAttribute("label", "");
-      model.setValue(cell, value);
-      model.setStyle(cell, core.makeBodyStyle(spec));
-      cell.setConnectable(false);
-    }
-    function createLabelCell(label) {
-      var geometry = new mxGeometry(label.x, label.y, label.width, label.height);
-      geometry.relative = true;
-      geometry.offset = new mxPoint(-label.width / 2, -label.height / 2);
-      var cell = new mxCell(
-        deps.createMetaCell(deps.LABEL_TAG, deps.LABEL_KIND, label.id, label.text),
-        geometry,
-        core.makeLabelStyle(label.align)
-      );
-      cell.vertex = true;
-      cell.setConnectable(false);
-      return cell;
-    }
-    function applyLabelCell(cell, label) {
-      var geometry = model.getGeometry(cell);
-      if (geometry == null) {
-        geometry = new mxGeometry();
-      } else {
-        geometry = geometry.clone();
-      }
-      geometry.x = label.x;
-      geometry.y = label.y;
-      geometry.width = label.width;
-      geometry.height = label.height;
-      geometry.relative = true;
-      geometry.offset = new mxPoint(-label.width / 2, -label.height / 2);
-      model.setGeometry(cell, geometry);
-      var value = deps.cloneValue(cell.value);
-      value.setAttribute("esKind", deps.LABEL_KIND);
-      value.setAttribute("esKey", label.id);
-      value.setAttribute("label", label.text);
-      model.setValue(cell, value);
-      model.setStyle(cell, core.makeLabelStyle(label.align));
-      cell.setConnectable(false);
-    }
-    function mapChildren(root) {
-      var children = {
-        body: {},
-        label: {}
-      };
-      var i;
-      for (i = 0; i < model.getChildCount(root); i++) {
-        var child = model.getChildAt(root, i);
-        var kind = deps.getAttr(child, "esKind");
-        var key = deps.getAttr(child, "esKey");
-        if (kind != null && key != null && children[kind] != null) {
-          children[kind][key] = child;
-        }
-      }
-      return children;
-    }
-    function removeUnused(map, keep) {
-      for (var key in map) {
-        if (map.hasOwnProperty(key) && keep[key] == null) {
-          model.remove(map[key]);
-        }
-      }
-    }
-    function syncRoot(root, spec, baseLayout) {
-      var layout = deps.buildPortLayout(spec, baseLayout);
-      var resolvedLabels = deps.buildResolvedLabels(spec.labels, spec.data);
-      var mapped;
-      var keepBodies = {};
-      var keepLabels = {};
-      var child;
-      var i;
-      ensureRootGeometry(root, spec);
-      ensureRootValue(root, spec, layout);
-      mapped = mapChildren(root);
-      child = mapped.body.main;
-      if (child != null) {
-        applyBodyCell(child, spec);
-      } else {
-        addChild(root, createBodyCell(spec), 0);
-      }
-      keepBodies.main = true;
-      for (i = 0; i < resolvedLabels.length; i++) {
-        var label = resolvedLabels[i];
-        child = mapped.label[label.id];
-        if (child != null) {
-          applyLabelCell(child, label);
-        } else {
-          addChild(root, createLabelCell(label));
-        }
-        keepLabels[label.id] = true;
-      }
-      if (root.parent != null) {
-        removeUnused(mapped.body, keepBodies);
-        removeUnused(mapped.label, keepLabels);
-      }
-      root.setConnectable(true);
-      return root;
-    }
-    function buildSymbolCell(spec) {
-      var root = new mxCell(
-        deps.createNode(deps.ROOT_TAG),
-        new mxGeometry(0, 0, spec.size.width, spec.size.height),
-        ""
-      );
-      root.vertex = true;
-      root.setConnectable(true);
-      return syncRoot(root, spec, null);
-    }
-    function extractSpec(root) {
-      var raw = deps.getAttr(root, "symbolPayload");
-      var spec;
-      var portsRaw;
-      var labelsRaw;
-      var schemaJson;
-      var dataJson;
-      var paramsJson;
-      var geo;
-      if (raw == null || raw.length == 0) {
-        throw new Error("\u7F3A\u5C11 symbolPayload \u6570\u636E");
-      }
-      spec = JSON.parse(raw);
-      if (!deps.isObject(spec.device)) {
-        spec.device = {};
-      }
-      spec.ports = deps.normalizePortLayout(spec.ports);
-      spec.labels = deps.normalizeLabels(spec.labels);
-      spec.symbolId = deps.trim(deps.getAttr(root, "symbolId")) || spec.symbolId;
-      spec.instanceId = deps.trim(deps.getAttr(root, "instanceId")) || deps.trim(spec.instanceId);
-      spec.title = deps.trim(deps.getAttr(root, "title")) || spec.title;
-      spec.device.name = deps.trim(deps.getAttr(root, "deviceName")) || deps.trim(spec.device.name);
-      spec.device.code = deps.trim(deps.getAttr(root, "deviceCode")) || deps.trim(spec.device.code);
-      spec.device.power = deps.trim(deps.getAttr(root, "devicePower")) || deps.trim(spec.device.power);
-      spec.device.mode = deps.normalizeMode(
-        deps.getAttr(root, "mode") || spec.device.mode
-      );
-      spec.variantField = deps.trim(deps.getAttr(root, "variantField")) || deps.trim(spec.variantField || "mode");
-      portsRaw = deps.getAttr(root, "portsJson");
-      if (portsRaw == null || portsRaw.length == 0) {
-        portsRaw = deps.getAttr(root, "portLayout");
-      }
-      if (portsRaw != null && portsRaw.length > 0) {
-        spec.ports = deps.parsePortLayout(portsRaw);
-      }
-      labelsRaw = deps.getAttr(root, "labelsJson");
-      if (labelsRaw != null && labelsRaw.length > 0) {
-        try {
-          spec.labels = deps.normalizeLabels(JSON.parse(labelsRaw));
-        } catch (e) {
-        }
-      }
-      schemaJson = deps.getAttr(root, "schemaJson");
-      if (schemaJson != null && schemaJson.length > 0) {
-        try {
-          spec.schema = JSON.parse(schemaJson);
-        } catch (e) {
-        }
-      }
-      dataJson = deps.getAttr(root, "dataJson");
-      if (dataJson != null && dataJson.length > 0) {
-        try {
-          spec.data = JSON.parse(dataJson);
-        } catch (e) {
-        }
-      }
-      paramsJson = deps.getAttr(root, "paramsJson");
-      if (paramsJson != null && paramsJson.length > 0) {
-        try {
-          spec.device.params = JSON.parse(paramsJson);
-        } catch (e) {
-        }
-      }
-      geo = model.getGeometry(root);
-      if (geo != null) {
-        spec.size = {
-          width: Math.max(20, Math.round(geo.width)),
-          height: Math.max(20, Math.round(geo.height))
-        };
-      }
-      return deps.normalizeSpec(spec);
-    }
-    function refreshRoot(root) {
-      var spec = extractSpec(root);
-      var portLayout = deps.parsePortLayout(deps.getAttr(root, "portLayout"));
-      syncRoot(root, spec, portLayout);
-      return spec;
-    }
-    return {
-      buildSymbolCell,
-      extractSpec,
-      refreshRoot,
-      syncRoot
-    };
-  }
-
-  // domain/frameCore.js
-  function makeFrameStyle() {
-    return "shape=rectangle;fillColor=none;strokeColor=#6b7280;strokeWidth=2;rounded=0;html=1;whiteSpace=wrap;connectable=0;container=1;dropTarget=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;deletable=0;";
-  }
-  function makeFrameLabelStyle() {
-    return "text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontStyle=1;fontSize=13;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;deletable=0;pointerEvents=0;";
-  }
-  function normalizeFrameConfig(raw) {
-    raw = isObject(raw) ? raw : {};
-    return {
-      width: Math.max(320, toInt(raw.width, ELECTRICAL_CONSTANTS.FRAME_DEFAULT_WIDTH)),
-      height: Math.max(
-        240,
-        toInt(raw.height, ELECTRICAL_CONSTANTS.FRAME_DEFAULT_HEIGHT)
-      )
-    };
-  }
-  function applyFrameValueMetadata(node, frameId, pageNumber, frameConfig, extra) {
-    var config = normalizeFrameConfig(frameConfig);
-    var extras = isObject(extra) ? extra : {};
-    var key;
-    node.setAttribute("pluginType", ELECTRICAL_CONSTANTS.FRAME_TYPE);
-    node.setAttribute("frameId", trim(frameId));
-    node.setAttribute("pageNumber", String(Math.max(1, toInt(pageNumber, 1))));
-    node.setAttribute("frameConfigJson", JSON.stringify(config));
-    node.setAttribute("frameWidth", String(config.width));
-    node.setAttribute("frameHeight", String(config.height));
-    node.setAttribute("label", "");
-    for (key in extras) {
-      if (extras.hasOwnProperty(key) && extras[key] != null) {
-        node.setAttribute(key, String(extras[key]));
-      }
-    }
-    return node;
-  }
-  function createFramePageLabelCell(pageNumber, frameConfig) {
-    var config = normalizeFrameConfig(frameConfig);
-    var width = 140;
-    var height = 24;
-    var geometry = new mxGeometry(config.width - width - 16, 10, width, height);
-    var value = createMetaCell(
-      ELECTRICAL_CONSTANTS.FRAME_LABEL_TAG,
-      ELECTRICAL_CONSTANTS.FRAME_LABEL_KIND,
-      "page",
-      "PAGE " + pageNumber
-    );
-    var cell = new mxCell(value, geometry, makeFrameLabelStyle());
-    cell.vertex = true;
-    cell.setConnectable(false);
-    return cell;
-  }
-
-  // domain/frameGraph.js
-  function buildFrameDeps() {
-    var app = getApp();
-    var constants = app.constants;
-    var graphApi = app.graphApi;
-    return {
-      graph: graphApi.graph,
-      model: graphApi.model,
-      state: graphApi.state,
-      frameTag: constants.FRAME_TAG,
-      frameType: constants.FRAME_TYPE,
-      frameLabelTag: constants.FRAME_LABEL_TAG,
-      frameLabelKind: constants.FRAME_LABEL_KIND,
-      frameMarginRatio: constants.FRAME_MARGIN_RATIO,
-      defaultWidth: constants.FRAME_DEFAULT_WIDTH,
-      defaultHeight: constants.FRAME_DEFAULT_HEIGHT,
-      trim,
-      toInt,
-      isObject,
-      getAttr,
-      createNode,
-      createMetaCell,
-      generateFrameId,
+      buildPortLayout: specDomainApi.buildPortLayout,
+      findPortHostRoot,
+      normalizePortDirection: specDomainApi.normalizePortDirection,
+      normalizePortIoMode: specDomainApi.normalizePortIoMode,
       isDrawingFrame,
-      showStatus,
-      setCanvasStatus
-    };
-  }
-  function createFrameDomain() {
-    var deps = arguments.length > 0 ? arguments[0] : buildFrameDeps();
-    var graph = deps.graph;
-    var model = deps.model;
-    function findDrawingFrame(cell) {
-      while (cell != null) {
-        if (deps.isDrawingFrame(cell)) {
-          return cell;
-        }
-        cell = model.getParent(cell);
-      }
-      return null;
-    }
-    function getFrameConfig(frame) {
-      var raw = deps.getAttr(frame, "frameConfigJson");
-      var geometry;
-      if (raw != null && raw.length > 0) {
-        try {
-          return normalizeFrameConfig(JSON.parse(raw));
-        } catch (e) {
-        }
-      }
-      geometry = model.getGeometry(frame);
-      return normalizeFrameConfig({
-        width: geometry != null ? geometry.width : deps.defaultWidth,
-        height: geometry != null ? geometry.height : deps.defaultHeight
-      });
-    }
-    function getFramePageNumber(frame) {
-      return Math.max(1, deps.toInt(deps.getAttr(frame, "pageNumber"), 1));
-    }
-    function getAllDrawingFrames() {
-      var parent = graph.getDefaultParent();
-      var frames = [];
-      var i;
-      for (i = 0; i < model.getChildCount(parent); i++) {
-        var child = model.getChildAt(parent, i);
-        if (deps.isDrawingFrame(child)) {
-          frames.push(child);
-        }
-      }
-      return frames;
-    }
-    function findFrameById(frameId) {
-      var target = deps.trim(frameId);
-      var frames = getAllDrawingFrames();
-      var i;
-      for (i = 0; i < frames.length; i++) {
-        if (deps.trim(deps.getAttr(frames[i], "frameId")) == target) {
-          return frames[i];
-        }
-      }
-      return null;
-    }
-    function getFrameGroupId(frame) {
-      if (frame == null) {
-        return "";
-      }
-      var groupId = deps.trim(deps.getAttr(frame, "groupId"));
-      if (groupId.length > 0) {
-        return groupId;
-      }
-      var originFrameId = deps.trim(deps.getAttr(frame, "originFrameId"));
-      var frameId = deps.trim(deps.getAttr(frame, "frameId"));
-      if (originFrameId.length > 0 && originFrameId != frameId) {
-        var originFrame = findFrameById(originFrameId);
-        if (originFrame != null && originFrame != frame) {
-          return getFrameGroupId(originFrame);
-        }
-        return originFrameId;
-      }
-      return frameId;
-    }
-    function getFramesInGroup(groupId) {
-      var target = deps.trim(groupId);
-      var frames = getAllDrawingFrames();
-      var result = [];
-      var i;
-      for (i = 0; i < frames.length; i++) {
-        if (getFrameGroupId(frames[i]) == target) {
-          result.push(frames[i]);
-        }
-      }
-      return result;
-    }
-    function getRightmostFrameInGroup(groupId) {
-      var frames = getFramesInGroup(groupId);
-      var rightmost = null;
-      var i;
-      for (i = 0; i < frames.length; i++) {
-        var geometry = model.getGeometry(frames[i]);
-        if (geometry == null) {
-          continue;
-        }
-        if (rightmost == null || geometry.x + geometry.width > model.getGeometry(rightmost).x + model.getGeometry(rightmost).width) {
-          rightmost = frames[i];
-        }
-      }
-      return rightmost;
-    }
-    function getBottommostFrame() {
-      var frames = getAllDrawingFrames();
-      var bottommost = null;
-      var i;
-      for (i = 0; i < frames.length; i++) {
-        var geometry = model.getGeometry(frames[i]);
-        if (geometry == null) {
-          continue;
-        }
-        if (bottommost == null || geometry.y + geometry.height > model.getGeometry(bottommost).y + model.getGeometry(bottommost).height) {
-          bottommost = frames[i];
-        }
-      }
-      return bottommost;
-    }
-    function getLeftmostFrame() {
-      var frames = getAllDrawingFrames();
-      var leftmost = null;
-      var i;
-      for (i = 0; i < frames.length; i++) {
-        var geometry = model.getGeometry(frames[i]);
-        if (geometry == null) {
-          continue;
-        }
-        if (leftmost == null || geometry.x < model.getGeometry(leftmost).x) {
-          leftmost = frames[i];
-        }
-      }
-      return leftmost;
-    }
-    function getLastDrawingFrame() {
-      var frames = getAllDrawingFrames();
-      var last = null;
-      var i;
-      for (i = 0; i < frames.length; i++) {
-        if (last == null || getFramePageNumber(frames[i]) > getFramePageNumber(last)) {
-          last = frames[i];
-        }
-      }
-      return last;
-    }
-    function getMaxFramePageNumberInGroup(groupId) {
-      var frames = getFramesInGroup(groupId);
-      var maxPage = 0;
-      var i;
-      for (i = 0; i < frames.length; i++) {
-        maxPage = Math.max(maxPage, getFramePageNumber(frames[i]));
-      }
-      return maxPage;
-    }
-    function getActiveFrame(showError) {
-      var frame = findDrawingFrame(graph.getSelectionCell());
-      if (frame == null) {
-        frame = getLastDrawingFrame();
-      }
-      if (frame == null && showError) {
-        deps.showStatus("\u8BF7\u5148\u63D2\u5165\u6216\u9009\u4E2D\u4E00\u4E2A\u56FE\u6846", true);
-        deps.setCanvasStatus("\u8BF7\u5148\u63D2\u5165\u6216\u9009\u4E2D\u4E00\u4E2A\u56FE\u6846");
-      }
-      return frame;
-    }
-    function getFrameChildInsertPoint(frame, width, height) {
-      var frameConfig = getFrameConfig(frame);
-      var childCount = 0;
-      var i;
-      for (i = 0; i < model.getChildCount(frame); i++) {
-        var child = model.getChildAt(frame, i);
-        if (deps.getAttr(child, "esKind") != deps.frameLabelKind) {
-          childCount += 1;
-        }
-      }
-      return {
-        x: 40 + childCount % 6 * 18,
-        y: Math.round(frameConfig.height * deps.frameMarginRatio) + 20 + Math.floor(childCount / 6) * 18
-      };
-    }
-    function createDrawingFrameCell(frameConfig, pageNumber, extra) {
-      var config = normalizeFrameConfig(frameConfig);
-      var frameId = extra != null && deps.trim(extra.frameId).length > 0 ? deps.trim(extra.frameId) : deps.generateFrameId();
-      var root = new mxCell(
-        applyFrameValueMetadata(
-          deps.createNode(deps.frameTag),
-          frameId,
-          pageNumber,
-          config,
-          extra
-        ),
-        new mxGeometry(0, 0, config.width, config.height),
-        makeFrameStyle()
-      );
-      root.vertex = true;
-      root.setConnectable(false);
-      root.insert(createFramePageLabelCell(pageNumber, config));
-      return root;
-    }
-    function addTopLevelCell(cell) {
-      model.add(graph.getDefaultParent(), cell);
-      return cell;
-    }
-    return {
-      addTopLevelCell,
-      createDrawingFrameCell,
-      findDrawingFrame,
-      findFrameById,
-      getActiveFrame,
-      getAllDrawingFrames,
-      getBottommostFrame,
-      getFrameChildInsertPoint,
-      getFrameConfig,
-      getFrameGroupId,
-      getFramePageNumber,
-      getLeftmostFrame,
-      getMaxFramePageNumberInGroup,
-      getRightmostFrameInGroup,
-      normalizeFrameConfig
-    };
-  }
-
-  // domain/cabinetCore.js
-  function makeCabinetRootStyle() {
-    return "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;";
-  }
-  function createCabinetBodySvg(descriptor) {
-    var width = Math.max(20, Math.round(descriptor.width));
-    var height = Math.max(20, Math.round(descriptor.height));
-    var strokeWidth = 4;
-    var inset = strokeWidth / 2;
-    var notchLeft = Math.max(14, Math.round(width * 0.16));
-    var notchWidth = Math.max(18, Math.round(width * 0.16));
-    var notchDepth = Math.max(8, Math.round(Math.min(height, 80) * 0.12));
-    var path;
-    if (!descriptor.continuesFromPrev && !descriptor.continuesToNext) {
-      path = "M " + inset + " " + inset + " L " + (width - inset) + " " + inset + " L " + (width - inset) + " " + (height - inset) + " L " + inset + " " + (height - inset) + " Z";
-    } else {
-      var topY = descriptor.continuesFromPrev ? inset + notchDepth : inset;
-      var bottomY = descriptor.continuesToNext ? height - inset - notchDepth : height - inset;
-      path = "M " + inset + " " + topY + " L " + notchLeft + " " + topY + " " + (descriptor.continuesFromPrev ? "L " + (notchLeft + notchWidth) + " " + inset + " " : "") + "L " + (width - inset) + " " + inset + " L " + (width - inset) + " " + (height - inset) + " " + (descriptor.continuesToNext ? "L " + (notchLeft + notchWidth) + " " + (height - inset) + " L " + notchLeft + " " + bottomY + " " : "") + "L " + inset + " " + bottomY + " Z";
-    }
-    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + " " + height + '"><path d="' + path + '" fill="none" stroke="#111111" stroke-width="' + strokeWidth + '" stroke-linejoin="round" stroke-linecap="round"/></svg>';
-  }
-  function makeCabinetBodyStyle(descriptor) {
-    return "shape=image;image=data:image/svg+xml," + encodeURIComponent(createCabinetBodySvg(descriptor)) + ";imageAspect=0;aspect=fixed;html=1;strokeColor=none;fillColor=none;part=1;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;cloneable=0;deletable=0;pointerEvents=0;";
-  }
-  function makeCabinetGapStyle(selected) {
-    return "shape=rectangle;fillColor=#4dabf7;gradientColor=none;fillOpacity=" + (selected ? "38" : "14") + ";strokeColor=" + (selected ? "#1d4ed8" : "none") + ";strokeWidth=" + (selected ? "2" : "0") + ";connectable=0;editable=0;movable=0;resizable=0;rotatable=0;";
-  }
-  function normalizeGapRatio(value, fallbackValue) {
-    return clamp(toFloat(value, fallbackValue != null ? fallbackValue : 0.12), 0, 1);
-  }
-  function normalizeCabinetPort(raw, index) {
-    var base = normalizePortPoint(
-      raw,
-      trim(raw != null ? raw.id : "") || "cabinet-port:" + index,
-      1,
-      0
-    );
-    base.direction = "right";
-    base.ioMode = "out";
-    base.order = index;
-    return base;
-  }
-  function normalizeCabinetModel(raw) {
-    raw = isObject(raw) ? cloneJson(raw) : {};
-    var portCount = Math.max(
-      2,
-      Array.isArray(raw.ports) ? raw.ports.length : toInt(raw.portCount, ELECTRICAL_CONSTANTS.CABINET_DEFAULT_PORT_COUNT)
-    );
-    var ports = [];
-    var i;
-    var gapRatios = [];
-    if (Array.isArray(raw.ports) && raw.ports.length > 0) {
-      for (i = 0; i < raw.ports.length; i++) {
-        ports.push(normalizeCabinetPort(raw.ports[i], i));
-      }
-    } else {
-      for (i = 0; i < portCount; i++) {
-        ports.push(
-          normalizeCabinetPort(
-            {
-              id: "cabinet-port:" + i,
-              x: 1,
-              y: 0,
-              marker: "cross",
-              direction: "right",
-              ioMode: "out"
-            },
-            i
-          )
-        );
-      }
-    }
-    for (i = 0; i < Math.max(0, ports.length - 1); i++) {
-      gapRatios.push(
-        normalizeGapRatio(Array.isArray(raw.gapRatios) ? raw.gapRatios[i] : null, 0.12)
-      );
-    }
-    return {
-      logicalCabinetId: trim(raw.logicalCabinetId) || generateUuid(),
-      originFrameId: trim(raw.originFrameId),
-      title: trim(raw.title) || "\u914D\u7535\u67DC",
-      cabinetWidth: Math.max(
-        30,
-        toInt(raw.cabinetWidth, ELECTRICAL_CONSTANTS.CABINET_DEFAULT_WIDTH)
-      ),
-      cabinetX: Math.max(20, toInt(raw.cabinetX, ELECTRICAL_CONSTANTS.CABINET_DEFAULT_X)),
-      tailPadding: Math.max(
-        8,
-        toInt(raw.tailPadding, ELECTRICAL_CONSTANTS.CABINET_TAIL_PADDING)
-      ),
-      ports,
-      gapRatios
-    };
-  }
-  function buildCabinetOffsets(cabinetModel, frameConfig) {
-    var config = normalizeFrameConfig(frameConfig);
-    var modelData = normalizeCabinetModel(cabinetModel);
-    var usableHeight = config.height * ELECTRICAL_CONSTANTS.FRAME_CONTENT_RATIO;
-    var topMargin = config.height * ELECTRICAL_CONSTANTS.FRAME_MARGIN_RATIO;
-    var offsets = [];
-    var minFollowSpace = Math.max(
-      modelData.tailPadding * 2,
-      usableHeight * ELECTRICAL_CONSTANTS.CABINET_MIN_PORT_FOLLOW_SPACE_RATIO
-    );
-    var currentOffset = modelData.tailPadding;
-    var i;
-    if (modelData.ports.length == 0) {
-      modelData.ports = normalizeCabinetModel({ portCount: 2 }).ports;
-      modelData.gapRatios = [0.12];
-    }
-    for (i = 0; i < modelData.ports.length; i++) {
-      if (i > 0) {
-        var previousGap = modelData.gapRatios[i - 1] * usableHeight;
-        var nextGap = i < modelData.gapRatios.length ? modelData.gapRatios[i] * usableHeight : 0;
-        var candidateOffset = currentOffset + previousGap;
-        var candidatePage = Math.floor(Math.max(0, candidateOffset - 1e-4) / usableHeight);
-        var candidateLocalOffset = candidateOffset - candidatePage * usableHeight;
-        var remainingLocalSpace = usableHeight - candidateLocalOffset;
-        if (i < modelData.gapRatios.length && previousGap + nextGap > usableHeight && candidateLocalOffset > modelData.tailPadding) {
-          currentOffset = (candidatePage + 1) * usableHeight + modelData.tailPadding;
-        } else if (remainingLocalSpace < minFollowSpace && candidateLocalOffset > modelData.tailPadding) {
-          currentOffset = (candidatePage + 1) * usableHeight + modelData.tailPadding;
-        } else {
-          currentOffset = candidateOffset;
-        }
-      }
-      offsets.push(currentOffset);
-    }
-    return {
-      frameConfig: config,
-      cabinetModel: modelData,
-      usableHeight,
-      topMargin,
-      offsets,
-      totalLogicalHeight: (offsets.length > 0 ? offsets[offsets.length - 1] : modelData.tailPadding) + modelData.tailPadding
-    };
-  }
-  function getPageIndexForOffset(offset, usableHeight, pageCount) {
-    if (pageCount <= 1 || offset <= 0) {
-      return 0;
-    }
-    return clamp(Math.floor((offset - 1e-4) / usableHeight), 0, pageCount - 1);
-  }
-  function buildCabinetPageDescriptors(cabinetModel, frameConfig) {
-    var layout = buildCabinetOffsets(cabinetModel, frameConfig);
-    var pageCount = Math.max(1, Math.ceil(layout.totalLogicalHeight / layout.usableHeight));
-    var descriptors = [];
-    var pageIndex;
-    var i;
-    for (pageIndex = 0; pageIndex < pageCount; pageIndex++) {
-      var pageStart = pageIndex * layout.usableHeight;
-      var remaining = Math.max(0, layout.totalLogicalHeight - pageStart);
-      var segmentHeight = pageCount > 1 ? layout.usableHeight : Math.max(
-        layout.cabinetModel.tailPadding,
-        Math.min(layout.usableHeight, remaining)
-      );
-      var ports = [];
-      var gaps = [];
-      for (i = 0; i < layout.cabinetModel.ports.length; i++) {
-        if (getPageIndexForOffset(layout.offsets[i], layout.usableHeight, pageCount) == pageIndex) {
-          var localOffset = layout.offsets[i] - pageStart;
-          var port = cloneJson(layout.cabinetModel.ports[i]);
-          port.x = 1;
-          port.y = segmentHeight > 0 ? clamp(localOffset / segmentHeight, 0, 1) : 0;
-          port.order = i;
-          port.logicalOffset = layout.offsets[i];
-          ports.push(port);
-        }
-      }
-      for (i = 0; i < layout.cabinetModel.gapRatios.length; i++) {
-        var gapAbsoluteStart = layout.offsets[i];
-        var gapAbsoluteEnd = i + 1 < layout.offsets.length ? layout.offsets[i + 1] : gapAbsoluteStart;
-        var visibleStart = Math.max(gapAbsoluteStart, pageStart);
-        var visibleEnd = Math.min(gapAbsoluteEnd, pageStart + segmentHeight);
-        if (visibleEnd > visibleStart) {
-          var gapStart = clamp(visibleStart - pageStart, 0, segmentHeight);
-          var gapEnd = clamp(visibleEnd - pageStart, gapStart, segmentHeight);
-          if (gapEnd - gapStart < 12) {
-            gapEnd = Math.min(segmentHeight, gapStart + 12);
-          }
-          gaps.push({
-            id: "cabinet-gap:" + i + ":" + pageIndex,
-            gapIndex: i,
-            y: segmentHeight > 0 ? clamp(gapStart / segmentHeight, 0, 1) : 0,
-            height: Math.max(12, gapEnd - gapStart)
-          });
-        }
-      }
-      descriptors.push({
-        segmentIndex: pageIndex,
-        pageCount,
-        continuesFromPrev: pageIndex > 0,
-        continuesToNext: pageIndex < pageCount - 1,
-        x: layout.cabinetModel.cabinetX,
-        y: layout.topMargin,
-        width: layout.cabinetModel.cabinetWidth,
-        height: segmentHeight,
-        segmentStartOffset: pageStart,
-        segmentEndOffset: pageStart + segmentHeight,
-        ports,
-        gaps,
-        frameConfig: layout.frameConfig,
-        cabinetModel: layout.cabinetModel
-      });
-    }
-    return descriptors;
-  }
-
-  // domain/cabinetGraph.js
-  function buildCabinetDeps() {
-    var app = getApp();
-    var constants = app.constants;
-    var utils = app.utils;
-    var domains = app.domains;
-    var helpers = app.helpers;
-    var graphApi = app.graphApi;
-    return {
-      model: graphApi.model,
-      state: graphApi.state,
-      cabinetTag: constants.CABINET_TAG,
-      cabinetType: constants.CABINET_TYPE,
-      cabinetBodyTag: constants.CABINET_BODY_TAG,
-      cabinetBodyKind: constants.CABINET_BODY_KIND,
-      cabinetGapTag: constants.CABINET_GAP_TAG,
-      cabinetGapType: constants.CABINET_GAP_TYPE,
-      cabinetGapKind: constants.CABINET_GAP_KIND,
-      frameLabelKind: constants.FRAME_LABEL_KIND,
-      frameContentRatio: constants.FRAME_CONTENT_RATIO,
-      frameMarginRatio: constants.FRAME_MARGIN_RATIO,
-      frameHorizontalGap: constants.FRAME_HORIZONTAL_GAP,
-      minPortFollowSpaceRatio: constants.CABINET_MIN_PORT_FOLLOW_SPACE_RATIO,
-      defaultWidth: constants.CABINET_DEFAULT_WIDTH,
-      defaultPortCount: constants.CABINET_DEFAULT_PORT_COUNT,
-      defaultX: constants.CABINET_DEFAULT_X,
-      tailPadding: constants.CABINET_TAIL_PADDING,
-      trim: utils.trim,
-      toInt: utils.toInt,
-      toFloat: utils.toFloat,
-      clamp: utils.clamp,
-      isObject: utils.isObject,
-      cloneJson: utils.cloneJson,
-      normalizePortPoint: domains.spec.normalizePortPoint,
-      generateLogicalCabinetId: helpers.generateLogicalCabinetId,
-      createNode: utils.createNode,
-      createMetaCell: utils.createMetaCell,
-      serializePortLayout: domains.spec.serializePortLayout,
-      getAttr: utils.getAttr,
-      isCabinetSegment: helpers.isCabinetSegment,
-      isCabinetGap: helpers.isCabinetGap,
-      getNormalizedFrameConfig: domains.frame.normalizeFrameConfig,
-      getAllDrawingFrames: domains.frame.getAllDrawingFrames,
-      getFrameConfig: domains.frame.getFrameConfig,
-      getFrameGroupId: domains.frame.getFrameGroupId,
-      getFramePageNumber: domains.frame.getFramePageNumber,
-      getMaxFramePageNumberInGroup: domains.frame.getMaxFramePageNumberInGroup,
-      getRightmostFrameInGroup: domains.frame.getRightmostFrameInGroup,
-      findFrameById: domains.frame.findFrameById,
-      findDrawingFrame: domains.frame.findDrawingFrame,
-      createDrawingFrameCell: domains.frame.createDrawingFrameCell,
-      addTopLevelCell: domains.frame.addTopLevelCell,
-      getEdgePortId: function(edge, root, source) {
-        return domains.snapshot.getEdgePortId(edge, root, source);
+      isCabinetSegment,
+      isCabinetGap,
+      findDrawingFrame: frameDomainApi.findDrawingFrame,
+      getCellAbsoluteGeometry: function(cell) {
+        return cabinetDomainApi.getCellAbsoluteGeometry(cell);
       },
-      getPortMetaById: domains.connectionConstraints.getPortMetaById,
-      parsePortLayout: domains.spec.parsePortLayout,
-      isMovableConnectedTerminal: domains.connectionConstraints.isMovableConnectedTerminal,
-      moveCellToFrameByDelta: domains.connectionConstraints.moveCellToFrameByDelta,
-      setConnectionConstraint: function(edge, root, source, constraint) {
-        graphApi.graph.setConnectionConstraint(edge, root, source, constraint);
+      getPortAbsolutePosition: function(root, port) {
+        return cabinetDomainApi.getPortAbsolutePosition(root, port);
       }
     };
   }
-  function createCabinetDomain() {
-    var deps = arguments.length > 0 ? arguments[0] : buildCabinetDeps();
-    var model = deps.model;
-    var state = deps.state;
-    function findCabinetSegment(cell) {
-      while (cell != null) {
-        if (deps.isCabinetSegment(cell)) {
-          return cell;
-        }
-        cell = model.getParent(cell);
-      }
+  function getConstraintRuntime() {
+    var deps = getConstraintDeps();
+    var ctx = deps.ctx;
+    var graph = ctx.graph;
+    return {
+      deps,
+      graph,
+      model: ctx.model,
+      state: ctx.state,
+      oldGetAllConnectionConstraints: graph.getAllConnectionConstraints,
+      oldSetConnectionConstraint: graph.setConnectionConstraint,
+      oldValidateConnection: graph.connectionHandler.validateConnection
+    };
+  }
+  function getElectricalConstraints(cell) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var root = deps.findPortHostRoot(cell);
+    var layout;
+    var constraints = [];
+    var i;
+    if (root == null) {
       return null;
     }
-    function createCabinetValueMetadata(node, cabinetModel, descriptor, frameId) {
-      node.setAttribute("pluginType", deps.cabinetType);
-      node.setAttribute(
-        "logicalCabinetId",
-        deps.trim(cabinetModel.logicalCabinetId)
-      );
-      node.setAttribute("originFrameId", deps.trim(cabinetModel.originFrameId));
-      node.setAttribute("frameId", deps.trim(frameId));
-      node.setAttribute("segmentIndex", String(descriptor.segmentIndex));
-      node.setAttribute(
-        "segmentStartOffset",
-        String(Math.round(descriptor.segmentStartOffset * 1e3) / 1e3)
-      );
-      node.setAttribute(
-        "segmentEndOffset",
-        String(Math.round(descriptor.segmentEndOffset * 1e3) / 1e3)
-      );
-      node.setAttribute("cabinetModelJson", JSON.stringify(cabinetModel));
-      node.setAttribute("gapRatiosJson", JSON.stringify(cabinetModel.gapRatios));
-      node.setAttribute("portsJson", deps.serializePortLayout(descriptor.ports));
-      node.setAttribute("portLayout", deps.serializePortLayout(descriptor.ports));
-      node.setAttribute("label", "");
-      return node;
-    }
-    function createCabinetBodyCell(descriptor) {
-      var cell = new mxCell(
-        deps.createMetaCell(
-          deps.cabinetBodyTag,
-          deps.cabinetBodyKind,
-          "main",
-          ""
-        ),
-        new mxGeometry(0, 0, descriptor.width, descriptor.height),
-        makeCabinetBodyStyle(descriptor)
-      );
-      cell.vertex = true;
-      cell.setConnectable(false);
-      return cell;
-    }
-    function isSelectedCabinetGap(logicalCabinetId, gapIndex) {
-      return state.selectedCabinetGap != null && deps.trim(state.selectedCabinetGap.logicalCabinetId) == deps.trim(logicalCabinetId) && deps.toInt(state.selectedCabinetGap.gapIndex, -1) == deps.toInt(gapIndex, -1);
-    }
-    function createCabinetGapCell(cabinetModel, descriptor, gap) {
-      var value = deps.createNode(deps.cabinetGapTag);
-      value.setAttribute("pluginType", deps.cabinetGapType);
-      value.setAttribute("esKind", deps.cabinetGapKind);
-      value.setAttribute("esKey", String(gap.gapIndex));
-      value.setAttribute(
-        "logicalCabinetId",
-        deps.trim(cabinetModel.logicalCabinetId)
-      );
-      value.setAttribute("gapIndex", String(gap.gapIndex));
-      value.setAttribute("label", "");
-      var geometry = new mxGeometry(1, gap.y, 14, gap.height);
-      geometry.relative = true;
-      geometry.offset = new mxPoint(-7, 0);
-      var cell = new mxCell(
-        value,
-        geometry,
-        makeCabinetGapStyle(
-          isSelectedCabinetGap(cabinetModel.logicalCabinetId, gap.gapIndex)
+    layout = deps.buildPortLayout(
+      { ports: deps.parsePortLayout(deps.getAttr(root, "portsJson")) },
+      deps.parsePortLayout(deps.getAttr(root, "portLayout"))
+    );
+    for (i = 0; i < layout.length; i++) {
+      var point = layout[i];
+      constraints.push(
+        new mxConnectionConstraint(
+          new mxPoint(point.x, point.y),
+          false,
+          point.id || "port:" + i
         )
       );
-      cell.vertex = true;
-      cell.setConnectable(false);
-      return cell;
     }
-    function getCellAbsoluteGeometry(cell) {
-      var geometry = model.getGeometry(cell);
-      var parent = model.getParent(cell);
-      var x = geometry != null ? geometry.x : 0;
-      var y = geometry != null ? geometry.y : 0;
-      while (parent != null) {
-        var parentGeometry = model.getGeometry(parent);
-        if (parentGeometry != null) {
-          x += parentGeometry.x;
-          y += parentGeometry.y;
-        }
-        parent = model.getParent(parent);
+    return constraints;
+  }
+  function getPortMetaByConstraint(root, constraint) {
+    var deps = getConstraintRuntime().deps;
+    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
+    var name = constraint != null ? deps.trim(constraint.name) : "";
+    var i;
+    for (i = 0; i < ports.length; i++) {
+      if (deps.trim(ports[i].id) == name) {
+        return ports[i];
       }
+    }
+    return null;
+  }
+  function getPortMetaById(root, portId) {
+    var deps = getConstraintRuntime().deps;
+    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
+    var target = deps.trim(portId);
+    var i;
+    for (i = 0; i < ports.length; i++) {
+      if (deps.trim(ports[i].id) == target) {
+        return ports[i];
+      }
+    }
+    return null;
+  }
+  function mapPortDirectionToConstraint(direction) {
+    var normalizePortDirection2 = getConstraintRuntime().deps.normalizePortDirection;
+    switch (normalizePortDirection2(direction)) {
+      case "left":
+        return "west";
+      case "right":
+        return "east";
+      case "up":
+        return "north";
+      case "down":
+        return "south";
+      default:
+        return "";
+    }
+  }
+  function validatePortIoMode(sourcePort, targetPort) {
+    var normalizePortIoMode2 = getConstraintRuntime().deps.normalizePortIoMode;
+    if (sourcePort != null && normalizePortIoMode2(sourcePort.ioMode) == "in") {
+      return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u5165\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u8D77\u70B9";
+    }
+    if (targetPort != null && normalizePortIoMode2(targetPort.ioMode) == "out") {
+      return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u51FA\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u7EC8\u70B9";
+    }
+    return null;
+  }
+  function applyNativeConnectionConstraint(edge, terminal, source, constraint) {
+    var runtime = getConstraintRuntime();
+    runtime.oldSetConnectionConstraint.call(
+      runtime.graph,
+      edge,
+      terminal,
+      source,
+      constraint
+    );
+  }
+  function isMovableConnectedTerminal(cell) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    return cell != null && model.isVertex(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isCabinetGap(cell);
+  }
+  function clampCellGeometryToFrame(geometry, frame) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var frameGeometry = model.getGeometry(frame);
+    var nextGeometry = geometry.clone();
+    var padding = 12;
+    var minX = padding;
+    var minY = padding;
+    var maxX = Math.max(minX, frameGeometry.width - geometry.width - padding);
+    var maxY = Math.max(minY, frameGeometry.height - geometry.height - padding);
+    nextGeometry.x = deps.clamp(nextGeometry.x, minX, maxX);
+    nextGeometry.y = deps.clamp(nextGeometry.y, minY, maxY);
+    return nextGeometry;
+  }
+  function moveCellToFrameByDelta(cell, targetFrame, deltaX, deltaY) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    if (!isMovableConnectedTerminal(cell) || targetFrame == null) {
+      return;
+    }
+    var geometry = model.getGeometry(cell);
+    if (geometry == null) {
+      return;
+    }
+    var currentFrame = deps.findDrawingFrame(cell);
+    var absolute = deps.getCellAbsoluteGeometry(cell);
+    var targetFrameGeometry = model.getGeometry(targetFrame);
+    var nextGeometry = geometry.clone();
+    var nextAbsoluteX = absolute.x + deltaX;
+    var nextAbsoluteY = absolute.y + deltaY;
+    if (currentFrame != targetFrame) {
+      model.add(targetFrame, cell);
+    }
+    nextGeometry.x = nextAbsoluteX - targetFrameGeometry.x;
+    nextGeometry.y = nextAbsoluteY - targetFrameGeometry.y;
+    nextGeometry = clampCellGeometryToFrame(nextGeometry, targetFrame);
+    model.setGeometry(cell, nextGeometry);
+  }
+  function collectConnectedMovableGroup(startCell) {
+    var model = getConstraintRuntime().model;
+    var queue = [];
+    var vertexMap = {};
+    var edgeMap = {};
+    var vertices = [];
+    var edges = [];
+    var i;
+    if (!isMovableConnectedTerminal(startCell)) {
       return {
-        x,
-        y,
-        width: geometry != null ? geometry.width : 0,
-        height: geometry != null ? geometry.height : 0
+        vertices,
+        edges
       };
     }
-    function getPortAbsolutePosition(root, port) {
-      var geometry = getCellAbsoluteGeometry(root);
-      return {
-        x: geometry.x + port.x * geometry.width,
-        y: geometry.y + port.y * geometry.height
-      };
-    }
-    function buildCabinetSegmentCell(cabinetModel, frameId, descriptor) {
-      var root = new mxCell(
-        createCabinetValueMetadata(
-          deps.createNode(deps.cabinetTag),
-          cabinetModel,
-          descriptor,
-          frameId
-        ),
-        new mxGeometry(
-          descriptor.x,
-          descriptor.y,
-          descriptor.width,
-          descriptor.height
-        ),
-        makeCabinetRootStyle()
-      );
-      var i;
-      root.vertex = true;
-      root.setConnectable(true);
-      root.insert(createCabinetBodyCell(descriptor));
-      for (i = 0; i < descriptor.gaps.length; i++) {
-        root.insert(
-          createCabinetGapCell(cabinetModel, descriptor, descriptor.gaps[i])
-        );
+    queue.push(startCell);
+    while (queue.length > 0) {
+      var cell = queue.shift();
+      var cellId = mxObjectIdentity.get(cell);
+      if (vertexMap[cellId]) {
+        continue;
       }
-      return root;
-    }
-    function extractCabinetModel(cell) {
-      var root = findCabinetSegment(cell);
-      var raw;
-      if (root == null) {
-        throw new Error("\u672A\u627E\u5230\u914D\u7535\u67DC\u7247\u6BB5");
-      }
-      raw = deps.getAttr(root, "cabinetModelJson");
-      if (raw == null || raw.length == 0) {
-        throw new Error("\u7F3A\u5C11 cabinetModelJson \u6570\u636E");
-      }
-      return normalizeCabinetModel(JSON.parse(raw));
-    }
-    function findCabinetSegments(logicalCabinetId) {
-      var target = deps.trim(logicalCabinetId);
-      var frames = deps.getAllDrawingFrames();
-      var result = [];
-      var i;
-      var j;
-      for (i = 0; i < frames.length; i++) {
-        for (j = 0; j < model.getChildCount(frames[i]); j++) {
-          var child = model.getChildAt(frames[i], j);
-          if (deps.isCabinetSegment(child) && deps.trim(deps.getAttr(child, "logicalCabinetId")) == target) {
-            result.push(child);
-          }
+      vertexMap[cellId] = true;
+      vertices.push(cell);
+      for (i = 0; i < model.getEdgeCount(cell); i++) {
+        var edge = model.getEdgeAt(cell, i);
+        var edgeId = mxObjectIdentity.get(edge);
+        var source = model.getTerminal(edge, true);
+        var target = model.getTerminal(edge, false);
+        var other = source == cell ? target : source;
+        if (!edgeMap[edgeId]) {
+          edgeMap[edgeId] = true;
+          edges.push(edge);
+        }
+        if (isMovableConnectedTerminal(other)) {
+          queue.push(other);
         }
       }
-      return result;
-    }
-    function updateCabinetGapHighlight() {
-      var frames = deps.getAllDrawingFrames();
-      var i;
-      var j;
-      var k;
-      model.beginUpdate();
-      try {
-        for (i = 0; i < frames.length; i++) {
-          for (j = 0; j < model.getChildCount(frames[i]); j++) {
-            var segment = model.getChildAt(frames[i], j);
-            if (!deps.isCabinetSegment(segment)) {
-              continue;
-            }
-            for (k = 0; k < model.getChildCount(segment); k++) {
-              var child = model.getChildAt(segment, k);
-              if (deps.isCabinetGap(child)) {
-                var nextStyle = makeCabinetGapStyle(
-                  isSelectedCabinetGap(
-                    deps.getAttr(child, "logicalCabinetId"),
-                    deps.getAttr(child, "gapIndex")
-                  )
-                );
-                if (child.style != nextStyle) {
-                  model.setStyle(child, nextStyle);
-                }
-              }
-            }
-          }
-        }
-      } finally {
-        model.endUpdate();
-      }
-    }
-    function setSelectedCabinetGap(logicalCabinetId, gapIndex) {
-      if (deps.trim(logicalCabinetId).length == 0 || deps.toInt(gapIndex, -1) < 0) {
-        state.selectedCabinetGap = null;
-      } else {
-        state.selectedCabinetGap = {
-          logicalCabinetId: deps.trim(logicalCabinetId),
-          gapIndex: deps.toInt(gapIndex, -1)
-        };
-      }
-      updateCabinetGapHighlight();
-    }
-    function collectCabinetAttachments(segments) {
-      var seen = {};
-      var attachments = [];
-      var i;
-      var j;
-      for (i = 0; i < segments.length; i++) {
-        var segment = segments[i];
-        var edgeCount = model.getEdgeCount(segment);
-        for (j = 0; j < edgeCount; j++) {
-          var edge = model.getEdgeAt(segment, j);
-          var sourceTerminal = model.getTerminal(edge, true);
-          var targetTerminal = model.getTerminal(edge, false);
-          var sourceIsSegment = sourceTerminal == segment;
-          var targetIsSegment = targetTerminal == segment;
-          if (!sourceIsSegment && !targetIsSegment) {
-            continue;
-          }
-          var key = mxCellPath.create(edge) + ":" + (sourceIsSegment ? "S" : "T");
-          if (seen[key]) {
-            continue;
-          }
-          seen[key] = true;
-          var source = sourceIsSegment;
-          var portId = deps.getEdgePortId(edge, segment, source);
-          var port = deps.getPortMetaById(segment, portId);
-          if (port == null) {
-            continue;
-          }
-          attachments.push({
-            edge,
-            source,
-            portId,
-            oldPortPosition: getPortAbsolutePosition(segment, port),
-            otherTerminal: model.getTerminal(edge, !source)
-          });
-        }
-      }
-      return attachments;
-    }
-    function buildCabinetPortMap(segments) {
-      var result = {};
-      var i;
-      for (i = 0; i < segments.length; i++) {
-        var segment = segments[i];
-        var frame = deps.findDrawingFrame(segment);
-        var ports = deps.parsePortLayout(deps.getAttr(segment, "portsJson"));
-        var j;
-        for (j = 0; j < ports.length; j++) {
-          result[deps.trim(ports[j].id)] = {
-            segment,
-            port: ports[j],
-            frame,
-            absolutePosition: getPortAbsolutePosition(segment, ports[j])
-          };
-        }
-      }
-      return result;
-    }
-    function restoreCabinetAttachments(attachments, newPortMap) {
-      var movedTerminals = {};
-      var i;
-      for (i = 0; i < attachments.length; i++) {
-        var attachment = attachments[i];
-        var target = newPortMap[deps.trim(attachment.portId)];
-        if (target == null) {
-          continue;
-        }
-        model.setTerminal(attachment.edge, target.segment, attachment.source);
-        deps.setConnectionConstraint(
-          attachment.edge,
-          target.segment,
-          attachment.source,
-          new mxConnectionConstraint(
-            new mxPoint(target.port.x, target.port.y),
-            false,
-            target.port.id
-          )
-        );
-        var edgeGeometry = model.getGeometry(attachment.edge);
-        if (edgeGeometry != null && edgeGeometry.points != null) {
-          edgeGeometry = edgeGeometry.clone();
-          edgeGeometry.points = null;
-          model.setGeometry(attachment.edge, edgeGeometry);
-        }
-        if (deps.isMovableConnectedTerminal(attachment.otherTerminal)) {
-          var moveKey = mxObjectIdentity.get(attachment.otherTerminal);
-          if (!movedTerminals[moveKey]) {
-            movedTerminals[moveKey] = true;
-            deps.moveCellToFrameByDelta(
-              attachment.otherTerminal,
-              target.frame,
-              target.absolutePosition.x - attachment.oldPortPosition.x,
-              target.absolutePosition.y - attachment.oldPortPosition.y
-            );
-          }
-        }
-      }
-    }
-    function findAutoFramesForCabinet(originFrameId, logicalCabinetId) {
-      var frames = deps.getAllDrawingFrames();
-      var result = [];
-      var i;
-      for (i = 0; i < frames.length; i++) {
-        if (deps.trim(deps.getAttr(frames[i], "originFrameId")) == deps.trim(originFrameId) && deps.trim(deps.getAttr(frames[i], "autoFrameOwner")) == deps.trim(logicalCabinetId)) {
-          result.push(frames[i]);
-        }
-      }
-      result.sort(function(a, b) {
-        return deps.toInt(deps.getAttr(a, "autoFrameIndex"), 0) - deps.toInt(deps.getAttr(b, "autoFrameIndex"), 0);
-      });
-      return result;
-    }
-    function frameHasOnlyCabinetChildren(frame, logicalCabinetId) {
-      var i;
-      for (i = 0; i < model.getChildCount(frame); i++) {
-        var child = model.getChildAt(frame, i);
-        if (deps.getAttr(child, "esKind") == deps.frameLabelKind) {
-          continue;
-        }
-        if (deps.isCabinetSegment(child) && deps.trim(deps.getAttr(child, "logicalCabinetId")) == deps.trim(logicalCabinetId)) {
-          continue;
-        }
-        return false;
-      }
-      return true;
-    }
-    function ensureCabinetFrames(originFrame, cabinetModel, pageCount, skipCleanup) {
-      var originFrameId = deps.trim(deps.getAttr(originFrame, "frameId"));
-      var originGroupId = deps.getFrameGroupId(originFrame);
-      var logicalCabinetId = deps.trim(cabinetModel.logicalCabinetId);
-      var config = deps.getFrameConfig(originFrame);
-      var autoFrames = findAutoFramesForCabinet(originFrameId, logicalCabinetId);
-      var frames = [originFrame];
-      var previousFrame = originFrame;
-      var i;
-      for (i = 1; i < pageCount; i++) {
-        var frame = autoFrames.length >= i ? autoFrames[i - 1] : null;
-        if (frame == null) {
-          var rightmostInGroup = deps.getRightmostFrameInGroup(originGroupId);
-          var rightmostGeometry = rightmostInGroup != null ? model.getGeometry(rightmostInGroup) : null;
-          frame = deps.createDrawingFrameCell(
-            config,
-            Math.max(
-              deps.getMaxFramePageNumberInGroup(originGroupId),
-              deps.getFramePageNumber(previousFrame)
-            ) + 1,
-            {
-              originFrameId,
-              groupId: originGroupId,
-              autoFrameOwner: logicalCabinetId,
-              autoFrameIndex: i
-            }
-          );
-          frame.geometry = frame.geometry.clone();
-          frame.geometry.x = Math.max(
-            model.getGeometry(previousFrame).x + config.width + deps.frameHorizontalGap,
-            rightmostGeometry != null ? rightmostGeometry.x + rightmostGeometry.width + deps.frameHorizontalGap : model.getGeometry(previousFrame).x + config.width + deps.frameHorizontalGap
-          );
-          frame.geometry.y = model.getGeometry(previousFrame).y;
-          deps.addTopLevelCell(frame);
-        }
-        frames.push(frame);
-        previousFrame = frame;
-      }
-      if (!skipCleanup) {
-        for (i = pageCount; i <= autoFrames.length; i++) {
-          var extraFrame = autoFrames[i - 1];
-          if (extraFrame != null && frameHasOnlyCabinetChildren(extraFrame, logicalCabinetId)) {
-            model.remove(extraFrame);
-          }
-        }
-      }
-      return frames;
-    }
-    function relayoutCabinetByModel(cabinetModel) {
-      var normalized = normalizeCabinetModel(cabinetModel);
-      var originFrame = deps.findFrameById(normalized.originFrameId);
-      if (originFrame == null) {
-        throw new Error("\u672A\u627E\u5230\u914D\u7535\u67DC\u6240\u5C5E\u7684\u8D77\u59CB\u56FE\u6846");
-      }
-      var frameConfig = deps.getFrameConfig(originFrame);
-      var descriptors = buildCabinetPageDescriptors(normalized, frameConfig);
-      var oldSegments = findCabinetSegments(normalized.logicalCabinetId);
-      var attachments = collectCabinetAttachments(oldSegments);
-      var frames;
-      var newSegments = [];
-      var i;
-      frames = ensureCabinetFrames(
-        originFrame,
-        normalized,
-        descriptors.length,
-        true
-      );
-      for (i = 0; i < descriptors.length; i++) {
-        var segment = buildCabinetSegmentCell(
-          normalized,
-          deps.trim(deps.getAttr(frames[i], "frameId")),
-          descriptors[i]
-        );
-        model.add(frames[i], segment);
-        newSegments.push(segment);
-      }
-      restoreCabinetAttachments(attachments, buildCabinetPortMap(newSegments));
-      for (i = 0; i < oldSegments.length; i++) {
-        model.remove(oldSegments[i]);
-      }
-      ensureCabinetFrames(originFrame, normalized, descriptors.length);
-      return newSegments;
     }
     return {
-      buildCabinetPageDescriptors,
-      buildCabinetPortMap,
-      buildCabinetSegmentCell,
-      collectCabinetAttachments,
-      extractCabinetModel,
-      findCabinetSegment,
-      findCabinetSegments,
-      getCellAbsoluteGeometry,
-      getPortAbsolutePosition,
-      normalizeCabinetModel,
-      relayoutCabinetByModel,
-      restoreCabinetAttachments,
-      setSelectedCabinetGap
+      vertices,
+      edges
     };
   }
+  function getCellsAbsoluteBounds(cells) {
+    var getCellAbsoluteGeometry2 = getConstraintRuntime().deps.getCellAbsoluteGeometry;
+    var bounds = null;
+    var i;
+    for (i = 0; i < cells.length; i++) {
+      var geometry = getCellAbsoluteGeometry2(cells[i]);
+      if (bounds == null) {
+        bounds = {
+          x: geometry.x,
+          y: geometry.y,
+          width: geometry.width,
+          height: geometry.height
+        };
+      } else {
+        var minX = Math.min(bounds.x, geometry.x);
+        var minY = Math.min(bounds.y, geometry.y);
+        var maxX = Math.max(
+          bounds.x + bounds.width,
+          geometry.x + geometry.width
+        );
+        var maxY = Math.max(
+          bounds.y + bounds.height,
+          geometry.y + geometry.height
+        );
+        bounds.x = minX;
+        bounds.y = minY;
+        bounds.width = maxX - minX;
+        bounds.height = maxY - minY;
+      }
+    }
+    return bounds;
+  }
+  function adjustGroupDeltaToFrame(vertices, targetFrame, deltaX, deltaY) {
+    var model = getConstraintRuntime().model;
+    var bounds = getCellsAbsoluteBounds(vertices);
+    var frameGeometry = model.getGeometry(targetFrame);
+    var padding = 12;
+    if (bounds == null || frameGeometry == null) {
+      return {
+        x: deltaX,
+        y: deltaY
+      };
+    }
+    var nextX = bounds.x + deltaX;
+    var nextY = bounds.y + deltaY;
+    var minX = frameGeometry.x + padding;
+    var minY = frameGeometry.y + padding;
+    var maxX = frameGeometry.x + frameGeometry.width - padding;
+    var maxY = frameGeometry.y + frameGeometry.height - padding;
+    if (nextX < minX) {
+      deltaX += minX - nextX;
+      nextX = minX;
+    }
+    if (nextY < minY) {
+      deltaY += minY - nextY;
+      nextY = minY;
+    }
+    if (nextX + bounds.width > maxX) {
+      deltaX -= nextX + bounds.width - maxX;
+    }
+    if (nextY + bounds.height > maxY) {
+      deltaY -= nextY + bounds.height - maxY;
+    }
+    return {
+      x: deltaX,
+      y: deltaY
+    };
+  }
+  function shiftEdgePointsByDelta(edge, deltaX, deltaY) {
+    var model = getConstraintRuntime().model;
+    var geometry = model.getGeometry(edge);
+    var points;
+    var i;
+    if (geometry == null || geometry.points == null || geometry.points.length == 0) {
+      return;
+    }
+    geometry = geometry.clone();
+    points = [];
+    for (i = 0; i < geometry.points.length; i++) {
+      points.push(
+        new mxPoint(
+          geometry.points[i].x + deltaX,
+          geometry.points[i].y + deltaY
+        )
+      );
+    }
+    geometry.points = points;
+    model.setGeometry(edge, geometry);
+  }
+  function clearEdgePoints(edge) {
+    var model = getConstraintRuntime().model;
+    var geometry = model.getGeometry(edge);
+    if (geometry != null && geometry.points != null && geometry.points.length > 0) {
+      geometry = geometry.clone();
+      geometry.points = null;
+      model.setGeometry(edge, geometry);
+    }
+  }
+  function moveConnectedGroupToCabinetPort(edge, source, oldRoot, oldPortId, newRoot, newPort) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var state = runtime.state;
+    var otherTerminal = model.getTerminal(edge, !source);
+    var oldPort = getPortMetaById(oldRoot, oldPortId);
+    var targetFrame = deps.findDrawingFrame(newRoot);
+    var group;
+    var delta;
+    var movedMap = {};
+    var i;
+    if (state.updatingModel || !deps.isCabinetSegment(oldRoot) || !deps.isCabinetSegment(newRoot) || oldPort == null || newPort == null || !isMovableConnectedTerminal(otherTerminal) || targetFrame == null) {
+      return;
+    }
+    group = collectConnectedMovableGroup(otherTerminal);
+    if (group.vertices.length == 0) {
+      return;
+    }
+    delta = adjustGroupDeltaToFrame(
+      group.vertices,
+      targetFrame,
+      deps.getPortAbsolutePosition(newRoot, newPort).x - deps.getPortAbsolutePosition(oldRoot, oldPort).x,
+      deps.getPortAbsolutePosition(newRoot, newPort).y - deps.getPortAbsolutePosition(oldRoot, oldPort).y
+    );
+    if (Math.abs(delta.x) < 1e-4 && Math.abs(delta.y) < 1e-4) {
+      return;
+    }
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      for (i = 0; i < group.vertices.length; i++) {
+        var vertex = group.vertices[i];
+        var key = mxObjectIdentity.get(vertex);
+        if (!movedMap[key]) {
+          movedMap[key] = true;
+          moveCellToFrameByDelta(vertex, targetFrame, delta.x, delta.y);
+        }
+      }
+      for (i = 0; i < group.edges.length; i++) {
+        var groupEdge = group.edges[i];
+        var sourceTerminal = model.getTerminal(groupEdge, true);
+        var targetTerminal = model.getTerminal(groupEdge, false);
+        var sourceMoved = movedMap[mxObjectIdentity.get(sourceTerminal)] === true;
+        var targetMoved = movedMap[mxObjectIdentity.get(targetTerminal)] === true;
+        if (sourceMoved && targetMoved) {
+          shiftEdgePointsByDelta(groupEdge, delta.x, delta.y);
+        } else {
+          clearEdgePoints(groupEdge);
+        }
+      }
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+  }
+  function installGraphBehavior(extraDeps) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var model = runtime.model;
+    graph.getAllConnectionConstraints = function(terminal, source) {
+      var root = deps.findPortHostRoot(terminal != null ? terminal.cell : null);
+      if (root != null) {
+        return getElectricalConstraints(root);
+      }
+      return runtime.oldGetAllConnectionConstraints.apply(this, arguments);
+    };
+    graph.setConnectionConstraint = function(edge, terminal, source, constraint) {
+      if (edge == null) {
+        runtime.oldSetConnectionConstraint.apply(this, arguments);
+        return;
+      }
+      var previousStyle = model.getStyle(edge) || "";
+      var previousPortId = deps.trim(
+        mxUtils.getValue(
+          previousStyle,
+          source ? "sourcePortId" : "targetPortId",
+          ""
+        )
+      );
+      var previousRoot = deps.findPortHostRoot(model.getTerminal(edge, source));
+      runtime.oldSetConnectionConstraint.apply(this, arguments);
+      var root = deps.findPortHostRoot(terminal);
+      if (root == null || edge == null) {
+        return;
+      }
+      var port = getPortMetaByConstraint(root, constraint);
+      extraDeps.applyEdgePortConstraintMetadata(edge, root, source, constraint);
+      if (previousRoot != null && root != null && previousPortId.length > 0 && port != null && deps.trim(port.id).length > 0 && (previousRoot != root || previousPortId != deps.trim(port.id))) {
+        moveConnectedGroupToCabinetPort(
+          edge,
+          source,
+          previousRoot,
+          previousPortId,
+          root,
+          port
+        );
+      }
+    };
+    graph.connectionHandler.validateConnection = function(source, target) {
+      var error = runtime.oldValidateConnection.apply(this, arguments);
+      var sourceRoot;
+      var targetRoot;
+      var sourcePort;
+      var targetPort;
+      if (error != null) {
+        extraDeps.setCanvasStatus(error);
+        return error;
+      }
+      sourceRoot = deps.findPortHostRoot(source);
+      targetRoot = deps.findPortHostRoot(target);
+      if (sourceRoot == null && targetRoot == null) {
+        return null;
+      }
+      sourcePort = getPortMetaByConstraint(sourceRoot, this.sourceConstraint);
+      targetPort = getPortMetaByConstraint(
+        targetRoot,
+        this.constraintHandler != null ? this.constraintHandler.currentConstraint : null
+      );
+      error = validatePortIoMode(sourcePort, targetPort);
+      extraDeps.setCanvasStatus(error);
+      return error;
+    };
+    graph.connectionHandler.addListener(mxEvent.RESET, function() {
+      extraDeps.setCanvasStatus("");
+    });
+    graph.connectionHandler.addListener(mxEvent.CONNECT, function() {
+      extraDeps.setCanvasStatus("");
+    });
+  }
+  var connectionConstraintsApi = {
+    applyNativeConnectionConstraint,
+    clearEdgePoints,
+    getElectricalConstraints,
+    getPortMetaByConstraint,
+    getPortMetaById,
+    isMovableConnectedTerminal,
+    installGraphBehavior,
+    mapPortDirectionToConstraint,
+    moveCellToFrameByDelta,
+    moveConnectedGroupToCabinetPort
+  };
 
   // domain/snapshotCore.js
   function getCellStableId(cell) {
@@ -3031,21 +2429,1820 @@
     };
   }
 
+  // runtime/portSwapMode.js
+  function getPortSwapDeps() {
+    var app = getApp();
+    var ctx = app.ctx;
+    return {
+      ctx,
+      trim,
+      cloneJson,
+      parsePortLayout: specDomainApi.parsePortLayout,
+      getAttr,
+      findCabinetSegments: cabinetDomainApi.findCabinetSegments,
+      findPortHostRoot,
+      isCabinetSegment,
+      isMovableConnectedTerminal: connectionConstraintsApi.isMovableConnectedTerminal,
+      closeGapDialogWindow: function() {
+        return cabinetDialogsApi.closeGapDialogWindow();
+      },
+      setSelectedCabinetGap: cabinetDomainApi.setSelectedCabinetGap,
+      showStatus,
+      setCanvasStatus,
+      getPortAbsolutePosition: cabinetDomainApi.getPortAbsolutePosition,
+      getPortMetaByConstraint: connectionConstraintsApi.getPortMetaByConstraint,
+      mapPortDirectionToConstraint: connectionConstraintsApi.mapPortDirectionToConstraint,
+      clearEdgePoints: connectionConstraintsApi.clearEdgePoints,
+      moveConnectedGroupToCabinetPort: connectionConstraintsApi.moveConnectedGroupToCabinetPort,
+      setConnectionConstraint: function(edge, root, source, constraint) {
+        connectionConstraintsApi.applyNativeConnectionConstraint(
+          edge,
+          root,
+          source,
+          constraint
+        );
+      }
+    };
+  }
+  function getPortSwapRuntime() {
+    var deps = getPortSwapDeps();
+    var ctx = deps.ctx;
+    return {
+      deps,
+      graph: ctx.graph,
+      model: ctx.model,
+      state: ctx.state
+    };
+  }
+  function buildPortSwapContextFromEdge(edge) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var model = runtime.model;
+    var sourceTerminal = model.getTerminal(edge, true);
+    var targetTerminal = model.getTerminal(edge, false);
+    var sourceRoot = deps.findPortHostRoot(sourceTerminal);
+    var targetRoot = deps.findPortHostRoot(targetTerminal);
+    var sourceCabinet = deps.isCabinetSegment(sourceRoot);
+    var targetCabinet = deps.isCabinetSegment(targetRoot);
+    if (sourceCabinet == targetCabinet) {
+      return null;
+    }
+    return {
+      edge,
+      source: sourceCabinet,
+      cabinetRoot: sourceCabinet ? sourceRoot : targetRoot,
+      portId: deps.trim(
+        mxUtils.getValue(
+          graph.getCellStyle(edge) || {},
+          sourceCabinet ? "sourcePortId" : "targetPortId",
+          ""
+        )
+      ),
+      otherTerminal: sourceCabinet ? targetTerminal : sourceTerminal
+    };
+  }
+  function getPortSwapContextFromSelection() {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var model = runtime.model;
+    var cell = graph.getSelectionCell();
+    var i;
+    if (model.isEdge(cell)) {
+      return buildPortSwapContextFromEdge(cell);
+    }
+    if (deps.isMovableConnectedTerminal(cell)) {
+      var match = null;
+      for (i = 0; i < model.getEdgeCount(cell); i++) {
+        var edge = model.getEdgeAt(cell, i);
+        var context = buildPortSwapContextFromEdge(edge);
+        if (context != null && context.otherTerminal == cell && context.portId.length > 0) {
+          if (match != null) {
+            return {
+              error: "\u8BE5\u56FE\u5143\u8FDE\u63A5\u4E86\u591A\u4E2A\u914D\u7535\u67DC\u7AEF\u5B50\uFF0C\u8BF7\u76F4\u63A5\u9009\u4E2D\u7B2C\u4E00\u6761\u8FB9\u518D\u6267\u884C\u66F4\u6362\u6302\u70B9"
+            };
+          }
+          match = context;
+        }
+      }
+      return match;
+    }
+    return null;
+  }
+  function clearPortSwapOverlay() {
+    var runtime = getPortSwapRuntime();
+    var state = runtime.state;
+    if (state.portSwapOverlay != null && state.portSwapOverlay.parentNode != null) {
+      state.portSwapOverlay.parentNode.removeChild(state.portSwapOverlay);
+    }
+    state.portSwapOverlay = null;
+  }
+  function exitPortSwapMode(clearStatus) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    clearPortSwapOverlay();
+    state.portSwapSession = null;
+    if (clearStatus !== false) {
+      deps.setCanvasStatus("");
+    }
+  }
+  function renderPortSwapOverlay(session) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var state = runtime.state;
+    var container = document.createElement("div");
+    var segments = deps.findCabinetSegments(
+      deps.trim(deps.getAttr(session.cabinetRoot, "logicalCabinetId"))
+    );
+    var i;
+    var j;
+    clearPortSwapOverlay();
+    container.style.position = "absolute";
+    container.style.left = "0";
+    container.style.top = "0";
+    container.style.width = "100%";
+    container.style.height = "100%";
+    container.style.pointerEvents = "none";
+    container.style.zIndex = "3";
+    for (i = 0; i < segments.length; i++) {
+      var stateView = graph.view.getState(segments[i]);
+      var ports = deps.parsePortLayout(deps.getAttr(segments[i], "portsJson"));
+      if (stateView == null) {
+        continue;
+      }
+      for (j = 0; j < ports.length; j++) {
+        var marker = document.createElement("div");
+        var portId = deps.trim(ports[j].id);
+        var selected = deps.trim(ports[j].id) == deps.trim(session.portId);
+        var occupied = !selected && isCabinetPortOccupied(segments[i], portId, session.edge);
+        marker.style.position = "absolute";
+        marker.style.width = "14px";
+        marker.style.height = "14px";
+        marker.style.borderRadius = "50%";
+        marker.style.boxSizing = "border-box";
+        marker.style.border = selected ? "2px solid #1a73e8" : occupied ? "2px solid #94a3b8" : "2px solid #16a34a";
+        marker.style.background = selected ? "rgba(26,115,232,0.15)" : occupied ? "rgba(148,163,184,0.18)" : "rgba(22,163,74,0.18)";
+        marker.style.pointerEvents = "auto";
+        marker.style.cursor = selected || occupied ? "default" : "pointer";
+        marker.style.left = Math.round(stateView.x + ports[j].x * stateView.width - 7) + "px";
+        marker.style.top = Math.round(stateView.y + ports[j].y * stateView.height - 7) + "px";
+        marker.title = selected ? "\u5F53\u524D\u6302\u70B9" : occupied ? "\u8BE5\u6302\u70B9\u5DF2\u8FDE\u63A5\u5176\u4ED6\u8BBE\u5907\uFF0C\u4E0D\u80FD\u518D\u9009\u62E9" : "\u70B9\u51FB\u5207\u6362\u5230\u8BE5\u6302\u70B9";
+        if (!selected && !occupied) {
+          mxEvent.addListener(
+            marker,
+            "click",
+            /* @__PURE__ */ (function(root, port) {
+              return function(evt) {
+                mxEvent.consume(evt);
+                commitPortSwap(state.portSwapSession, root, port);
+              };
+            })(segments[i], deps.cloneJson(ports[j]))
+          );
+        }
+        container.appendChild(marker);
+      }
+    }
+    graph.container.appendChild(container);
+    state.portSwapOverlay = container;
+  }
+  function isCabinetPortOccupied(root, portId, ignoreEdge) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var model = runtime.model;
+    var targetPortId = deps.trim(portId);
+    var i;
+    if (root == null || targetPortId.length == 0) {
+      return false;
+    }
+    for (i = 0; i < model.getEdgeCount(root); i++) {
+      var edge = model.getEdgeAt(root, i);
+      var sourceRoot = deps.findPortHostRoot(model.getTerminal(edge, true));
+      var targetRoot = deps.findPortHostRoot(model.getTerminal(edge, false));
+      var sourcePortId = sourceRoot == root ? deps.trim(
+        mxUtils.getValue(graph.getCellStyle(edge) || {}, "sourcePortId", "")
+      ) : "";
+      var targetPortIdOnEdge = targetRoot == root ? deps.trim(
+        mxUtils.getValue(graph.getCellStyle(edge) || {}, "targetPortId", "")
+      ) : "";
+      if (edge == ignoreEdge) {
+        continue;
+      }
+      if (sourcePortId == targetPortId || targetPortIdOnEdge == targetPortId) {
+        return true;
+      }
+    }
+    return false;
+  }
+  function installGraphClickBehavior(extraDeps) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var state = runtime.state;
+    graph.addListener(mxEvent.CLICK, function(sender, evt) {
+      var cell = evt.getProperty("cell");
+      var mouseEvent = evt.getProperty("event");
+      if (state.portSwapSession != null) {
+        var portRoot = deps.findPortHostRoot(cell);
+        var sessionLogicalId = state.portSwapSession.cabinetRoot != null ? deps.trim(
+          deps.getAttr(state.portSwapSession.cabinetRoot, "logicalCabinetId")
+        ) : "";
+        if (deps.isCabinetSegment(portRoot) && deps.trim(deps.getAttr(portRoot, "logicalCabinetId")) == sessionLogicalId) {
+          var nextPort = getNearestCabinetPortFromClick(portRoot, mouseEvent);
+          if (nextPort != null) {
+            commitPortSwap(state.portSwapSession, portRoot, nextPort);
+            evt.consume();
+            return;
+          }
+        }
+        if (cell == null) {
+          exitPortSwapMode();
+          evt.consume();
+          return;
+        }
+      }
+      if (extraDeps.isCabinetGap(cell)) {
+        extraDeps.setSelectedCabinetGap(
+          deps.getAttr(cell, "logicalCabinetId"),
+          deps.getAttr(cell, "gapIndex")
+        );
+        extraDeps.openCabinetGapDialog(cell, mouseEvent);
+        evt.consume();
+      } else if (state.selectedCabinetGap != null) {
+        extraDeps.closeGapDialogWindow();
+        extraDeps.setSelectedCabinetGap(null, null);
+      }
+    });
+  }
+  function getNearestCabinetPortFromClick(root, mouseEvent) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var state = runtime.state;
+    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
+    var graphX = mouseEvent != null && typeof mouseEvent.getGraphX === "function" ? mouseEvent.getGraphX() : null;
+    var graphY = mouseEvent != null && typeof mouseEvent.getGraphY === "function" ? mouseEvent.getGraphY() : null;
+    var threshold = 18 / graph.view.scale;
+    var best = null;
+    var bestDistance = Infinity;
+    var i;
+    if (graphX == null || graphY == null) {
+      return null;
+    }
+    for (i = 0; i < ports.length; i++) {
+      if (deps.trim(ports[i].id) != deps.trim(state.portSwapSession.portId) && isCabinetPortOccupied(root, ports[i].id, state.portSwapSession.edge)) {
+        continue;
+      }
+      var position = deps.getPortAbsolutePosition(root, ports[i]);
+      var dx = position.x - graphX;
+      var dy = position.y - graphY;
+      var distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance <= threshold && distance < bestDistance) {
+        best = ports[i];
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+  function applyEdgePortConstraintMetadata(edge, root, source, constraint) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var port = deps.getPortMetaByConstraint(root, constraint);
+    var direction = port != null ? deps.mapPortDirectionToConstraint(port.direction) : "";
+    var key = source ? "sourcePortConstraint" : "targetPortConstraint";
+    var portKey = source ? "sourcePortId" : "targetPortId";
+    var style = model.getStyle(edge) || "";
+    style = mxUtils.setStyle(
+      style,
+      key,
+      direction.length > 0 ? direction : null
+    );
+    style = mxUtils.setStyle(
+      style,
+      portKey,
+      port != null && deps.trim(port.id).length > 0 ? deps.trim(port.id) : null
+    );
+    model.setStyle(edge, style);
+  }
+  function commitPortSwap(session, newRoot, newPort) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var state = runtime.state;
+    var edge = session.edge;
+    var source = !!session.source;
+    var oldRoot = session.cabinetRoot;
+    var oldPortId = deps.trim(session.portId);
+    var constraint = new mxConnectionConstraint(
+      new mxPoint(newPort.x, newPort.y),
+      false,
+      newPort.id
+    );
+    if (edge == null || newRoot == null || newPort == null || oldPortId.length == 0 || oldRoot == newRoot && oldPortId == deps.trim(newPort.id)) {
+      exitPortSwapMode();
+      return;
+    }
+    if (isCabinetPortOccupied(newRoot, newPort.id, edge)) {
+      deps.showStatus("\u76EE\u6807\u6302\u70B9\u5DF2\u8FDE\u63A5\u5176\u4ED6\u8BBE\u5907\uFF0C\u4E0D\u80FD\u91CD\u590D\u9009\u62E9", true);
+      deps.setCanvasStatus("\u76EE\u6807\u6302\u70B9\u5DF2\u8FDE\u63A5\u5176\u4ED6\u8BBE\u5907\uFF0C\u4E0D\u80FD\u91CD\u590D\u9009\u62E9");
+      return;
+    }
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      model.setTerminal(edge, newRoot, source);
+      deps.setConnectionConstraint(edge, newRoot, source, constraint);
+      applyEdgePortConstraintMetadata(edge, newRoot, source, constraint);
+      deps.clearEdgePoints(edge);
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+    deps.moveConnectedGroupToCabinetPort(
+      edge,
+      source,
+      oldRoot,
+      oldPortId,
+      newRoot,
+      newPort
+    );
+    exitPortSwapMode();
+    deps.showStatus("\u5DF2\u66F4\u6362\u6302\u70B9", false);
+    deps.setCanvasStatus("\u5DF2\u66F4\u6362\u6302\u70B9");
+  }
+  function enterPortSwapMode() {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    if (state.portSwapSession != null) {
+      exitPortSwapMode();
+      return;
+    }
+    deps.closeGapDialogWindow();
+    deps.setSelectedCabinetGap(null, null);
+    var context = getPortSwapContextFromSelection();
+    if (context == null) {
+      deps.showStatus("\u8BF7\u5148\u9009\u4E2D\u4E0E\u914D\u7535\u67DC\u76F4\u63A5\u76F8\u8FDE\u7684\u7B2C\u4E00\u6761\u8FB9\u6216\u7B2C\u4E00\u4E2A\u56FE\u5143", true);
+      deps.setCanvasStatus("\u8BF7\u5148\u9009\u4E2D\u4E0E\u914D\u7535\u67DC\u76F4\u63A5\u76F8\u8FDE\u7684\u7B2C\u4E00\u6761\u8FB9\u6216\u7B2C\u4E00\u4E2A\u56FE\u5143");
+      return;
+    }
+    if (context.error != null) {
+      deps.showStatus(context.error, true);
+      deps.setCanvasStatus(context.error);
+      return;
+    }
+    if (context.portId.length == 0 || context.cabinetRoot == null) {
+      deps.showStatus("\u5F53\u524D\u9009\u4E2D\u5BF9\u8C61\u672A\u7ED1\u5B9A\u5230\u6709\u6548\u7684\u914D\u7535\u67DC\u7AEF\u5B50", true);
+      deps.setCanvasStatus("\u5F53\u524D\u9009\u4E2D\u5BF9\u8C61\u672A\u7ED1\u5B9A\u5230\u6709\u6548\u7684\u914D\u7535\u67DC\u7AEF\u5B50");
+      return;
+    }
+    state.portSwapSession = context;
+    renderPortSwapOverlay(context);
+    deps.setCanvasStatus("\u66F4\u6362\u6302\u70B9\u6A21\u5F0F\uFF1A\u70B9\u51FB\u540C\u4E00\u914D\u7535\u67DC\u4E0A\u7684\u76EE\u6807\u8FDE\u63A5\u70B9\uFF0C\u6216\u70B9\u7A7A\u767D\u53D6\u6D88");
+  }
+  var portSwapModeApi = {
+    applyEdgePortConstraintMetadata,
+    clearPortSwapOverlay,
+    commitPortSwap,
+    enterPortSwapMode,
+    exitPortSwapMode,
+    getNearestCabinetPortFromClick,
+    installGraphClickBehavior
+  };
+
+  // runtime/composeMode.js
+  function getComposeDeps() {
+    var app = getApp();
+    var ctx = app.ctx;
+    return {
+      ctx,
+      trim,
+      clamp,
+      padding: ctx.constants.INSTANCE_COMPOSE_ZONE_PADDING,
+      minWidth: ctx.constants.INSTANCE_COMPOSE_ZONE_MIN_WIDTH,
+      minHeight: ctx.constants.INSTANCE_COMPOSE_ZONE_MIN_HEIGHT,
+      showStatus,
+      setCanvasStatus,
+      closeGapDialogWindow: function() {
+        return cabinetDialogsApi.closeGapDialogWindow();
+      },
+      exitPortSwapMode: function(clearStatus) {
+        return portSwapModeApi.exitPortSwapMode(clearStatus);
+      },
+      isDrawingFrame,
+      isCabinetSegment,
+      isCabinetGap,
+      isPluginInternalCell: snapshotDomainApi.isPluginInternalCell,
+      isElectricalRoot,
+      shouldExportGenericObject: snapshotDomainApi.shouldExportGenericObject,
+      findElectricalRoot
+    };
+  }
+  function getComposeRuntime() {
+    var deps = getComposeDeps();
+    var ctx = deps.ctx;
+    return {
+      deps,
+      graph: ctx.graph,
+      model: ctx.model,
+      state: ctx.state
+    };
+  }
+  function isCellDescendantOf(cell, ancestor) {
+    var model = getComposeRuntime().model;
+    while (cell != null) {
+      if (cell == ancestor) {
+        return true;
+      }
+      cell = model.getParent(cell);
+    }
+    return false;
+  }
+  function getCellViewBounds(cell) {
+    var graph = getComposeRuntime().graph;
+    var stateView = graph.view.getState(cell);
+    if (stateView == null) {
+      return null;
+    }
+    return {
+      x: stateView.x,
+      y: stateView.y,
+      width: stateView.width,
+      height: stateView.height
+    };
+  }
+  function getCellModelBounds(cell) {
+    var runtime = getComposeRuntime();
+    var graph = runtime.graph;
+    var model = runtime.model;
+    var stateView = graph.view.getState(cell);
+    var scale = graph.view.scale || 1;
+    var translate = graph.view.translate || { x: 0, y: 0 };
+    if (stateView != null) {
+      return {
+        x: stateView.x / scale - translate.x,
+        y: stateView.y / scale - translate.y,
+        width: stateView.width / scale,
+        height: stateView.height / scale
+      };
+    }
+    var geometry = model.getGeometry(cell);
+    if (geometry == null) {
+      return null;
+    }
+    return {
+      x: geometry.x,
+      y: geometry.y,
+      width: geometry.width,
+      height: geometry.height
+    };
+  }
+  function getUnionViewBounds(cells) {
+    var bounds = null;
+    var i;
+    for (i = 0; i < cells.length; i++) {
+      var cellBounds = getCellViewBounds(cells[i]);
+      if (cellBounds == null) {
+        continue;
+      }
+      if (bounds == null) {
+        bounds = {
+          x: cellBounds.x,
+          y: cellBounds.y,
+          width: cellBounds.width,
+          height: cellBounds.height
+        };
+      } else {
+        var right = Math.max(
+          bounds.x + bounds.width,
+          cellBounds.x + cellBounds.width
+        );
+        var bottom = Math.max(
+          bounds.y + bounds.height,
+          cellBounds.y + cellBounds.height
+        );
+        bounds.x = Math.min(bounds.x, cellBounds.x);
+        bounds.y = Math.min(bounds.y, cellBounds.y);
+        bounds.width = right - bounds.x;
+        bounds.height = bottom - bounds.y;
+      }
+    }
+    return bounds;
+  }
+  function getInstanceComposeZoneBounds(root, extraCells) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var candidates = [root];
+    var bounds;
+    var container = graph.container;
+    var scrollLeft = container.scrollLeft;
+    var scrollTop = container.scrollTop;
+    var viewportLeft = scrollLeft + 20;
+    var viewportTop = scrollTop + 20;
+    var viewportRight = scrollLeft + container.clientWidth - 20;
+    var viewportBottom = scrollTop + container.clientHeight - 20;
+    var width;
+    var height;
+    var left;
+    var top;
+    var maxLeft;
+    var maxTop;
+    if (Array.isArray(extraCells) && extraCells.length > 0) {
+      candidates = candidates.concat(extraCells);
+    }
+    bounds = getUnionViewBounds(candidates);
+    if (bounds == null) {
+      return null;
+    }
+    width = Math.max(deps.minWidth, bounds.width + deps.padding * 2);
+    height = Math.max(deps.minHeight, bounds.height + deps.padding * 2);
+    left = bounds.x + (bounds.width - width) / 2;
+    top = bounds.y + (bounds.height - height) / 2;
+    maxLeft = Math.max(viewportLeft, viewportRight - width);
+    maxTop = Math.max(viewportTop, viewportBottom - height);
+    return {
+      left: deps.clamp(Math.round(left), viewportLeft, maxLeft),
+      top: deps.clamp(Math.round(top), viewportTop, maxTop),
+      width: Math.round(Math.min(width, viewportRight - viewportLeft)),
+      height: Math.round(Math.min(height, viewportBottom - viewportTop))
+    };
+  }
+  function clearInstanceComposeOverlay() {
+    var state = getComposeRuntime().state;
+    if (state.instanceComposeOverlay != null && state.instanceComposeOverlay.parentNode != null) {
+      state.instanceComposeOverlay.parentNode.removeChild(
+        state.instanceComposeOverlay
+      );
+    }
+    state.instanceComposeOverlay = null;
+  }
+  function completeInstanceComposeMode() {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var state = runtime.state;
+    var session = state.instanceComposeSession;
+    var root;
+    var candidates;
+    var matched = [];
+    var attached;
+    var i;
+    if (session == null) {
+      return;
+    }
+    root = session.root;
+    if (root == null || root.parent == null) {
+      exitInstanceComposeMode();
+      return;
+    }
+    candidates = collectComposableCellsInZone(root, session.zoneBounds);
+    for (i = 0; i < candidates.length; i++) {
+      if (!session.initialZoneCellIds[candidates[i].id]) {
+        matched.push(candidates[i]);
+      }
+    }
+    if (matched.length == 0) {
+      deps.showStatus("\u7EFF\u8272\u533A\u57DF\u5185\u6CA1\u6709\u65B0\u7684\u53EF\u7EC4\u5408\u56FE\u5143", true);
+      return;
+    }
+    attached = attachCellsToElectricalRoot(root, matched);
+    if (attached.length == 0) {
+      deps.showStatus("\u6CA1\u6709\u68C0\u6D4B\u5230\u53EF\u7EC4\u5408\u7684\u56FE\u5143", true);
+      return;
+    }
+    exitInstanceComposeMode(false);
+    graph.setSelectionCell(root);
+    deps.showStatus("\u5DF2\u7EC4\u5408\u5230\u5F53\u524D\u56FE\u5143\u5B9E\u4F8B", false);
+    deps.setCanvasStatus("");
+  }
+  function renderInstanceComposeOverlay(session) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var state = runtime.state;
+    var containerRect = graph.container.getBoundingClientRect();
+    var zone = getInstanceComposeZoneBounds(
+      session.root,
+      session.dragging ? session.dragCandidates : null
+    );
+    var scrollLeft = graph.container.scrollLeft || 0;
+    var scrollTop = graph.container.scrollTop || 0;
+    var container = document.createElement("div");
+    var shade = document.createElement("div");
+    var zoneNode = document.createElement("div");
+    var hint = document.createElement("div");
+    var actions = document.createElement("div");
+    var completeButton = document.createElement("button");
+    var cancelButton = document.createElement("button");
+    var controlsTop;
+    clearInstanceComposeOverlay();
+    if (zone == null) {
+      return;
+    }
+    session.zoneBounds = zone;
+    container.style.position = "fixed";
+    container.style.left = Math.round(containerRect.left) + "px";
+    container.style.top = Math.round(containerRect.top) + "px";
+    container.style.width = graph.container.clientWidth + "px";
+    container.style.height = graph.container.clientHeight + "px";
+    container.style.pointerEvents = "none";
+    container.style.zIndex = "3";
+    shade.style.position = "absolute";
+    shade.style.left = "0";
+    shade.style.top = "0";
+    shade.style.width = "100%";
+    shade.style.height = "100%";
+    shade.style.background = "rgba(15, 23, 42, 0.18)";
+    container.appendChild(shade);
+    zoneNode.style.position = "absolute";
+    zoneNode.style.left = zone.left - scrollLeft + "px";
+    zoneNode.style.top = zone.top - scrollTop + "px";
+    zoneNode.style.width = zone.width + "px";
+    zoneNode.style.height = zone.height + "px";
+    zoneNode.style.border = "3px solid #16a34a";
+    zoneNode.style.borderRadius = "10px";
+    zoneNode.style.background = "rgba(22,163,74,0.06)";
+    zoneNode.style.boxSizing = "border-box";
+    zoneNode.style.backdropFilter = "none";
+    container.appendChild(zoneNode);
+    hint.style.position = "absolute";
+    hint.style.left = zone.left - scrollLeft + "px";
+    hint.style.top = Math.max(8, zone.top - 28 - scrollTop) + "px";
+    hint.style.padding = "4px 10px";
+    hint.style.maxWidth = Math.max(120, zone.width - 176) + "px";
+    hint.style.borderRadius = "6px";
+    hint.style.background = "rgba(22,163,74,0.92)";
+    hint.style.color = "#ffffff";
+    hint.style.fontSize = "12px";
+    hint.style.fontWeight = "bold";
+    hint.style.whiteSpace = "nowrap";
+    hint.style.overflow = "hidden";
+    hint.style.textOverflow = "ellipsis";
+    hint.innerText = "\u62D6\u5165\u7EFF\u8272\u533A\u57DF\u5373\u53EF\u7EC4\u5408\u5230\u5F53\u524D\u56FE\u5143\u5B9E\u4F8B";
+    container.appendChild(hint);
+    controlsTop = Math.max(8, zone.top - 30 - scrollTop);
+    actions.style.position = "absolute";
+    actions.style.right = Math.max(
+      8,
+      graph.container.clientWidth - (zone.left + zone.width - scrollLeft)
+    ) + "px";
+    actions.style.top = controlsTop + "px";
+    actions.style.display = "flex";
+    actions.style.gap = "8px";
+    actions.style.pointerEvents = "auto";
+    completeButton.type = "button";
+    completeButton.innerText = "\u5B8C\u6210";
+    completeButton.style.height = "28px";
+    completeButton.style.padding = "0 14px";
+    completeButton.style.border = "1px solid #16a34a";
+    completeButton.style.borderRadius = "6px";
+    completeButton.style.background = "#16a34a";
+    completeButton.style.color = "#ffffff";
+    completeButton.style.cursor = "pointer";
+    mxEvent.addListener(completeButton, "click", function(evt) {
+      mxEvent.consume(evt);
+      completeInstanceComposeMode();
+    });
+    actions.appendChild(completeButton);
+    cancelButton.type = "button";
+    cancelButton.innerText = "\u53D6\u6D88";
+    cancelButton.style.height = "28px";
+    cancelButton.style.padding = "0 14px";
+    cancelButton.style.border = "1px solid #cbd5e1";
+    cancelButton.style.borderRadius = "6px";
+    cancelButton.style.background = "#ffffff";
+    cancelButton.style.color = "#334155";
+    cancelButton.style.cursor = "pointer";
+    mxEvent.addListener(cancelButton, "click", function(evt) {
+      mxEvent.consume(evt);
+      exitInstanceComposeMode();
+    });
+    actions.appendChild(cancelButton);
+    container.appendChild(actions);
+    document.body.appendChild(container);
+    state.instanceComposeOverlay = container;
+  }
+  function refreshInstanceComposeOverlay() {
+    var state = getComposeRuntime().state;
+    if (state.instanceComposeSession == null) {
+      return;
+    }
+    renderInstanceComposeOverlay(state.instanceComposeSession);
+  }
+  function exitInstanceComposeMode(clearStatus) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    clearInstanceComposeOverlay();
+    state.instanceComposeSession = null;
+    if (state.instanceComposeKeyHandler != null) {
+      mxEvent.removeListener(
+        document,
+        "keydown",
+        state.instanceComposeKeyHandler
+      );
+      state.instanceComposeKeyHandler = null;
+    }
+    if (clearStatus !== false) {
+      deps.setCanvasStatus("");
+    }
+  }
+  function findOwningElectricalRoot(cell) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var current = cell;
+    while (current != null) {
+      if (deps.isElectricalRoot(current)) {
+        return current;
+      }
+      current = model.getParent(current);
+    }
+    return null;
+  }
+  function isBlockedComposeTarget(cell) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var state = runtime.state;
+    var session = state.instanceComposeSession;
+    var ownerRoot;
+    if (session == null || session.root == null || cell == null) {
+      return false;
+    }
+    if (cell == session.root) {
+      return true;
+    }
+    ownerRoot = findOwningElectricalRoot(cell);
+    return ownerRoot == session.root && deps.isPluginInternalCell(cell);
+  }
+  function isLockedComposedChild(cell) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var state = runtime.state;
+    var composeSession = state.instanceComposeSession;
+    if (cell == null || deps.isDrawingFrame(cell) || deps.isCabinetSegment(cell)) {
+      return false;
+    }
+    var ownerRoot = findOwningElectricalRoot(model.getParent(cell));
+    if (ownerRoot == null) {
+      return false;
+    }
+    if (composeSession != null && composeSession.root == ownerRoot) {
+      return false;
+    }
+    return true;
+  }
+  function isComposableCandidateCell(cell, root) {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    return cell != null && !model.isEdge(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isCabinetGap(cell) && !deps.isPluginInternalCell(cell) && cell != root && !isCellDescendantOf(cell, root) && (deps.isElectricalRoot(cell) || deps.shouldExportGenericObject(cell));
+  }
+  function filterTopLevelSelection(cells) {
+    var result = [];
+    var i;
+    var j;
+    var nested;
+    for (i = 0; i < cells.length; i++) {
+      nested = false;
+      for (j = 0; j < cells.length; j++) {
+        if (i != j && isCellDescendantOf(cells[i], cells[j])) {
+          nested = true;
+          break;
+        }
+      }
+      if (!nested) {
+        result.push(cells[i]);
+      }
+    }
+    return result;
+  }
+  function collectComposableSelection(root) {
+    var graph = getComposeRuntime().graph;
+    var selection = graph.getSelectionCells();
+    var candidates = [];
+    var i;
+    for (i = 0; i < selection.length; i++) {
+      if (isComposableCandidateCell(selection[i], root)) {
+        candidates.push(selection[i]);
+      }
+    }
+    return filterTopLevelSelection(candidates);
+  }
+  function collectComposeDragCandidates(root, eventCell) {
+    var candidates = collectComposableSelection(root);
+    if (candidates.length == 0 && isComposableCandidateCell(eventCell, root)) {
+      candidates = [eventCell];
+    }
+    return filterTopLevelSelection(candidates);
+  }
+  function collectComposableCells(root) {
+    var model = getComposeRuntime().model;
+    var cells = model.cells || {};
+    var result = [];
+    var id;
+    var cell;
+    for (id in cells) {
+      if (!Object.prototype.hasOwnProperty.call(cells, id)) {
+        continue;
+      }
+      cell = cells[id];
+      if (isComposableCandidateCell(cell, root)) {
+        result.push(cell);
+      }
+    }
+    return filterTopLevelSelection(result);
+  }
+  function intersectsComposeZone(cell, zone) {
+    var bounds = getCellViewBounds(cell);
+    if (bounds == null || zone == null) {
+      return false;
+    }
+    return !(bounds.x + bounds.width < zone.left || bounds.x > zone.left + zone.width || bounds.y + bounds.height < zone.top || bounds.y > zone.top + zone.height);
+  }
+  function collectComposableCellsInZone(root, zone) {
+    var candidates = collectComposableCells(root);
+    var result = [];
+    var i;
+    for (i = 0; i < candidates.length; i++) {
+      if (intersectsComposeZone(candidates[i], zone)) {
+        result.push(candidates[i]);
+      }
+    }
+    return result;
+  }
+  function toCellIdMap(cells) {
+    var trim2 = getComposeRuntime().deps.trim;
+    var map = {};
+    var i;
+    for (i = 0; i < cells.length; i++) {
+      if (cells[i] != null && trim2(cells[i].id).length > 0) {
+        map[cells[i].id] = true;
+      }
+    }
+    return map;
+  }
+  function attachCellsToElectricalRoot(root, cells) {
+    var runtime = getComposeRuntime();
+    var model = runtime.model;
+    var state = runtime.state;
+    var rootBounds = getCellModelBounds(root);
+    var attached = [];
+    var i;
+    if (rootBounds == null) {
+      throw new Error("\u5F53\u524D\u76EE\u6807\u56FE\u5143\u65E0\u6CD5\u8BA1\u7B97\u4F4D\u7F6E\uFF0C\u4E0D\u80FD\u6267\u884C\u7EC4\u5408");
+    }
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      for (i = 0; i < cells.length; i++) {
+        var cell = cells[i];
+        var geometry = model.getGeometry(cell);
+        var cellBounds = getCellModelBounds(cell);
+        if (geometry == null || cellBounds == null || model.getParent(cell) == root) {
+          continue;
+        }
+        geometry = geometry.clone();
+        geometry.relative = false;
+        geometry.x = cellBounds.x - rootBounds.x;
+        geometry.y = cellBounds.y - rootBounds.y;
+        model.add(root, cell, model.getChildCount(root));
+        model.setGeometry(cell, geometry);
+        attached.push(cell);
+      }
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+    return attached;
+  }
+  function enterInstanceComposeMode() {
+    var runtime = getComposeRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var state = runtime.state;
+    if (state.instanceComposeSession != null) {
+      exitInstanceComposeMode();
+      return;
+    }
+    var root = deps.findElectricalRoot(graph.getSelectionCell());
+    if (root == null) {
+      deps.showStatus("\u8BF7\u5148\u9009\u4E2D\u4E00\u4E2A\u81EA\u5B9A\u4E49\u56FE\u5143\u5B9E\u4F8B\uFF0C\u518D\u6267\u884C\u7EC4\u5408\u56FE\u5143\u5B9E\u4F8B", true);
+      deps.setCanvasStatus("\u8BF7\u5148\u9009\u4E2D\u4E00\u4E2A\u81EA\u5B9A\u4E49\u56FE\u5143\u5B9E\u4F8B\uFF0C\u518D\u6267\u884C\u7EC4\u5408\u56FE\u5143\u5B9E\u4F8B");
+      return;
+    }
+    state.instanceComposeSession = {
+      root,
+      pointerDown: false,
+      dragging: false,
+      startPoint: null,
+      dragCandidates: [],
+      zoneBounds: null,
+      initialZoneCellIds: {}
+    };
+    deps.closeGapDialogWindow();
+    deps.exitPortSwapMode(false);
+    graph.clearSelection();
+    if (graph.selectionCellsHandler != null && typeof graph.selectionCellsHandler.clear === "function") {
+      graph.selectionCellsHandler.clear();
+    }
+    refreshInstanceComposeOverlay();
+    state.instanceComposeSession.initialZoneCellIds = toCellIdMap(
+      collectComposableCellsInZone(
+        root,
+        state.instanceComposeSession.zoneBounds
+      )
+    );
+    deps.setCanvasStatus(
+      "\u7EC4\u5408\u6A21\u5F0F\uFF1A\u628A\u666E\u901A\u56FE\u5143\u6216\u81EA\u5B9A\u4E49\u56FE\u5143\u62D6\u5165\u7EFF\u8272\u533A\u57DF\uFF0C\u7136\u540E\u70B9\u51FB\u5B8C\u6210"
+    );
+    state.instanceComposeKeyHandler = function(evt) {
+      if (evt.key == "Escape") {
+        exitInstanceComposeMode();
+      }
+    };
+    mxEvent.addListener(document, "keydown", state.instanceComposeKeyHandler);
+  }
+  var composeModeApi = {
+    collectComposeDragCandidates,
+    enterInstanceComposeMode,
+    exitInstanceComposeMode,
+    isBlockedComposeTarget,
+    isLockedComposedChild,
+    refreshInstanceComposeOverlay
+  };
+
+  // application/selection.js
+  function getSelectedCell() {
+    return getApp().ctx.graph.getSelectionCell();
+  }
+  function getSelectedRoot() {
+    return findElectricalRoot(getSelectedCell());
+  }
+  function getSelectedFrame() {
+    return frameDomainApi.findDrawingFrame(getSelectedCell());
+  }
+  function getSelectedCabinetSegment() {
+    return cabinetDomainApi.findCabinetSegment(getSelectedCell());
+  }
+  function getSelectedCabinetGap() {
+    var cell = getSelectedCell();
+    return isCabinetGap(cell) ? cell : null;
+  }
+  var selectionApi = {
+    getSelectedCabinetGap,
+    getSelectedCabinetSegment,
+    getSelectedCell,
+    getSelectedFrame,
+    getSelectedRoot
+  };
+
+  // domain/symbolCore.js
+  function buildSymbolCoreDeps() {
+    var app = getApp();
+    return {
+      toStyleImageUri: specDomainApi.toStyleImageUri,
+      ROOT_TYPE: app.ctx.constants.ROOT_TYPE,
+      trim,
+      serializePortLayout: specDomainApi.serializePortLayout,
+      normalizeLabels: specDomainApi.normalizeLabels
+    };
+  }
+  function getSymbolCoreDeps() {
+    return buildSymbolCoreDeps();
+  }
+  function makeRootStyle() {
+    return "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;";
+  }
+  function makeBodyStyle(spec) {
+    var deps = getSymbolCoreDeps();
+    return "shape=image;image=" + deps.toStyleImageUri(spec) + ";imageAspect=0;aspect=fixed;html=1;strokeColor=none;fillColor=none;part=1;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;cloneable=0;deletable=0;pointerEvents=0;";
+  }
+  function makeLabelStyle(align) {
+    return "text;part=1;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=" + align + ";verticalAlign=middle;spacing=2;rotatable=0;connectable=0;";
+  }
+  function applyValueMetadata(node, spec, layout) {
+    var deps = getSymbolCoreDeps();
+    node.setAttribute("pluginType", deps.ROOT_TYPE);
+    node.setAttribute("symbolId", spec.symbolId);
+    node.setAttribute("instanceId", deps.trim(spec.instanceId));
+    node.setAttribute("title", spec.title);
+    node.setAttribute("label", "");
+    node.setAttribute("deviceName", spec.device.name);
+    node.setAttribute("deviceCode", spec.device.code);
+    node.setAttribute("devicePower", spec.device.power);
+    node.setAttribute("mode", spec.device.mode);
+    node.setAttribute("variantField", deps.trim(spec.variantField || "mode"));
+    node.setAttribute("paramsJson", JSON.stringify(spec.device.params || {}));
+    node.setAttribute("portsJson", deps.serializePortLayout(layout));
+    node.setAttribute("portLayout", deps.serializePortLayout(layout));
+    node.setAttribute("labelsJson", JSON.stringify(deps.normalizeLabels(spec.labels)));
+    node.setAttribute("schemaJson", JSON.stringify(spec.schema || {}));
+    node.setAttribute("dataJson", JSON.stringify(spec.data || {}));
+    node.setAttribute("symbolPayload", JSON.stringify(spec));
+    return node;
+  }
+  var symbolCoreApi = {
+    applyValueMetadata,
+    makeBodyStyle,
+    makeLabelStyle,
+    makeRootStyle
+  };
+
+  // domain/symbolGraph.js
+  function buildSymbolGraphDeps() {
+    var app = getApp();
+    var ctx = app.ctx;
+    return {
+      model: ctx.model,
+      ROOT_TAG: ctx.constants.ROOT_TAG,
+      ROOT_TYPE: ctx.constants.ROOT_TYPE,
+      BODY_TAG: ctx.constants.BODY_TAG,
+      BODY_KIND: ctx.constants.BODY_KIND,
+      LABEL_TAG: ctx.constants.LABEL_TAG,
+      LABEL_KIND: ctx.constants.LABEL_KIND,
+      trim,
+      isObject,
+      normalizeMode,
+      normalizeSpec: specDomainApi.normalizeSpec,
+      normalizePortLayout: specDomainApi.normalizePortLayout,
+      normalizeLabels: specDomainApi.normalizeLabels,
+      parsePortLayout: specDomainApi.parsePortLayout,
+      getAttr,
+      createNode,
+      createMetaCell,
+      cloneValue,
+      toStyleImageUri: specDomainApi.toStyleImageUri,
+      serializePortLayout: specDomainApi.serializePortLayout,
+      buildPortLayout: specDomainApi.buildPortLayout,
+      buildResolvedLabels: specDomainApi.buildResolvedLabels
+    };
+  }
+  function createSymbolDomain() {
+    var deps = arguments.length > 0 ? arguments[0] : buildSymbolGraphDeps();
+    var model = deps.model;
+    var core = symbolCoreApi;
+    function addChild(root, child) {
+      var index = arguments.length > 2 ? arguments[2] : null;
+      if (root.parent != null) {
+        model.add(root, child, index);
+      } else {
+        root.insert(child, index);
+      }
+    }
+    function ensureRootGeometry(root, spec) {
+      var geometry = model.getGeometry(root);
+      if (geometry == null) {
+        geometry = new mxGeometry(0, 0, spec.size.width, spec.size.height);
+      } else {
+        geometry = geometry.clone();
+        geometry.width = spec.size.width;
+        geometry.height = spec.size.height;
+      }
+      if (root.parent != null) {
+        model.setGeometry(root, geometry);
+      } else {
+        root.geometry = geometry;
+      }
+    }
+    function ensureRootValue(root, spec, layout) {
+      var value = core.applyValueMetadata(deps.cloneValue(root.value), spec, layout);
+      if (root.parent != null) {
+        model.setValue(root, value);
+        model.setStyle(root, core.makeRootStyle());
+      } else {
+        root.value = value;
+        root.style = core.makeRootStyle();
+        root.setConnectable(false);
+      }
+    }
+    function createBodyCell(spec) {
+      var geometry = new mxGeometry(0, 0, spec.size.width, spec.size.height);
+      geometry.relative = true;
+      geometry.offset = new mxPoint(0, 0);
+      var cell = new mxCell(
+        deps.createMetaCell(deps.BODY_TAG, deps.BODY_KIND, "main", ""),
+        geometry,
+        core.makeBodyStyle(spec)
+      );
+      cell.vertex = true;
+      cell.setConnectable(false);
+      return cell;
+    }
+    function applyBodyCell(cell, spec) {
+      var geometry = model.getGeometry(cell);
+      if (geometry == null) {
+        geometry = new mxGeometry();
+      } else {
+        geometry = geometry.clone();
+      }
+      geometry.x = 0;
+      geometry.y = 0;
+      geometry.width = spec.size.width;
+      geometry.height = spec.size.height;
+      geometry.relative = true;
+      geometry.offset = new mxPoint(0, 0);
+      model.setGeometry(cell, geometry);
+      var value = deps.cloneValue(cell.value);
+      value.setAttribute("esKind", deps.BODY_KIND);
+      value.setAttribute("esKey", "main");
+      value.setAttribute("label", "");
+      model.setValue(cell, value);
+      model.setStyle(cell, core.makeBodyStyle(spec));
+      cell.setConnectable(false);
+    }
+    function createLabelCell(label) {
+      var geometry = new mxGeometry(label.x, label.y, label.width, label.height);
+      geometry.relative = true;
+      geometry.offset = new mxPoint(-label.width / 2, -label.height / 2);
+      var cell = new mxCell(
+        deps.createMetaCell(deps.LABEL_TAG, deps.LABEL_KIND, label.id, label.text),
+        geometry,
+        core.makeLabelStyle(label.align)
+      );
+      cell.vertex = true;
+      cell.setConnectable(false);
+      return cell;
+    }
+    function applyLabelCell(cell, label) {
+      var geometry = model.getGeometry(cell);
+      if (geometry == null) {
+        geometry = new mxGeometry();
+      } else {
+        geometry = geometry.clone();
+      }
+      geometry.x = label.x;
+      geometry.y = label.y;
+      geometry.width = label.width;
+      geometry.height = label.height;
+      geometry.relative = true;
+      geometry.offset = new mxPoint(-label.width / 2, -label.height / 2);
+      model.setGeometry(cell, geometry);
+      var value = deps.cloneValue(cell.value);
+      value.setAttribute("esKind", deps.LABEL_KIND);
+      value.setAttribute("esKey", label.id);
+      value.setAttribute("label", label.text);
+      model.setValue(cell, value);
+      model.setStyle(cell, core.makeLabelStyle(label.align));
+      cell.setConnectable(false);
+    }
+    function mapChildren(root) {
+      var children = {
+        body: {},
+        label: {}
+      };
+      var i;
+      for (i = 0; i < model.getChildCount(root); i++) {
+        var child = model.getChildAt(root, i);
+        var kind = deps.getAttr(child, "esKind");
+        var key = deps.getAttr(child, "esKey");
+        if (kind != null && key != null && children[kind] != null) {
+          children[kind][key] = child;
+        }
+      }
+      return children;
+    }
+    function removeUnused(map, keep) {
+      for (var key in map) {
+        if (map.hasOwnProperty(key) && keep[key] == null) {
+          model.remove(map[key]);
+        }
+      }
+    }
+    function syncRoot2(root, spec, baseLayout) {
+      var layout = deps.buildPortLayout(spec, baseLayout);
+      var resolvedLabels = deps.buildResolvedLabels(spec.labels, spec.data);
+      var mapped;
+      var keepBodies = {};
+      var keepLabels = {};
+      var child;
+      var i;
+      ensureRootGeometry(root, spec);
+      ensureRootValue(root, spec, layout);
+      mapped = mapChildren(root);
+      child = mapped.body.main;
+      if (child != null) {
+        applyBodyCell(child, spec);
+      } else {
+        addChild(root, createBodyCell(spec), 0);
+      }
+      keepBodies.main = true;
+      for (i = 0; i < resolvedLabels.length; i++) {
+        var label = resolvedLabels[i];
+        child = mapped.label[label.id];
+        if (child != null) {
+          applyLabelCell(child, label);
+        } else {
+          addChild(root, createLabelCell(label));
+        }
+        keepLabels[label.id] = true;
+      }
+      if (root.parent != null) {
+        removeUnused(mapped.body, keepBodies);
+        removeUnused(mapped.label, keepLabels);
+      }
+      root.setConnectable(true);
+      return root;
+    }
+    function buildSymbolCell2(spec) {
+      var root = new mxCell(
+        deps.createNode(deps.ROOT_TAG),
+        new mxGeometry(0, 0, spec.size.width, spec.size.height),
+        ""
+      );
+      root.vertex = true;
+      root.setConnectable(true);
+      return syncRoot2(root, spec, null);
+    }
+    function extractSpec2(root) {
+      var raw = deps.getAttr(root, "symbolPayload");
+      var spec;
+      var portsRaw;
+      var labelsRaw;
+      var schemaJson;
+      var dataJson;
+      var paramsJson;
+      var geo;
+      if (raw == null || raw.length == 0) {
+        throw new Error("\u7F3A\u5C11 symbolPayload \u6570\u636E");
+      }
+      spec = JSON.parse(raw);
+      if (!deps.isObject(spec.device)) {
+        spec.device = {};
+      }
+      spec.ports = deps.normalizePortLayout(spec.ports);
+      spec.labels = deps.normalizeLabels(spec.labels);
+      spec.symbolId = deps.trim(deps.getAttr(root, "symbolId")) || spec.symbolId;
+      spec.instanceId = deps.trim(deps.getAttr(root, "instanceId")) || deps.trim(spec.instanceId);
+      spec.title = deps.trim(deps.getAttr(root, "title")) || spec.title;
+      spec.device.name = deps.trim(deps.getAttr(root, "deviceName")) || deps.trim(spec.device.name);
+      spec.device.code = deps.trim(deps.getAttr(root, "deviceCode")) || deps.trim(spec.device.code);
+      spec.device.power = deps.trim(deps.getAttr(root, "devicePower")) || deps.trim(spec.device.power);
+      spec.device.mode = deps.normalizeMode(
+        deps.getAttr(root, "mode") || spec.device.mode
+      );
+      spec.variantField = deps.trim(deps.getAttr(root, "variantField")) || deps.trim(spec.variantField || "mode");
+      portsRaw = deps.getAttr(root, "portsJson");
+      if (portsRaw == null || portsRaw.length == 0) {
+        portsRaw = deps.getAttr(root, "portLayout");
+      }
+      if (portsRaw != null && portsRaw.length > 0) {
+        spec.ports = deps.parsePortLayout(portsRaw);
+      }
+      labelsRaw = deps.getAttr(root, "labelsJson");
+      if (labelsRaw != null && labelsRaw.length > 0) {
+        try {
+          spec.labels = deps.normalizeLabels(JSON.parse(labelsRaw));
+        } catch (e) {
+        }
+      }
+      schemaJson = deps.getAttr(root, "schemaJson");
+      if (schemaJson != null && schemaJson.length > 0) {
+        try {
+          spec.schema = JSON.parse(schemaJson);
+        } catch (e) {
+        }
+      }
+      dataJson = deps.getAttr(root, "dataJson");
+      if (dataJson != null && dataJson.length > 0) {
+        try {
+          spec.data = JSON.parse(dataJson);
+        } catch (e) {
+        }
+      }
+      paramsJson = deps.getAttr(root, "paramsJson");
+      if (paramsJson != null && paramsJson.length > 0) {
+        try {
+          spec.device.params = JSON.parse(paramsJson);
+        } catch (e) {
+        }
+      }
+      geo = model.getGeometry(root);
+      if (geo != null) {
+        spec.size = {
+          width: Math.max(20, Math.round(geo.width)),
+          height: Math.max(20, Math.round(geo.height))
+        };
+      }
+      return deps.normalizeSpec(spec);
+    }
+    function refreshRoot2(root) {
+      var spec = extractSpec2(root);
+      var portLayout = deps.parsePortLayout(deps.getAttr(root, "portLayout"));
+      syncRoot2(root, spec, portLayout);
+      return spec;
+    }
+    return {
+      buildSymbolCell: buildSymbolCell2,
+      extractSpec: extractSpec2,
+      refreshRoot: refreshRoot2,
+      syncRoot: syncRoot2
+    };
+  }
+
+  // domain/symbol.js
+  function getSymbolDomain() {
+    return createSymbolDomain();
+  }
+  function buildSymbolCell() {
+    return getSymbolDomain().buildSymbolCell.apply(null, arguments);
+  }
+  function extractSpec() {
+    return getSymbolDomain().extractSpec.apply(null, arguments);
+  }
+  function refreshRoot() {
+    return getSymbolDomain().refreshRoot.apply(null, arguments);
+  }
+  function syncRoot() {
+    return getSymbolDomain().syncRoot.apply(null, arguments);
+  }
+  var symbolDomainApi = {
+    buildSymbolCell,
+    extractSpec,
+    refreshRoot,
+    syncRoot
+  };
+
+  // application/commands.js
+  function getDefaultParentChildren() {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var model = app.ctx.model;
+    var parent = graph.getDefaultParent();
+    var cells = [];
+    var i;
+    for (i = 0; i < model.getChildCount(parent); i++) {
+      cells.push(model.getChildAt(parent, i));
+    }
+    return cells;
+  }
+  function insertCellIntoFrame(cell, frame) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var insertPoint = frameDomainApi.getFrameChildInsertPoint(
+      frame,
+      cell.geometry != null ? cell.geometry.width : 0,
+      cell.geometry != null ? cell.geometry.height : 0
+    );
+    graph.setSelectionCells(graph.importCells([cell], insertPoint.x, insertPoint.y, frame));
+    graph.scrollCellToVisible(graph.getSelectionCell());
+  }
+  function insertIntoGraph(spec) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var root = symbolDomainApi.buildSymbolCell(spec);
+    var frame = frameDomainApi.getActiveFrame(false);
+    if (frame != null) {
+      insertCellIntoFrame(root, frame);
+    } else {
+      var pt = graph.getFreeInsertPoint();
+      graph.setSelectionCells(graph.importCells([root], pt.x, pt.y));
+    }
+    graph.scrollCellToVisible(graph.getSelectionCell());
+    showStatus("\u5DF2\u63D2\u5165\u56FE\u5143", false);
+    setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u5143");
+  }
+  function refreshSelection() {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var model = app.ctx.model;
+    var state = app.ctx.state;
+    var root = selectionApi.getSelectedRoot();
+    var cabinet = selectionApi.getSelectedCabinetSegment();
+    if (cabinet != null) {
+      try {
+        state.updatingModel = true;
+        model.beginUpdate();
+        cabinetDomainApi.relayoutCabinetByModel(
+          cabinetDomainApi.extractCabinetModel(cabinet)
+        );
+        showStatus("\u914D\u7535\u67DC\u5DF2\u5237\u65B0", false);
+        setCanvasStatus("\u914D\u7535\u67DC\u5DF2\u5237\u65B0");
+      } catch (e) {
+        showStatus(e.message || String(e), true);
+        setCanvasStatus(e.message || String(e));
+      } finally {
+        model.endUpdate();
+        state.updatingModel = false;
+      }
+      return;
+    }
+    if (root == null) {
+      showStatus("\u8BF7\u5148\u9009\u62E9\u4E00\u4E2A\u7535\u6C14\u56FE\u5143", true);
+      return;
+    }
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      symbolDomainApi.refreshRoot(root);
+    } catch (e) {
+      showStatus(e.message || String(e), true);
+      return;
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+    showStatus("\u7535\u6C14\u56FE\u5143\u5DF2\u5237\u65B0", false);
+  }
+  function insertFrame(config, selectedFrame, existingFrames) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var model = app.ctx.model;
+    var state = app.ctx.state;
+    var constants = app.ctx.constants;
+    var normalizedConfig = frameDomainApi.normalizeFrameConfig(config || {});
+    var frames = Array.isArray(existingFrames) ? existingFrames : frameDomainApi.getAllDrawingFrames();
+    var groupId = selectedFrame != null ? frameDomainApi.getFrameGroupId(selectedFrame) : generateFrameGroupId();
+    var nextPageNumber = selectedFrame != null ? frameDomainApi.getMaxFramePageNumberInGroup(groupId) + 1 : 1;
+    var frame = frameDomainApi.createDrawingFrameCell(normalizedConfig, nextPageNumber, {
+      groupId
+    });
+    state.frameConfig = cloneJson(normalizedConfig);
+    if (selectedFrame != null) {
+      var anchorFrame = frameDomainApi.getRightmostFrameInGroup(groupId) || selectedFrame;
+      var anchorGeometry = model.getGeometry(anchorFrame);
+      frame.geometry = frame.geometry.clone();
+      frame.geometry.x = anchorGeometry.x + anchorGeometry.width + constants.FRAME_HORIZONTAL_GAP;
+      frame.geometry.y = anchorGeometry.y;
+      frameDomainApi.addTopLevelCell(frame);
+      graph.setSelectionCell(frame);
+    } else if (frames.length > 0) {
+      var leftmostFrame = frameDomainApi.getLeftmostFrame();
+      var bottommostFrame = frameDomainApi.getBottommostFrame();
+      var leftGeometry = leftmostFrame != null ? model.getGeometry(leftmostFrame) : null;
+      var bottomGeometry = bottommostFrame != null ? model.getGeometry(bottommostFrame) : null;
+      frame.geometry = frame.geometry.clone();
+      frame.geometry.x = leftGeometry != null ? leftGeometry.x : 0;
+      frame.geometry.y = bottomGeometry != null ? bottomGeometry.y + bottomGeometry.height + constants.FRAME_VERTICAL_GAP : 0;
+      frameDomainApi.addTopLevelCell(frame);
+      graph.setSelectionCell(frame);
+    } else {
+      var point = graph.getFreeInsertPoint();
+      graph.setSelectionCells(graph.importCells([frame], point.x, point.y));
+    }
+    graph.scrollCellToVisible(graph.getSelectionCell());
+    showStatus("\u5DF2\u63D2\u5165\u56FE\u6846", false);
+    setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u6846");
+  }
+  function insertCabinet(cabinetModel) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var model = app.ctx.model;
+    var state = app.ctx.state;
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      cabinetDomainApi.relayoutCabinetByModel(cabinetModel);
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+    var segments = cabinetDomainApi.findCabinetSegments(cabinetModel.logicalCabinetId);
+    if (segments.length > 0) {
+      graph.setSelectionCell(segments[0]);
+      graph.scrollCellToVisible(segments[0]);
+    }
+    showStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC", false);
+    setCanvasStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC");
+  }
+  function updateCabinetGap(cabinetModel) {
+    var app = getApp();
+    var model = app.ctx.model;
+    var state = app.ctx.state;
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      cabinetDomainApi.relayoutCabinetByModel(cabinetModel);
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+    showStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD", false);
+    setCanvasStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD");
+  }
+  function applyInstanceSpec(root, spec) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var model = app.ctx.model;
+    var state = app.ctx.state;
+    if (root == null || root.parent == null) {
+      throw new Error("\u5F53\u524D\u56FE\u5143\u5DF2\u4E0D\u5B58\u5728\uFF0C\u65E0\u6CD5\u5E94\u7528\u4FEE\u6539");
+    }
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      symbolDomainApi.syncRoot(root, spec, spec.ports);
+      graph.setSelectionCell(root);
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+    showStatus("\u5DF2\u66F4\u65B0\u56FE\u5143\u5B9E\u4F8B", false);
+  }
+  function clearCurrentPage() {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var state = app.ctx.state;
+    var cells = getDefaultParentChildren();
+    if (cells.length == 0) {
+      showStatus("\u5F53\u524D\u9875\u9762\u6CA1\u6709\u53EF\u6E05\u9664\u7684\u5185\u5BB9", false);
+      return;
+    }
+    if (!mxUtils.confirm("\u786E\u8BA4\u6E05\u9664\u5F53\u524D\u9875\u9762\u6240\u6709\u5185\u5BB9\uFF1F")) {
+      return;
+    }
+    if (!mxUtils.confirm("\u6B64\u64CD\u4F5C\u4E0D\u53EF\u6062\u590D\uFF0C\u786E\u5B9A\u7EE7\u7EED\u6E05\u9664\u5417\uFF1F")) {
+      return;
+    }
+    cabinetDialogsApi.closeGapDialogWindow();
+    cabinetDomainApi.setSelectedCabinetGap(null, null);
+    portSwapModeApi.exitPortSwapMode(false);
+    composeModeApi.exitInstanceComposeMode(false);
+    state.allowProtectedDelete = true;
+    try {
+      graph.removeCells(cells, true);
+      showStatus("\u5DF2\u6E05\u7A7A\u5F53\u524D\u9875\u9762", false);
+    } finally {
+      state.allowProtectedDelete = false;
+    }
+  }
+  var commandApi = {
+    applyInstanceSpec,
+    clearCurrentPage,
+    insertCabinet,
+    insertFrame,
+    insertIntoGraph,
+    refreshSelection,
+    updateCabinetGap
+  };
+
+  // ui/shared/buttonFactory.js
+  function createPluginButton(label, fn) {
+    var button = mxUtils.button(label, fn);
+    button.className = "geBtn";
+    button.style.marginRight = "8px";
+    button.style.marginTop = "8px";
+    return button;
+  }
+
+  // ui/cabinetDialog.js
+  function buildCabinetDialogDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      trim,
+      clamp,
+      toInt,
+      toFloat,
+      createButton: createPluginButton,
+      getActiveFrame: frameDomainApi.getActiveFrame,
+      getAttr,
+      normalizeCabinetModel: cabinetDomainApi.normalizeCabinetModel,
+      generateLogicalCabinetId,
+      insertCabinet: commandApi.insertCabinet,
+      updateCabinetGap: commandApi.updateCabinetGap,
+      showStatus,
+      setCanvasStatus,
+      findCabinetSegment: cabinetDomainApi.findCabinetSegment,
+      extractCabinetModel: cabinetDomainApi.extractCabinetModel
+    };
+  }
+  function getCabinetDialogDeps() {
+    return buildCabinetDialogDeps();
+  }
+  function getGapDialogPosition(nativeEvent, width, height) {
+    var deps = getCabinetDialogDeps();
+    var fallback = { x: 220, y: 180 };
+    if (nativeEvent == null) {
+      return fallback;
+    }
+    var offsetX = 36;
+    var offsetY = -24;
+    var rawEvent = typeof nativeEvent.getEvent == "function" ? nativeEvent.getEvent() : nativeEvent;
+    var pageX = mxEvent.getClientX(rawEvent) + (window.pageXOffset || document.documentElement.scrollLeft || 0);
+    var pageY = mxEvent.getClientY(rawEvent) + (window.pageYOffset || document.documentElement.scrollTop || 0);
+    var viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1280;
+    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 720;
+    var minX = (window.pageXOffset || document.documentElement.scrollLeft || 0) + 12;
+    var minY = (window.pageYOffset || document.documentElement.scrollTop || 0) + 12;
+    var maxX = (window.pageXOffset || document.documentElement.scrollLeft || 0) + viewportWidth - width - 12;
+    var maxY = (window.pageYOffset || document.documentElement.scrollTop || 0) + viewportHeight - height - 12;
+    var x = pageX + offsetX;
+    var y = pageY + offsetY;
+    if (x > maxX) {
+      x = pageX - width - offsetX;
+    }
+    if (y > maxY) {
+      y = maxY;
+    }
+    return {
+      x: deps.clamp(x, minX, Math.max(minX, maxX)),
+      y: deps.clamp(y, minY, Math.max(minY, maxY))
+    };
+  }
+  function closeGapDialogWindow() {
+    var deps = getCabinetDialogDeps();
+    var ctx = deps.ctx;
+    var state = ctx.state;
+    if (state.gapDialogWindow != null) {
+      var wnd = state.gapDialogWindow;
+      state.gapDialogWindow = null;
+      wnd.destroy();
+    }
+  }
+  function openInsertCabinetDialog() {
+    var deps = getCabinetDialogDeps();
+    var ctx = deps.ctx;
+    var constants = ctx.constants;
+    var trim2 = deps.trim;
+    var frame = deps.getActiveFrame(true);
+    if (frame == null) {
+      return;
+    }
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.gap = "10px";
+    div.style.boxSizing = "border-box";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    var nameRow = document.createElement("div");
+    nameRow.style.display = "grid";
+    nameRow.style.gridTemplateColumns = "90px 1fr";
+    nameRow.style.alignItems = "center";
+    nameRow.style.gap = "8px";
+    div.appendChild(nameRow);
+    var nameLabel = document.createElement("div");
+    nameLabel.innerText = "\u540D\u79F0";
+    nameRow.appendChild(nameLabel);
+    var nameInput = document.createElement("input");
+    nameInput.setAttribute("type", "text");
+    nameInput.value = "\u914D\u7535\u67DC";
+    nameRow.appendChild(nameInput);
+    var configRow = document.createElement("div");
+    configRow.style.display = "grid";
+    configRow.style.gridTemplateColumns = "90px 120px 90px 120px";
+    configRow.style.alignItems = "center";
+    configRow.style.gap = "8px";
+    div.appendChild(configRow);
+    var widthLabel = document.createElement("div");
+    widthLabel.innerText = "\u67DC\u5BBD";
+    configRow.appendChild(widthLabel);
+    var widthInput = document.createElement("input");
+    widthInput.setAttribute("type", "number");
+    widthInput.setAttribute("min", "30");
+    widthInput.value = String(constants.CABINET_DEFAULT_WIDTH);
+    configRow.appendChild(widthInput);
+    var countLabel = document.createElement("div");
+    countLabel.innerText = "\u53F3\u4FA7\u7AEF\u5B50\u6570";
+    configRow.appendChild(countLabel);
+    var countInput = document.createElement("input");
+    countInput.setAttribute("type", "number");
+    countInput.setAttribute("min", "2");
+    countInput.value = String(constants.CABINET_DEFAULT_PORT_COUNT);
+    configRow.appendChild(countInput);
+    var hint = document.createElement("div");
+    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+    hint.style.fontSize = "12px";
+    hint.innerText = "\u4EC5\u751F\u6210\u4E13\u7528\u914D\u7535\u67DC\u4E3B\u4F53\u548C\u53F3\u4FA7\u8FDE\u63A5\u70B9\uFF0C\u95F4\u8DDD\u540E\u7EED\u901A\u8FC7\u53F3\u4FA7\u70ED\u70B9\u7F16\u8F91\u3002";
+    div.appendChild(hint);
+    var buttons = document.createElement("div");
+    div.appendChild(buttons);
+    var wnd = new mxWindow("\u63D2\u5165\u914D\u7535\u67DC", div, 200, 160, 460, 190, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(false);
+    wnd.setScrollable(false);
+    var submitButton = deps.createButton("\u63D2\u5165\u914D\u7535\u67DC", function() {
+      var cabinetModel = deps.normalizeCabinetModel({
+        logicalCabinetId: deps.generateLogicalCabinetId(),
+        originFrameId: trim2(deps.getAttr(frame, "frameId")),
+        title: trim2(nameInput.value) || "\u914D\u7535\u67DC",
+        cabinetWidth: widthInput.value,
+        portCount: countInput.value
+      });
+      try {
+        deps.insertCabinet(cabinetModel);
+      } catch (e) {
+        deps.showStatus(e.message || String(e), true);
+        deps.setCanvasStatus(e.message || String(e));
+        return;
+      }
+      wnd.destroy();
+    });
+    submitButton.style.marginTop = "0";
+    buttons.appendChild(submitButton);
+    wnd.setVisible(true);
+  }
+  function openCabinetGapDialog(gapCell, nativeEvent) {
+    var deps = getCabinetDialogDeps();
+    var ctx = deps.ctx;
+    var state = ctx.state;
+    var segment = deps.findCabinetSegment(gapCell);
+    var gapIndex = deps.toInt(deps.getAttr(gapCell, "gapIndex"), -1);
+    if (segment == null || gapIndex < 0) {
+      return;
+    }
+    closeGapDialogWindow();
+    var cabinetModel = deps.extractCabinetModel(segment);
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.gap = "10px";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.boxSizing = "border-box";
+    var label = document.createElement("div");
+    label.innerText = "\u8F93\u5165 0 \u5230 1 \u4E4B\u95F4\u7684\u6BD4\u4F8B\u503C";
+    div.appendChild(label);
+    var input = document.createElement("input");
+    input.setAttribute("type", "number");
+    input.setAttribute("min", "0");
+    input.setAttribute("max", "1");
+    input.setAttribute("step", "0.01");
+    input.value = String(cabinetModel.gapRatios[gapIndex] || 0);
+    div.appendChild(input);
+    var error = document.createElement("div");
+    error.style.minHeight = "18px";
+    error.style.fontSize = "12px";
+    error.style.color = "#b3261e";
+    div.appendChild(error);
+    var buttons = document.createElement("div");
+    div.appendChild(buttons);
+    var dialogWidth = 320;
+    var dialogHeight = 170;
+    var dialogPosition = getGapDialogPosition(nativeEvent, dialogWidth, dialogHeight);
+    var wnd = new mxWindow(
+      "\u8BBE\u7F6E\u7AEF\u5B50\u95F4\u8DDD",
+      div,
+      dialogPosition.x,
+      dialogPosition.y,
+      dialogWidth,
+      dialogHeight,
+      true,
+      true
+    );
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(false);
+    wnd.setScrollable(false);
+    wnd.addListener(mxEvent.DESTROY, function() {
+      if (state.gapDialogWindow == wnd) {
+        state.gapDialogWindow = null;
+      }
+    });
+    state.gapDialogWindow = wnd;
+    var saveButton = deps.createButton("\u4FDD\u5B58", function() {
+      var ratio = deps.toFloat(input.value, NaN);
+      if (isNaN(ratio) || ratio < 0 || ratio > 1) {
+        error.innerText = "\u8BF7\u8F93\u5165 0 \u5230 1 \u4E4B\u95F4\u7684\u6570\u503C";
+        return;
+      }
+      cabinetModel.gapRatios[gapIndex] = ratio;
+      try {
+        deps.updateCabinetGap(cabinetModel);
+      } catch (e) {
+        error.innerText = e.message || String(e);
+        return;
+      }
+      wnd.destroy();
+    });
+    saveButton.style.marginTop = "0";
+    buttons.appendChild(saveButton);
+    wnd.setVisible(true);
+  }
+  var cabinetDialogsApi = {
+    closeGapDialogWindow,
+    getGapDialogPosition,
+    openCabinetGapDialog,
+    openInsertCabinetDialog
+  };
+
   // domain/snapshotGraph.js
   function buildSnapshotDeps() {
     var app = getApp();
-    var graphApi = app.graphApi;
+    var ctx = app.ctx;
     return {
-      graph: graphApi.graph,
-      model: graphApi.model,
-      state: graphApi.state,
-      ui: graphApi.ui,
-      BODY_KIND: app.constants.BODY_KIND,
-      LABEL_KIND: app.constants.LABEL_KIND,
-      FRAME_LABEL_KIND: app.constants.FRAME_LABEL_KIND,
-      CABINET_BODY_KIND: app.constants.CABINET_BODY_KIND,
-      CABINET_GAP_KIND: app.constants.CABINET_GAP_KIND,
-      FRAME_MARGIN_RATIO: app.constants.FRAME_MARGIN_RATIO,
+      graph: ctx.graph,
+      model: ctx.model,
+      state: ctx.state,
+      ui: ctx.ui,
+      BODY_KIND: ctx.constants.BODY_KIND,
+      LABEL_KIND: ctx.constants.LABEL_KIND,
+      FRAME_LABEL_KIND: ctx.constants.FRAME_LABEL_KIND,
+      CABINET_BODY_KIND: ctx.constants.CABINET_BODY_KIND,
+      CABINET_GAP_KIND: ctx.constants.CABINET_GAP_KIND,
+      FRAME_MARGIN_RATIO: ctx.constants.FRAME_MARGIN_RATIO,
       trim,
       toInt,
       isObject,
@@ -3057,35 +4254,35 @@
       isDrawingFrame,
       isCabinetSegment,
       isElectricalRoot,
-      extractSpec: app.domains.symbol.extractSpec,
-      getFrameConfig: app.domains.frame.getFrameConfig,
-      getFramePageNumber: app.domains.frame.getFramePageNumber,
-      getFrameGroupId: app.domains.frame.getFrameGroupId,
-      findFrameById: app.domains.frame.findFrameById,
-      extractCabinetModel: app.domains.cabinet.extractCabinetModel,
-      findCabinetSegments: app.domains.cabinet.findCabinetSegments,
-      getPortMetaById: app.domains.connectionConstraints.getPortMetaById,
-      findDrawingFrame: app.domains.frame.findDrawingFrame,
+      extractSpec: symbolDomainApi.extractSpec,
+      getFrameConfig: frameDomainApi.getFrameConfig,
+      getFramePageNumber: frameDomainApi.getFramePageNumber,
+      getFrameGroupId: frameDomainApi.getFrameGroupId,
+      findFrameById: frameDomainApi.findFrameById,
+      extractCabinetModel: cabinetDomainApi.extractCabinetModel,
+      findCabinetSegments: cabinetDomainApi.findCabinetSegments,
+      getPortMetaById: connectionConstraintsApi.getPortMetaById,
+      findDrawingFrame: frameDomainApi.findDrawingFrame,
       findPortHostRoot,
-      parsePortLayout: app.domains.spec.parsePortLayout,
-      getAllDrawingFrames: app.domains.frame.getAllDrawingFrames,
+      parsePortLayout: specDomainApi.parsePortLayout,
+      getAllDrawingFrames: frameDomainApi.getAllDrawingFrames,
       exitInstanceComposeMode: function(clearStatus) {
-        return app.runtime != null && typeof app.runtime.exitInstanceComposeMode === "function" ? app.runtime.exitInstanceComposeMode(clearStatus) : null;
+        return composeModeApi.exitInstanceComposeMode(clearStatus);
       },
       closeGapDialogWindow: function() {
-        return app.ui != null && typeof app.ui.closeGapDialogWindow === "function" ? app.ui.closeGapDialogWindow() : null;
+        return cabinetDialogsApi.closeGapDialogWindow();
       },
       setSelectedCabinetGap: function(logicalCabinetId, gapIndex) {
-        return app.domains.cabinet.setSelectedCabinetGap(logicalCabinetId, gapIndex);
+        return cabinetDomainApi.setSelectedCabinetGap(logicalCabinetId, gapIndex);
       },
       exitPortSwapMode: function(clearStatus) {
-        return app.runtime != null && typeof app.runtime.exitPortSwapMode === "function" ? app.runtime.exitPortSwapMode(clearStatus) : null;
+        return portSwapModeApi.exitPortSwapMode(clearStatus);
       },
-      createDrawingFrameCell: app.domains.frame.createDrawingFrameCell,
-      addTopLevelCell: app.domains.frame.addTopLevelCell,
-      relayoutCabinetByModel: app.domains.cabinet.relayoutCabinetByModel,
-      normalizeSpec: app.domains.spec.normalizeSpec,
-      buildSymbolCell: app.domains.symbol.buildSymbolCell,
+      createDrawingFrameCell: frameDomainApi.createDrawingFrameCell,
+      addTopLevelCell: frameDomainApi.addTopLevelCell,
+      relayoutCabinetByModel: cabinetDomainApi.relayoutCabinetByModel,
+      normalizeSpec: specDomainApi.normalizeSpec,
+      buildSymbolCell: symbolDomainApi.buildSymbolCell,
       resetPendingChangeRecords
     };
   }
@@ -3134,7 +4331,7 @@
         toNumber(mxUtils.getValue(style, prefix + "Dy", 0), 0)
       );
     }
-    function getEdgePortId(edge, root, source) {
+    function getEdgePortId2(edge, root, source) {
       var style = graph.getCellStyle(edge) || {};
       var key = source ? "sourcePortId" : "targetPortId";
       var portId = deps.trim(mxUtils.getValue(style, key, ""));
@@ -3157,7 +4354,7 @@
       }
       point = constraint != null ? constraint.point : null;
       isGenericRoot = !deps.isElectricalRoot(root) && !deps.isCabinetSegment(root);
-      genericBindings = isGenericRoot ? collectGenericPortBindings(root) : null;
+      genericBindings = isGenericRoot ? collectGenericPortBindings2(root) : null;
       ports = isGenericRoot ? genericBindings.map(function(binding2) {
         return binding2.port;
       }) : deps.parsePortLayout(deps.getAttr(root, "portsJson"));
@@ -3185,12 +4382,12 @@
       }
       return "";
     }
-    function isPluginInternalCell(cell) {
+    function isPluginInternalCell3(cell) {
       var kind = deps.trim(deps.getAttr(cell, "esKind"));
       return deps.isCabinetGap(cell) || kind == deps.BODY_KIND || kind == deps.LABEL_KIND || kind == deps.FRAME_LABEL_KIND || kind == deps.CABINET_BODY_KIND || kind == deps.CABINET_GAP_KIND;
     }
-    function shouldExportGenericObject(cell) {
-      return cell != null && model.isVertex(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isElectricalRoot(cell) && !isPluginInternalCell(cell);
+    function shouldExportGenericObject3(cell) {
+      return cell != null && model.isVertex(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isElectricalRoot(cell) && !isPluginInternalCell3(cell);
     }
     function clearPageForImport() {
       var parent = graph.getDefaultParent();
@@ -3225,12 +4422,12 @@
       if (deps.isElectricalRoot(cell)) {
         return getSymbolObjectId(cell);
       }
-      if (shouldExportGenericObject(cell)) {
+      if (shouldExportGenericObject3(cell)) {
         return getGenericObjectId(cell);
       }
       return null;
     }
-    function collectGenericPortBindings(cell) {
+    function collectGenericPortBindings2(cell) {
       var seen = {};
       var result = [];
       function addConstraint(constraint) {
@@ -3285,13 +4482,13 @@
       return result;
     }
     function extractGenericPorts(cell) {
-      return collectGenericPortBindings(cell).map(function(entry) {
+      return collectGenericPortBindings2(cell).map(function(entry) {
         return entry.port;
       });
     }
-    function getGenericPortBindingById(cell, portId) {
+    function getGenericPortBindingById2(cell, portId) {
       var targetId = deps.trim(portId);
-      var bindings = collectGenericPortBindings(cell);
+      var bindings = collectGenericPortBindings2(cell);
       var i;
       for (i = 0; i < bindings.length; i++) {
         if (deps.trim(bindings[i].port.id) == targetId) {
@@ -3380,13 +4577,13 @@
       var targetTerminal = model.getTerminal(edge, false);
       var sourceRoot = deps.findPortHostRoot(sourceTerminal);
       var targetRoot = deps.findPortHostRoot(targetTerminal);
-      var sourcePortRoot = sourceRoot != null ? sourceRoot : shouldExportGenericObject(sourceTerminal) ? sourceTerminal : null;
-      var targetPortRoot = targetRoot != null ? targetRoot : shouldExportGenericObject(targetTerminal) ? targetTerminal : null;
+      var sourcePortRoot = sourceRoot != null ? sourceRoot : shouldExportGenericObject3(sourceTerminal) ? sourceTerminal : null;
+      var targetPortRoot = targetRoot != null ? targetRoot : shouldExportGenericObject3(targetTerminal) ? targetTerminal : null;
       var geometry = model.getGeometry(edge);
       var style = model.getStyle(edge) || "";
       var parent = model.getParent(edge);
-      var sourcePortId = sourcePortRoot != null ? getEdgePortId(edge, sourcePortRoot, true) : null;
-      var targetPortId = targetPortRoot != null ? getEdgePortId(edge, targetPortRoot, false) : null;
+      var sourcePortId = sourcePortRoot != null ? getEdgePortId2(edge, sourcePortRoot, true) : null;
+      var targetPortId = targetPortRoot != null ? getEdgePortId2(edge, targetPortRoot, false) : null;
       return {
         id: edge.id || mxObjectIdentity.get(edge),
         source: {
@@ -3447,7 +4644,7 @@
         }
       };
     }
-    function collectChangeObjectIds(changes) {
+    function collectChangeObjectIds2(changes) {
       var result = [];
       var i;
       for (i = 0; Array.isArray(changes) && i < changes.length; i++) {
@@ -3457,7 +4654,7 @@
       }
       return deps.uniqueStrings(result);
     }
-    function exportDiagramSnapshot() {
+    function exportDiagramSnapshot2() {
       var frames = deps.getAllDrawingFrames();
       var frameObjects = [];
       var cabinetObjects = [];
@@ -3480,7 +4677,7 @@
           }
         } else if (deps.isElectricalRoot(cell)) {
           symbolObjects.push(exportSymbolObject(cell));
-        } else if (shouldExportGenericObject(cell)) {
+        } else if (shouldExportGenericObject3(cell)) {
           genericObjects.push(exportGenericObject(cell));
         } else if (model.isEdge(cell)) {
           edgeObjects.push(exportEdgeObject(cell));
@@ -3517,7 +4714,7 @@
           port.id
         );
       }
-      var binding = getGenericPortBindingById(root, portId);
+      var binding = getGenericPortBindingById2(root, portId);
       return binding != null ? binding.constraint : null;
     }
     function createGenericCellFromSnapshot(object) {
@@ -3561,7 +4758,7 @@
       }
       return null;
     }
-    function restoreDiagramSnapshot(snapshot) {
+    function restoreDiagramSnapshot2(snapshot) {
       snapshot = normalizeSnapshotGenericIds(snapshot);
       var frameObjects = [];
       var cabinetObjects = [];
@@ -3800,1216 +4997,629 @@
         graph.refresh();
       } finally {
         state.suspendOperationRecording = false;
-        deps.resetPendingChangeRecords(exportDiagramSnapshot());
+        deps.resetPendingChangeRecords(exportDiagramSnapshot2());
       }
     }
     return {
-      collectChangeObjectIds,
-      collectGenericPortBindings,
+      collectChangeObjectIds: collectChangeObjectIds2,
+      collectGenericPortBindings: collectGenericPortBindings2,
       computeSnapshotChanges,
       deserializeCellValue,
       deserializeGeometry,
-      exportDiagramSnapshot,
-      getEdgePortId,
+      exportDiagramSnapshot: exportDiagramSnapshot2,
+      getEdgePortId: getEdgePortId2,
       getConstraintForPort: buildConstraintForPort,
       getGenericObjectId,
-      getGenericPortBindingById,
-      isPluginInternalCell,
+      getGenericPortBindingById: getGenericPortBindingById2,
+      isPluginInternalCell: isPluginInternalCell3,
       normalizeGenericStableId,
       normalizeSnapshotGenericIds,
-      restoreDiagramSnapshot,
+      restoreDiagramSnapshot: restoreDiagramSnapshot2,
       serializeCellValue,
       serializeGeometry,
-      shouldExportGenericObject
+      shouldExportGenericObject: shouldExportGenericObject3
     };
   }
 
-  // runtime/connectionConstraints.js
-  function getConstraintDeps() {
+  // domain/snapshot.js
+  function getSnapshotDomain() {
+    return createSnapshotDomain();
+  }
+  function collectChangeObjectIds() {
+    return getSnapshotDomain().collectChangeObjectIds.apply(null, arguments);
+  }
+  function collectGenericPortBindings() {
+    return getSnapshotDomain().collectGenericPortBindings.apply(null, arguments);
+  }
+  function exportDiagramSnapshot() {
+    return getSnapshotDomain().exportDiagramSnapshot.apply(null, arguments);
+  }
+  function getEdgePortId() {
+    return getSnapshotDomain().getEdgePortId.apply(null, arguments);
+  }
+  function getConstraintForPort() {
+    return getSnapshotDomain().getConstraintForPort.apply(null, arguments);
+  }
+  function getGenericPortBindingById() {
+    return getSnapshotDomain().getGenericPortBindingById.apply(null, arguments);
+  }
+  function isPluginInternalCell2() {
+    return getSnapshotDomain().isPluginInternalCell.apply(null, arguments);
+  }
+  function restoreDiagramSnapshot() {
+    return getSnapshotDomain().restoreDiagramSnapshot.apply(null, arguments);
+  }
+  function shouldExportGenericObject2() {
+    return getSnapshotDomain().shouldExportGenericObject.apply(null, arguments);
+  }
+  var snapshotDomainApi = {
+    collectChangeObjectIds,
+    collectGenericPortBindings,
+    computeSnapshotChanges,
+    deserializeCellValue,
+    deserializeGeometry,
+    exportDiagramSnapshot,
+    getConstraintForPort,
+    getEdgePortId,
+    getGenericObjectId,
+    getGenericPortBindingById,
+    isPluginInternalCell: isPluginInternalCell2,
+    normalizeGenericStableId,
+    normalizeSnapshotGenericIds,
+    restoreDiagramSnapshot,
+    serializeCellValue,
+    serializeGeometry,
+    shouldExportGenericObject: shouldExportGenericObject2
+  };
+
+  // domain/cabinetGraph.js
+  function buildCabinetDeps() {
     var app = getApp();
     var ctx = app.ctx;
+    var constants = ctx.constants;
     return {
-      ctx,
-      trim,
-      clamp,
-      parsePortLayout: app.domains.spec.parsePortLayout,
-      getAttr,
-      buildPortLayout: app.domains.spec.buildPortLayout,
-      findPortHostRoot,
-      normalizePortDirection: app.domains.spec.normalizePortDirection,
-      normalizePortIoMode: app.domains.spec.normalizePortIoMode,
-      isDrawingFrame,
-      isCabinetSegment,
-      isCabinetGap,
-      findDrawingFrame: app.domains.frame.findDrawingFrame,
-      getCellAbsoluteGeometry: function(cell) {
-        return app.domains.cabinet.getCellAbsoluteGeometry(cell);
-      },
-      getPortAbsolutePosition: function(root, port) {
-        return app.domains.cabinet.getPortAbsolutePosition(root, port);
-      }
-    };
-  }
-  function getConstraintRuntime() {
-    var deps = getConstraintDeps();
-    var ctx = deps.ctx;
-    var graph = ctx.graph;
-    return {
-      deps,
-      graph,
+      graph: ctx.graph,
       model: ctx.model,
       state: ctx.state,
-      oldGetAllConnectionConstraints: graph.getAllConnectionConstraints,
-      oldSetConnectionConstraint: graph.setConnectionConstraint,
-      oldValidateConnection: graph.connectionHandler.validateConnection
-    };
-  }
-  function getElectricalConstraints(cell) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var root = deps.findPortHostRoot(cell);
-    var layout;
-    var constraints = [];
-    var i;
-    if (root == null) {
-      return null;
-    }
-    layout = deps.buildPortLayout(
-      { ports: deps.parsePortLayout(deps.getAttr(root, "portsJson")) },
-      deps.parsePortLayout(deps.getAttr(root, "portLayout"))
-    );
-    for (i = 0; i < layout.length; i++) {
-      var point = layout[i];
-      constraints.push(
-        new mxConnectionConstraint(
-          new mxPoint(point.x, point.y),
-          false,
-          point.id || "port:" + i
-        )
-      );
-    }
-    return constraints;
-  }
-  function getPortMetaByConstraint(root, constraint) {
-    var deps = getConstraintRuntime().deps;
-    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
-    var name = constraint != null ? deps.trim(constraint.name) : "";
-    var i;
-    for (i = 0; i < ports.length; i++) {
-      if (deps.trim(ports[i].id) == name) {
-        return ports[i];
-      }
-    }
-    return null;
-  }
-  function getPortMetaById(root, portId) {
-    var deps = getConstraintRuntime().deps;
-    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
-    var target = deps.trim(portId);
-    var i;
-    for (i = 0; i < ports.length; i++) {
-      if (deps.trim(ports[i].id) == target) {
-        return ports[i];
-      }
-    }
-    return null;
-  }
-  function mapPortDirectionToConstraint(direction) {
-    var normalizePortDirection2 = getConstraintRuntime().deps.normalizePortDirection;
-    switch (normalizePortDirection2(direction)) {
-      case "left":
-        return "west";
-      case "right":
-        return "east";
-      case "up":
-        return "north";
-      case "down":
-        return "south";
-      default:
-        return "";
-    }
-  }
-  function validatePortIoMode(sourcePort, targetPort) {
-    var normalizePortIoMode2 = getConstraintRuntime().deps.normalizePortIoMode;
-    if (sourcePort != null && normalizePortIoMode2(sourcePort.ioMode) == "in") {
-      return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u5165\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u8D77\u70B9";
-    }
-    if (targetPort != null && normalizePortIoMode2(targetPort.ioMode) == "out") {
-      return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u51FA\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u7EC8\u70B9";
-    }
-    return null;
-  }
-  function applyNativeConnectionConstraint(edge, terminal, source, constraint) {
-    var runtime = getConstraintRuntime();
-    runtime.oldSetConnectionConstraint.call(
-      runtime.graph,
-      edge,
-      terminal,
-      source,
-      constraint
-    );
-  }
-  function isMovableConnectedTerminal(cell) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    return cell != null && model.isVertex(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isCabinetGap(cell);
-  }
-  function clampCellGeometryToFrame(geometry, frame) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    var frameGeometry = model.getGeometry(frame);
-    var nextGeometry = geometry.clone();
-    var padding = 12;
-    var minX = padding;
-    var minY = padding;
-    var maxX = Math.max(minX, frameGeometry.width - geometry.width - padding);
-    var maxY = Math.max(minY, frameGeometry.height - geometry.height - padding);
-    nextGeometry.x = deps.clamp(nextGeometry.x, minX, maxX);
-    nextGeometry.y = deps.clamp(nextGeometry.y, minY, maxY);
-    return nextGeometry;
-  }
-  function moveCellToFrameByDelta(cell, targetFrame, deltaX, deltaY) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    if (!isMovableConnectedTerminal(cell) || targetFrame == null) {
-      return;
-    }
-    var geometry = model.getGeometry(cell);
-    if (geometry == null) {
-      return;
-    }
-    var currentFrame = deps.findDrawingFrame(cell);
-    var absolute = deps.getCellAbsoluteGeometry(cell);
-    var targetFrameGeometry = model.getGeometry(targetFrame);
-    var nextGeometry = geometry.clone();
-    var nextAbsoluteX = absolute.x + deltaX;
-    var nextAbsoluteY = absolute.y + deltaY;
-    if (currentFrame != targetFrame) {
-      model.add(targetFrame, cell);
-    }
-    nextGeometry.x = nextAbsoluteX - targetFrameGeometry.x;
-    nextGeometry.y = nextAbsoluteY - targetFrameGeometry.y;
-    nextGeometry = clampCellGeometryToFrame(nextGeometry, targetFrame);
-    model.setGeometry(cell, nextGeometry);
-  }
-  function collectConnectedMovableGroup(startCell) {
-    var model = getConstraintRuntime().model;
-    var queue = [];
-    var vertexMap = {};
-    var edgeMap = {};
-    var vertices = [];
-    var edges = [];
-    var i;
-    if (!isMovableConnectedTerminal(startCell)) {
-      return {
-        vertices,
-        edges
-      };
-    }
-    queue.push(startCell);
-    while (queue.length > 0) {
-      var cell = queue.shift();
-      var cellId = mxObjectIdentity.get(cell);
-      if (vertexMap[cellId]) {
-        continue;
-      }
-      vertexMap[cellId] = true;
-      vertices.push(cell);
-      for (i = 0; i < model.getEdgeCount(cell); i++) {
-        var edge = model.getEdgeAt(cell, i);
-        var edgeId = mxObjectIdentity.get(edge);
-        var source = model.getTerminal(edge, true);
-        var target = model.getTerminal(edge, false);
-        var other = source == cell ? target : source;
-        if (!edgeMap[edgeId]) {
-          edgeMap[edgeId] = true;
-          edges.push(edge);
-        }
-        if (isMovableConnectedTerminal(other)) {
-          queue.push(other);
-        }
-      }
-    }
-    return {
-      vertices,
-      edges
-    };
-  }
-  function getCellsAbsoluteBounds(cells) {
-    var getCellAbsoluteGeometry = getConstraintRuntime().deps.getCellAbsoluteGeometry;
-    var bounds = null;
-    var i;
-    for (i = 0; i < cells.length; i++) {
-      var geometry = getCellAbsoluteGeometry(cells[i]);
-      if (bounds == null) {
-        bounds = {
-          x: geometry.x,
-          y: geometry.y,
-          width: geometry.width,
-          height: geometry.height
-        };
-      } else {
-        var minX = Math.min(bounds.x, geometry.x);
-        var minY = Math.min(bounds.y, geometry.y);
-        var maxX = Math.max(
-          bounds.x + bounds.width,
-          geometry.x + geometry.width
-        );
-        var maxY = Math.max(
-          bounds.y + bounds.height,
-          geometry.y + geometry.height
-        );
-        bounds.x = minX;
-        bounds.y = minY;
-        bounds.width = maxX - minX;
-        bounds.height = maxY - minY;
-      }
-    }
-    return bounds;
-  }
-  function adjustGroupDeltaToFrame(vertices, targetFrame, deltaX, deltaY) {
-    var model = getConstraintRuntime().model;
-    var bounds = getCellsAbsoluteBounds(vertices);
-    var frameGeometry = model.getGeometry(targetFrame);
-    var padding = 12;
-    if (bounds == null || frameGeometry == null) {
-      return {
-        x: deltaX,
-        y: deltaY
-      };
-    }
-    var nextX = bounds.x + deltaX;
-    var nextY = bounds.y + deltaY;
-    var minX = frameGeometry.x + padding;
-    var minY = frameGeometry.y + padding;
-    var maxX = frameGeometry.x + frameGeometry.width - padding;
-    var maxY = frameGeometry.y + frameGeometry.height - padding;
-    if (nextX < minX) {
-      deltaX += minX - nextX;
-      nextX = minX;
-    }
-    if (nextY < minY) {
-      deltaY += minY - nextY;
-      nextY = minY;
-    }
-    if (nextX + bounds.width > maxX) {
-      deltaX -= nextX + bounds.width - maxX;
-    }
-    if (nextY + bounds.height > maxY) {
-      deltaY -= nextY + bounds.height - maxY;
-    }
-    return {
-      x: deltaX,
-      y: deltaY
-    };
-  }
-  function shiftEdgePointsByDelta(edge, deltaX, deltaY) {
-    var model = getConstraintRuntime().model;
-    var geometry = model.getGeometry(edge);
-    var points;
-    var i;
-    if (geometry == null || geometry.points == null || geometry.points.length == 0) {
-      return;
-    }
-    geometry = geometry.clone();
-    points = [];
-    for (i = 0; i < geometry.points.length; i++) {
-      points.push(
-        new mxPoint(
-          geometry.points[i].x + deltaX,
-          geometry.points[i].y + deltaY
-        )
-      );
-    }
-    geometry.points = points;
-    model.setGeometry(edge, geometry);
-  }
-  function clearEdgePoints(edge) {
-    var model = getConstraintRuntime().model;
-    var geometry = model.getGeometry(edge);
-    if (geometry != null && geometry.points != null && geometry.points.length > 0) {
-      geometry = geometry.clone();
-      geometry.points = null;
-      model.setGeometry(edge, geometry);
-    }
-  }
-  function moveConnectedGroupToCabinetPort(edge, source, oldRoot, oldPortId, newRoot, newPort) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    var state = runtime.state;
-    var otherTerminal = model.getTerminal(edge, !source);
-    var oldPort = getPortMetaById(oldRoot, oldPortId);
-    var targetFrame = deps.findDrawingFrame(newRoot);
-    var group;
-    var delta;
-    var movedMap = {};
-    var i;
-    if (state.updatingModel || !deps.isCabinetSegment(oldRoot) || !deps.isCabinetSegment(newRoot) || oldPort == null || newPort == null || !isMovableConnectedTerminal(otherTerminal) || targetFrame == null) {
-      return;
-    }
-    group = collectConnectedMovableGroup(otherTerminal);
-    if (group.vertices.length == 0) {
-      return;
-    }
-    delta = adjustGroupDeltaToFrame(
-      group.vertices,
-      targetFrame,
-      deps.getPortAbsolutePosition(newRoot, newPort).x - deps.getPortAbsolutePosition(oldRoot, oldPort).x,
-      deps.getPortAbsolutePosition(newRoot, newPort).y - deps.getPortAbsolutePosition(oldRoot, oldPort).y
-    );
-    if (Math.abs(delta.x) < 1e-4 && Math.abs(delta.y) < 1e-4) {
-      return;
-    }
-    state.updatingModel = true;
-    model.beginUpdate();
-    try {
-      for (i = 0; i < group.vertices.length; i++) {
-        var vertex = group.vertices[i];
-        var key = mxObjectIdentity.get(vertex);
-        if (!movedMap[key]) {
-          movedMap[key] = true;
-          moveCellToFrameByDelta(vertex, targetFrame, delta.x, delta.y);
-        }
-      }
-      for (i = 0; i < group.edges.length; i++) {
-        var groupEdge = group.edges[i];
-        var sourceTerminal = model.getTerminal(groupEdge, true);
-        var targetTerminal = model.getTerminal(groupEdge, false);
-        var sourceMoved = movedMap[mxObjectIdentity.get(sourceTerminal)] === true;
-        var targetMoved = movedMap[mxObjectIdentity.get(targetTerminal)] === true;
-        if (sourceMoved && targetMoved) {
-          shiftEdgePointsByDelta(groupEdge, delta.x, delta.y);
-        } else {
-          clearEdgePoints(groupEdge);
-        }
-      }
-    } finally {
-      model.endUpdate();
-      state.updatingModel = false;
-    }
-  }
-  function installGraphBehavior(extraDeps) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var graph = runtime.graph;
-    var model = runtime.model;
-    graph.getAllConnectionConstraints = function(terminal, source) {
-      var root = deps.findPortHostRoot(terminal != null ? terminal.cell : null);
-      if (root != null) {
-        return getElectricalConstraints(root);
-      }
-      return runtime.oldGetAllConnectionConstraints.apply(this, arguments);
-    };
-    graph.setConnectionConstraint = function(edge, terminal, source, constraint) {
-      if (edge == null) {
-        runtime.oldSetConnectionConstraint.apply(this, arguments);
-        return;
-      }
-      var previousStyle = model.getStyle(edge) || "";
-      var previousPortId = deps.trim(
-        mxUtils.getValue(
-          previousStyle,
-          source ? "sourcePortId" : "targetPortId",
-          ""
-        )
-      );
-      var previousRoot = deps.findPortHostRoot(model.getTerminal(edge, source));
-      runtime.oldSetConnectionConstraint.apply(this, arguments);
-      var root = deps.findPortHostRoot(terminal);
-      if (root == null || edge == null) {
-        return;
-      }
-      var port = getPortMetaByConstraint(root, constraint);
-      extraDeps.applyEdgePortConstraintMetadata(edge, root, source, constraint);
-      if (previousRoot != null && root != null && previousPortId.length > 0 && port != null && deps.trim(port.id).length > 0 && (previousRoot != root || previousPortId != deps.trim(port.id))) {
-        moveConnectedGroupToCabinetPort(
-          edge,
-          source,
-          previousRoot,
-          previousPortId,
-          root,
-          port
-        );
-      }
-    };
-    graph.connectionHandler.validateConnection = function(source, target) {
-      var error = runtime.oldValidateConnection.apply(this, arguments);
-      var sourceRoot;
-      var targetRoot;
-      var sourcePort;
-      var targetPort;
-      if (error != null) {
-        extraDeps.setCanvasStatus(error);
-        return error;
-      }
-      sourceRoot = deps.findPortHostRoot(source);
-      targetRoot = deps.findPortHostRoot(target);
-      if (sourceRoot == null && targetRoot == null) {
-        return null;
-      }
-      sourcePort = getPortMetaByConstraint(sourceRoot, this.sourceConstraint);
-      targetPort = getPortMetaByConstraint(
-        targetRoot,
-        this.constraintHandler != null ? this.constraintHandler.currentConstraint : null
-      );
-      error = validatePortIoMode(sourcePort, targetPort);
-      extraDeps.setCanvasStatus(error);
-      return error;
-    };
-    graph.connectionHandler.addListener(mxEvent.RESET, function() {
-      extraDeps.setCanvasStatus("");
-    });
-    graph.connectionHandler.addListener(mxEvent.CONNECT, function() {
-      extraDeps.setCanvasStatus("");
-    });
-  }
-  var connectionConstraintsApi = {
-    applyNativeConnectionConstraint,
-    clearEdgePoints,
-    getElectricalConstraints,
-    getPortMetaByConstraint,
-    getPortMetaById,
-    isMovableConnectedTerminal,
-    installGraphBehavior,
-    mapPortDirectionToConstraint,
-    moveCellToFrameByDelta,
-    moveConnectedGroupToCabinetPort
-  };
-
-  // services/libraryGraphCodec.js
-  function createLibraryEntry(graph, buildSymbolCell, spec) {
-    var root = buildSymbolCell(spec);
-    var bounds = graph.getBoundingBoxFromGeometry([root]);
-    var xml;
-    if (bounds != null) {
-      root.geometry = root.geometry.clone();
-      root.geometry.x = -bounds.x;
-      root.geometry.y = -bounds.y;
-    }
-    xml = mxUtils.getXml(graph.encodeCells([root]));
-    if (Editor.defaultCompressed) {
-      xml = Graph.compress(xml);
-    }
-    return {
-      xml,
-      w: bounds != null ? Math.round(bounds.width) : spec.size.width,
-      h: bounds != null ? Math.round(bounds.height) : spec.size.height,
-      title: spec.templateName || spec.title,
-      spec: cloneJson(spec)
-    };
-  }
-  function getLibraryEntrySpec(ui, image, normalizeSpec2, isElectricalRoot2, extractSpec) {
-    var xml;
-    var cells;
-    var i;
-    if (image != null && isObject(image.spec)) {
-      return normalizeSpec2(cloneJson(image.spec));
-    }
-    if (image == null || image.xml == null) {
-      throw new Error("\u6A21\u677F\u6761\u76EE\u7F3A\u5C11 xml");
-    }
-    xml = image.xml;
-    if ("<" != xml.charAt(0)) {
-      xml = Graph.decompress(xml);
-    }
-    cells = ui.stringToCells(xml);
-    for (i = 0; i < cells.length; i++) {
-      if (isElectricalRoot2(cells[i])) {
-        return extractSpec(cells[i]);
-      }
-    }
-    throw new Error("\u5E93\u6761\u76EE\u4E2D\u672A\u627E\u5230\u7535\u6C14\u56FE\u5143");
-  }
-  function findLibraryEntryIndex(images, symbolId, getLibraryEntrySpecFn) {
-    var id = trim(symbolId);
-    var i;
-    for (i = 0; i < images.length; i++) {
-      try {
-        if (trim(getLibraryEntrySpecFn(images[i]).symbolId) == id) {
-          return i;
-        }
-      } catch (e) {
-      }
-    }
-    return -1;
-  }
-
-  // services/libraryStorage.js
-  function loadStoredLibrary(ui, state, libraryTitle, callback, openInSidebar) {
-    StorageFile.getFileContent(
-      ui,
-      libraryTitle,
-      function(data) {
-        var images = [];
-        if (data != null && data.length > 0) {
-          try {
-            var doc = mxUtils.parseXml(data);
-            if (doc.documentElement != null && doc.documentElement.nodeName == "mxlibrary") {
-              images = JSON.parse(mxUtils.getTextContent(doc.documentElement));
-            }
-          } catch (e) {
-            images = [];
-          }
-        }
-        state.libraryImages = images;
-        if (openInSidebar && data != null && data.length > 0) {
-          ui.libraryLoaded(new StorageLibrary(ui, data, libraryTitle), images, libraryTitle, true);
-        }
-        if (callback != null) {
-          callback(images);
-        }
-      },
-      function() {
-        state.libraryImages = [];
-        if (callback != null) {
-          callback([]);
-        }
-      }
-    );
-  }
-  function saveLibraryImages(ui, state, libraryTitle, images, callback) {
-    var xml = ui.createLibraryDataFromImages(images);
-    var file = new StorageLibrary(ui, xml, libraryTitle);
-    ui.libraryLoaded(file, images, libraryTitle, true);
-    file.save(
-      false,
-      function() {
-        state.libraryImages = images;
-        if (callback != null) {
-          callback(file, images, xml);
-        }
-      },
-      function(err) {
-        ui.handleError(err || { message: "\u4FDD\u5B58\u7535\u6C14\u56FE\u5E93\u5931\u8D25" });
-      }
-    );
-  }
-
-  // services/libraryStore.js
-  function buildLibraryStoreDeps() {
-    var app = getApp();
-    var graphApi = app.graphApi;
-    var appContext = app.appContext;
-    return {
-      ui: graphApi.ui,
-      graph: graphApi.graph,
-      state: appContext.getState(),
-      libraryTitle: app.constants.LIBRARY_TITLE,
-      normalizeSpec: app.domains.spec.normalizeSpec,
-      isElectricalRoot,
-      extractSpec: app.domains.symbol.extractSpec,
-      buildSymbolCell: app.domains.symbol.buildSymbolCell,
-      showStatus
-    };
-  }
-  function getLibraryDeps() {
-    return buildLibraryStoreDeps();
-  }
-  function getLibraryEntrySpecCompat(image) {
-    var deps = getLibraryDeps();
-    return getLibraryEntrySpec(
-      deps.ui,
-      image,
-      deps.normalizeSpec,
-      deps.isElectricalRoot,
-      deps.extractSpec
-    );
-  }
-  function isTemplateNameTaken(name, ignoreSymbolId) {
-    var deps = getLibraryDeps();
-    var target = trim(name);
-    var ignoreId = trim(ignoreSymbolId);
-    var i;
-    var state = deps.state;
-    if (target.length == 0) {
-      return false;
-    }
-    for (i = 0; i < state.libraryImages.length; i++) {
-      try {
-        var spec = getLibraryEntrySpecCompat(state.libraryImages[i]);
-        if (trim(spec.templateName || spec.title) == target && trim(spec.symbolId) != ignoreId) {
-          return true;
-        }
-      } catch (e) {
-      }
-    }
-    return false;
-  }
-  function addToLibrary(spec, onSaved) {
-    var deps = getLibraryDeps();
-    loadStoredLibrary(deps.ui, deps.state, deps.libraryTitle, function(images) {
-      var next = images.slice();
-      var entry = createLibraryEntry(deps.graph, deps.buildSymbolCell, spec);
-      var index = findLibraryEntryIndex(next, spec.symbolId, getLibraryEntrySpecCompat);
-      var i;
-      for (i = 0; i < next.length; i++) {
-        try {
-          var currentSpec = getLibraryEntrySpecCompat(next[i]);
-          if (trim(currentSpec.templateName || currentSpec.title) == trim(spec.templateName || spec.title) && trim(currentSpec.symbolId) != trim(spec.symbolId)) {
-            deps.showStatus("\u56FE\u5143\u7C7B\u578B\u540D\u79F0\u4E0D\u80FD\u91CD\u590D", true);
-            return;
-          }
-        } catch (e) {
-        }
-      }
-      if (index >= 0) {
-        next[index] = entry;
-      } else {
-        next.push(entry);
-      }
-      saveLibraryImages(deps.ui, deps.state, deps.libraryTitle, next, function() {
-        deps.showStatus(index >= 0 ? "\u5DF2\u66F4\u65B0\u56FE\u5E93\u6A21\u677F" : "\u5DF2\u52A0\u5165\u56FE\u5E93", false);
-        if (typeof onSaved === "function") {
-          onSaved();
-        }
-      });
-    });
-  }
-  function removeTemplateFromLibrary(symbolId, onRemoved) {
-    var deps = getLibraryDeps();
-    loadStoredLibrary(deps.ui, deps.state, deps.libraryTitle, function(images) {
-      var next = [];
-      var removed = false;
-      var i;
-      for (i = 0; i < images.length; i++) {
-        try {
-          if (trim(getLibraryEntrySpecCompat(images[i]).symbolId) == trim(symbolId)) {
-            removed = true;
-            continue;
-          }
-        } catch (e) {
-        }
-        next.push(images[i]);
-      }
-      if (!removed) {
-        deps.showStatus("\u672A\u627E\u5230\u8981\u5220\u9664\u7684\u56FE\u5143\u6A21\u677F", true);
-        return;
-      }
-      saveLibraryImages(deps.ui, deps.state, deps.libraryTitle, next, function() {
-        deps.showStatus("\u5DF2\u5220\u9664\u56FE\u5143\u6A21\u677F", false);
-        if (typeof onRemoved === "function") {
-          onRemoved(next);
-        }
-      });
-    });
-  }
-  function loadStoredLibraryCompat(callback, openInSidebar) {
-    var deps = getLibraryDeps();
-    return loadStoredLibrary(
-      deps.ui,
-      deps.state,
-      deps.libraryTitle,
-      callback,
-      openInSidebar
-    );
-  }
-  function saveLibraryImagesCompat(images, callback) {
-    var deps = getLibraryDeps();
-    return saveLibraryImages(
-      deps.ui,
-      deps.state,
-      deps.libraryTitle,
-      images,
-      callback
-    );
-  }
-  var libraryStoreApi = {
-    addToLibrary,
-    getLibraryEntrySpec: getLibraryEntrySpecCompat,
-    isTemplateNameTaken,
-    loadStoredLibrary: loadStoredLibraryCompat,
-    removeTemplateFromLibrary,
-    saveLibraryImages: saveLibraryImagesCompat
-  };
-
-  // ui/exportSvgDialog.js
-  function buildExportDialogDeps() {
-    var app = getApp();
-    return {
-      ctx: app.ctx,
-      toInt,
-      createButton: createPluginButton,
-      showStatus
-    };
-  }
-  function openSvgExportDialog() {
-    var deps = arguments.length > 0 ? arguments[0] : buildExportDialogDeps();
-    var ui = deps.ctx.ui;
-    var graph = deps.ctx.graph;
-    function getDiagramExportBounds() {
-      var bounds = graph.getGraphBounds();
-      var viewScale = graph.view.scale || 1;
-      if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
-        throw new Error("\u753B\u5E03\u4E0A\u6CA1\u6709\u53EF\u5BFC\u51FA\u7684\u56FE\u5F62");
-      }
-      return {
-        width: Math.max(1, Math.ceil(bounds.width / viewScale)),
-        height: Math.max(1, Math.ceil(bounds.height / viewScale))
-      };
-    }
-    function createSvgExportCode(width, height) {
-      var exportBounds2 = getDiagramExportBounds();
-      var targetWidth = Math.max(1, deps.toInt(width, exportBounds2.width));
-      var targetHeight = Math.max(1, deps.toInt(height, exportBounds2.height));
-      var scale = Math.min(
-        targetWidth / exportBounds2.width,
-        targetHeight / exportBounds2.height
-      );
-      var svgRoot = graph.getSvg(
-        null,
-        scale,
-        0,
-        false,
-        null,
-        true,
-        null,
-        null,
-        null,
-        null,
-        true,
-        null
-      );
-      if (graph.shadowVisible) {
-        graph.addSvgShadow(svgRoot);
-      }
-      if (graph.mathEnabled) {
-        Editor.prototype.addMathCss(svgRoot);
-      }
-      svgRoot.setAttribute("width", String(targetWidth));
-      svgRoot.setAttribute("height", String(targetHeight));
-      svgRoot.setAttribute("preserveAspectRatio", "xMidYMid meet");
-      return mxUtils.getXml(svgRoot);
-    }
-    function downloadSvgCode(svgCode) {
-      var blob = new Blob([svgCode], { type: "image/svg+xml;charset=utf-8" });
-      var url = URL.createObjectURL(blob);
-      var link = document.createElement("a");
-      link.href = url;
-      link.download = "diagram-export.svg";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.setTimeout(function() {
-        URL.revokeObjectURL(url);
-      }, 0);
-    }
-    var exportBounds = getDiagramExportBounds();
-    var div = document.createElement("div");
-    div.style.padding = "12px";
-    div.style.width = "100%";
-    div.style.height = "100%";
-    div.style.boxSizing = "border-box";
-    div.style.display = "flex";
-    div.style.flexDirection = "column";
-    div.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
-    var formRow = document.createElement("div");
-    formRow.style.display = "flex";
-    formRow.style.alignItems = "center";
-    formRow.style.gap = "8px";
-    formRow.style.flexWrap = "wrap";
-    div.appendChild(formRow);
-    var widthLabel = document.createElement("div");
-    widthLabel.innerText = "\u5BBD";
-    formRow.appendChild(widthLabel);
-    var widthInput = document.createElement("input");
-    widthInput.setAttribute("type", "number");
-    widthInput.setAttribute("min", "1");
-    widthInput.style.width = "120px";
-    widthInput.value = String(exportBounds.width);
-    formRow.appendChild(widthInput);
-    var heightLabel = document.createElement("div");
-    heightLabel.innerText = "\u9AD8";
-    formRow.appendChild(heightLabel);
-    var heightInput = document.createElement("input");
-    heightInput.setAttribute("type", "number");
-    heightInput.setAttribute("min", "1");
-    heightInput.style.width = "120px";
-    heightInput.value = String(exportBounds.height);
-    formRow.appendChild(heightInput);
-    var refreshButton = deps.createButton("\u5237\u65B0SVG\u4EE3\u7801", function() {
-      try {
-        textarea.value = createSvgExportCode(widthInput.value, heightInput.value);
-      } catch (e) {
-        deps.showStatus(e.message || String(e), true);
-      }
-    });
-    refreshButton.style.marginTop = "0";
-    refreshButton.style.marginRight = "0";
-    formRow.appendChild(refreshButton);
-    var textarea = document.createElement("textarea");
-    textarea.spellcheck = false;
-    textarea.style.width = "100%";
-    textarea.style.flex = "1 1 auto";
-    textarea.style.minHeight = "320px";
-    textarea.style.marginTop = "10px";
-    textarea.style.boxSizing = "border-box";
-    div.appendChild(textarea);
-    var buttons = document.createElement("div");
-    buttons.style.marginTop = "10px";
-    buttons.style.flex = "0 0 auto";
-    div.appendChild(buttons);
-    var copyButton = deps.createButton("\u590D\u5236SVG\u4EE3\u7801", function() {
-      ui.writeTextToClipboard(
-        textarea.value,
-        function(e) {
-          ui.handleError(e);
-        },
-        function() {
-          ui.alert("\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F");
-        }
-      );
-    });
-    copyButton.style.marginTop = "0";
-    buttons.appendChild(copyButton);
-    var downloadButton = deps.createButton("\u4E0B\u8F7DSVG", function() {
-      try {
-        var svgCode = createSvgExportCode(widthInput.value, heightInput.value);
-        textarea.value = svgCode;
-        downloadSvgCode(svgCode);
-        wnd.destroy();
-      } catch (e) {
-        deps.showStatus(e.message || String(e), true);
-      }
-    });
-    downloadButton.style.marginTop = "0";
-    buttons.appendChild(downloadButton);
-    textarea.value = createSvgExportCode(exportBounds.width, exportBounds.height);
-    var wnd = new mxWindow("\u5BFC\u51FASVG", div, 160, 120, 720, 560, true, true);
-    wnd.destroyOnClose = true;
-    wnd.setClosable(true);
-    wnd.setMaximizable(false);
-    wnd.setResizable(true);
-    wnd.setScrollable(true);
-    wnd.setVisible(true);
-  }
-
-  // ui/frameDialog.js
-  function buildFrameDialogDeps() {
-    var app = getApp();
-    return {
-      ctx: app.ctx,
-      cloneJson,
-      normalizeFrameConfig: app.domains.frame.normalizeFrameConfig,
-      findDrawingFrame: app.domains.frame.findDrawingFrame,
-      getAllDrawingFrames: app.domains.frame.getAllDrawingFrames,
-      createButton: createPluginButton,
-      getFrameGroupId: app.domains.frame.getFrameGroupId,
-      generateFrameGroupId,
-      getMaxFramePageNumberInGroup: app.domains.frame.getMaxFramePageNumberInGroup,
-      createDrawingFrameCell: app.domains.frame.createDrawingFrameCell,
-      getRightmostFrameInGroup: app.domains.frame.getRightmostFrameInGroup,
-      addTopLevelCell: app.domains.frame.addTopLevelCell,
-      getLeftmostFrame: app.domains.frame.getLeftmostFrame,
-      getBottommostFrame: app.domains.frame.getBottommostFrame,
-      insertFrame: commandApi.insertFrame,
-      showStatus,
-      setCanvasStatus
-    };
-  }
-  function openInsertFrameDialog() {
-    var deps = arguments.length > 0 ? arguments[0] : buildFrameDialogDeps();
-    var ctx = deps.ctx;
-    var graph = ctx.graph;
-    var state = ctx.state;
-    var defaultConfig = deps.normalizeFrameConfig(state.frameConfig || {});
-    var selectedFrame = deps.findDrawingFrame(graph.getSelectionCell());
-    var existingFrames = deps.getAllDrawingFrames();
-    var div = document.createElement("div");
-    div.style.padding = "12px";
-    div.style.display = "flex";
-    div.style.flexDirection = "column";
-    div.style.gap = "10px";
-    div.style.boxSizing = "border-box";
-    div.style.width = "100%";
-    div.style.height = "100%";
-    var row = document.createElement("div");
-    row.style.display = "flex";
-    row.style.alignItems = "center";
-    row.style.gap = "8px";
-    div.appendChild(row);
-    var widthLabel = document.createElement("div");
-    widthLabel.innerText = "\u5BBD";
-    row.appendChild(widthLabel);
-    var widthInput = document.createElement("input");
-    widthInput.setAttribute("type", "number");
-    widthInput.setAttribute("min", "320");
-    widthInput.style.width = "140px";
-    widthInput.value = String(defaultConfig.width);
-    row.appendChild(widthInput);
-    var heightLabel = document.createElement("div");
-    heightLabel.innerText = "\u9AD8";
-    row.appendChild(heightLabel);
-    var heightInput = document.createElement("input");
-    heightInput.setAttribute("type", "number");
-    heightInput.setAttribute("min", "240");
-    heightInput.style.width = "140px";
-    heightInput.value = String(defaultConfig.height);
-    row.appendChild(heightInput);
-    var hint = document.createElement("div");
-    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
-    hint.style.fontSize = "12px";
-    hint.innerText = selectedFrame != null ? "\u5DF2\u9009\u4E2D\u56FE\u6846\u7EC4\uFF1A\u65B0\u56FE\u6846\u4F1A\u7EED\u63A5\u5230\u5F53\u524D\u7EC4\u53F3\u4FA7\uFF1B\u672A\u9009\u4E2D\u56FE\u6846\u65F6\u4F1A\u5728\u73B0\u6709\u7EC4\u4E0B\u65B9\u65B0\u5EFA\u4E00\u7EC4\u3002" : existingFrames.length > 0 ? "\u5F53\u524D\u672A\u9009\u4E2D\u56FE\u6846\uFF1A\u65B0\u56FE\u6846\u4F1A\u5728\u73B0\u6709\u56FE\u6846\u7EC4\u4E0B\u65B9\u65B0\u5EFA\u4E00\u7EC4\u3002\u9009\u4E2D\u67D0\u4E2A\u56FE\u6846\u540E\u518D\u63D2\u5165\uFF0C\u53EF\u7EED\u63A5\u5230\u8BE5\u7EC4\u53F3\u4FA7\u3002" : "\u9996\u6B21\u8BBE\u7F6E\u7684\u5C3A\u5BF8\u4F1A\u4F5C\u4E3A\u540E\u7EED\u81EA\u52A8\u5206\u9875\u56FE\u6846\u7684\u9ED8\u8BA4\u5C3A\u5BF8\u3002";
-    div.appendChild(hint);
-    var buttons = document.createElement("div");
-    div.appendChild(buttons);
-    var wnd = new mxWindow("\u63D2\u5165\u56FE\u6846", div, 180, 140, 420, 170, true, true);
-    wnd.destroyOnClose = true;
-    wnd.setClosable(true);
-    wnd.setMaximizable(false);
-    wnd.setResizable(false);
-    wnd.setScrollable(false);
-    var submitButton = deps.createButton("\u63D2\u5165\u56FE\u6846", function() {
-      var config = deps.normalizeFrameConfig({
-        width: widthInput.value,
-        height: heightInput.value
-      });
-      deps.insertFrame(config, selectedFrame, existingFrames);
-      wnd.destroy();
-    });
-    submitButton.style.marginTop = "0";
-    buttons.appendChild(submitButton);
-    wnd.setVisible(true);
-  }
-
-  // ui/cabinetDialog.js
-  function buildCabinetDialogDeps() {
-    var app = getApp();
-    return {
-      ctx: app.ctx,
+      cabinetTag: constants.CABINET_TAG,
+      cabinetType: constants.CABINET_TYPE,
+      cabinetBodyTag: constants.CABINET_BODY_TAG,
+      cabinetBodyKind: constants.CABINET_BODY_KIND,
+      cabinetGapTag: constants.CABINET_GAP_TAG,
+      cabinetGapType: constants.CABINET_GAP_TYPE,
+      cabinetGapKind: constants.CABINET_GAP_KIND,
+      frameLabelKind: constants.FRAME_LABEL_KIND,
+      frameContentRatio: constants.FRAME_CONTENT_RATIO,
+      frameMarginRatio: constants.FRAME_MARGIN_RATIO,
+      frameHorizontalGap: constants.FRAME_HORIZONTAL_GAP,
+      minPortFollowSpaceRatio: constants.CABINET_MIN_PORT_FOLLOW_SPACE_RATIO,
+      defaultWidth: constants.CABINET_DEFAULT_WIDTH,
+      defaultPortCount: constants.CABINET_DEFAULT_PORT_COUNT,
+      defaultX: constants.CABINET_DEFAULT_X,
+      tailPadding: constants.CABINET_TAIL_PADDING,
       trim,
-      clamp,
       toInt,
       toFloat,
-      createButton: createPluginButton,
-      getActiveFrame: app.domains.frame.getActiveFrame,
-      getAttr,
-      normalizeCabinetModel: app.domains.cabinet.normalizeCabinetModel,
+      clamp,
+      isObject,
+      cloneJson,
+      normalizePortPoint: specDomainApi.normalizePortPoint,
       generateLogicalCabinetId,
-      insertCabinet: commandApi.insertCabinet,
-      updateCabinetGap: commandApi.updateCabinetGap,
-      showStatus,
-      setCanvasStatus,
-      findCabinetSegment: app.domains.cabinet.findCabinetSegment,
-      extractCabinetModel: app.domains.cabinet.extractCabinetModel
+      createNode,
+      createMetaCell,
+      serializePortLayout: specDomainApi.serializePortLayout,
+      getAttr,
+      isCabinetSegment,
+      isCabinetGap,
+      getNormalizedFrameConfig: frameDomainApi.normalizeFrameConfig,
+      getAllDrawingFrames: frameDomainApi.getAllDrawingFrames,
+      getFrameConfig: frameDomainApi.getFrameConfig,
+      getFrameGroupId: frameDomainApi.getFrameGroupId,
+      getFramePageNumber: frameDomainApi.getFramePageNumber,
+      getMaxFramePageNumberInGroup: frameDomainApi.getMaxFramePageNumberInGroup,
+      getRightmostFrameInGroup: frameDomainApi.getRightmostFrameInGroup,
+      findFrameById: frameDomainApi.findFrameById,
+      findDrawingFrame: frameDomainApi.findDrawingFrame,
+      createDrawingFrameCell: frameDomainApi.createDrawingFrameCell,
+      addTopLevelCell: frameDomainApi.addTopLevelCell,
+      getEdgePortId: function(edge, root, source) {
+        return snapshotDomainApi.getEdgePortId(edge, root, source);
+      },
+      getPortMetaById: connectionConstraintsApi.getPortMetaById,
+      parsePortLayout: specDomainApi.parsePortLayout,
+      isMovableConnectedTerminal: connectionConstraintsApi.isMovableConnectedTerminal,
+      moveCellToFrameByDelta: connectionConstraintsApi.moveCellToFrameByDelta,
+      setConnectionConstraint: function(edge, root, source, constraint) {
+        ctx.graph.setConnectionConstraint(edge, root, source, constraint);
+      }
     };
   }
-  function getCabinetDialogDeps() {
-    return buildCabinetDialogDeps();
-  }
-  function getGapDialogPosition(nativeEvent, width, height) {
-    var deps = getCabinetDialogDeps();
-    var fallback = { x: 220, y: 180 };
-    if (nativeEvent == null) {
-      return fallback;
+  function createCabinetDomain() {
+    var deps = arguments.length > 0 ? arguments[0] : buildCabinetDeps();
+    var model = deps.model;
+    var state = deps.state;
+    function findCabinetSegment2(cell) {
+      while (cell != null) {
+        if (deps.isCabinetSegment(cell)) {
+          return cell;
+        }
+        cell = model.getParent(cell);
+      }
+      return null;
     }
-    var offsetX = 36;
-    var offsetY = -24;
-    var rawEvent = typeof nativeEvent.getEvent == "function" ? nativeEvent.getEvent() : nativeEvent;
-    var pageX = mxEvent.getClientX(rawEvent) + (window.pageXOffset || document.documentElement.scrollLeft || 0);
-    var pageY = mxEvent.getClientY(rawEvent) + (window.pageYOffset || document.documentElement.scrollTop || 0);
-    var viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1280;
-    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 720;
-    var minX = (window.pageXOffset || document.documentElement.scrollLeft || 0) + 12;
-    var minY = (window.pageYOffset || document.documentElement.scrollTop || 0) + 12;
-    var maxX = (window.pageXOffset || document.documentElement.scrollLeft || 0) + viewportWidth - width - 12;
-    var maxY = (window.pageYOffset || document.documentElement.scrollTop || 0) + viewportHeight - height - 12;
-    var x = pageX + offsetX;
-    var y = pageY + offsetY;
-    if (x > maxX) {
-      x = pageX - width - offsetX;
+    function createCabinetValueMetadata(node, cabinetModel, descriptor, frameId) {
+      node.setAttribute("pluginType", deps.cabinetType);
+      node.setAttribute(
+        "logicalCabinetId",
+        deps.trim(cabinetModel.logicalCabinetId)
+      );
+      node.setAttribute("originFrameId", deps.trim(cabinetModel.originFrameId));
+      node.setAttribute("frameId", deps.trim(frameId));
+      node.setAttribute("segmentIndex", String(descriptor.segmentIndex));
+      node.setAttribute(
+        "segmentStartOffset",
+        String(Math.round(descriptor.segmentStartOffset * 1e3) / 1e3)
+      );
+      node.setAttribute(
+        "segmentEndOffset",
+        String(Math.round(descriptor.segmentEndOffset * 1e3) / 1e3)
+      );
+      node.setAttribute("cabinetModelJson", JSON.stringify(cabinetModel));
+      node.setAttribute("gapRatiosJson", JSON.stringify(cabinetModel.gapRatios));
+      node.setAttribute("portsJson", deps.serializePortLayout(descriptor.ports));
+      node.setAttribute("portLayout", deps.serializePortLayout(descriptor.ports));
+      node.setAttribute("label", "");
+      return node;
     }
-    if (y > maxY) {
-      y = maxY;
+    function createCabinetBodyCell(descriptor) {
+      var cell = new mxCell(
+        deps.createMetaCell(
+          deps.cabinetBodyTag,
+          deps.cabinetBodyKind,
+          "main",
+          ""
+        ),
+        new mxGeometry(0, 0, descriptor.width, descriptor.height),
+        makeCabinetBodyStyle(descriptor)
+      );
+      cell.vertex = true;
+      cell.setConnectable(false);
+      return cell;
+    }
+    function isSelectedCabinetGap(logicalCabinetId, gapIndex) {
+      return state.selectedCabinetGap != null && deps.trim(state.selectedCabinetGap.logicalCabinetId) == deps.trim(logicalCabinetId) && deps.toInt(state.selectedCabinetGap.gapIndex, -1) == deps.toInt(gapIndex, -1);
+    }
+    function createCabinetGapCell(cabinetModel, descriptor, gap) {
+      var value = deps.createNode(deps.cabinetGapTag);
+      value.setAttribute("pluginType", deps.cabinetGapType);
+      value.setAttribute("esKind", deps.cabinetGapKind);
+      value.setAttribute("esKey", String(gap.gapIndex));
+      value.setAttribute(
+        "logicalCabinetId",
+        deps.trim(cabinetModel.logicalCabinetId)
+      );
+      value.setAttribute("gapIndex", String(gap.gapIndex));
+      value.setAttribute("label", "");
+      var geometry = new mxGeometry(1, gap.y, 14, gap.height);
+      geometry.relative = true;
+      geometry.offset = new mxPoint(-7, 0);
+      var cell = new mxCell(
+        value,
+        geometry,
+        makeCabinetGapStyle(
+          isSelectedCabinetGap(cabinetModel.logicalCabinetId, gap.gapIndex)
+        )
+      );
+      cell.vertex = true;
+      cell.setConnectable(false);
+      return cell;
+    }
+    function getCellAbsoluteGeometry2(cell) {
+      var geometry = model.getGeometry(cell);
+      var parent = model.getParent(cell);
+      var x = geometry != null ? geometry.x : 0;
+      var y = geometry != null ? geometry.y : 0;
+      while (parent != null) {
+        var parentGeometry = model.getGeometry(parent);
+        if (parentGeometry != null) {
+          x += parentGeometry.x;
+          y += parentGeometry.y;
+        }
+        parent = model.getParent(parent);
+      }
+      return {
+        x,
+        y,
+        width: geometry != null ? geometry.width : 0,
+        height: geometry != null ? geometry.height : 0
+      };
+    }
+    function getPortAbsolutePosition2(root, port) {
+      var geometry = getCellAbsoluteGeometry2(root);
+      return {
+        x: geometry.x + port.x * geometry.width,
+        y: geometry.y + port.y * geometry.height
+      };
+    }
+    function buildCabinetSegmentCell2(cabinetModel, frameId, descriptor) {
+      var root = new mxCell(
+        createCabinetValueMetadata(
+          deps.createNode(deps.cabinetTag),
+          cabinetModel,
+          descriptor,
+          frameId
+        ),
+        new mxGeometry(
+          descriptor.x,
+          descriptor.y,
+          descriptor.width,
+          descriptor.height
+        ),
+        makeCabinetRootStyle()
+      );
+      var i;
+      root.vertex = true;
+      root.setConnectable(true);
+      root.insert(createCabinetBodyCell(descriptor));
+      for (i = 0; i < descriptor.gaps.length; i++) {
+        root.insert(
+          createCabinetGapCell(cabinetModel, descriptor, descriptor.gaps[i])
+        );
+      }
+      return root;
+    }
+    function extractCabinetModel2(cell) {
+      var root = findCabinetSegment2(cell);
+      var raw;
+      if (root == null) {
+        throw new Error("\u672A\u627E\u5230\u914D\u7535\u67DC\u7247\u6BB5");
+      }
+      raw = deps.getAttr(root, "cabinetModelJson");
+      if (raw == null || raw.length == 0) {
+        throw new Error("\u7F3A\u5C11 cabinetModelJson \u6570\u636E");
+      }
+      return normalizeCabinetModel(JSON.parse(raw));
+    }
+    function findCabinetSegments2(logicalCabinetId) {
+      var target = deps.trim(logicalCabinetId);
+      var frames = deps.getAllDrawingFrames();
+      var result = [];
+      var i;
+      var j;
+      for (i = 0; i < frames.length; i++) {
+        for (j = 0; j < model.getChildCount(frames[i]); j++) {
+          var child = model.getChildAt(frames[i], j);
+          if (deps.isCabinetSegment(child) && deps.trim(deps.getAttr(child, "logicalCabinetId")) == target) {
+            result.push(child);
+          }
+        }
+      }
+      return result;
+    }
+    function updateCabinetGapHighlight() {
+      var frames = deps.getAllDrawingFrames();
+      var i;
+      var j;
+      var k;
+      model.beginUpdate();
+      try {
+        for (i = 0; i < frames.length; i++) {
+          for (j = 0; j < model.getChildCount(frames[i]); j++) {
+            var segment = model.getChildAt(frames[i], j);
+            if (!deps.isCabinetSegment(segment)) {
+              continue;
+            }
+            for (k = 0; k < model.getChildCount(segment); k++) {
+              var child = model.getChildAt(segment, k);
+              if (deps.isCabinetGap(child)) {
+                var nextStyle = makeCabinetGapStyle(
+                  isSelectedCabinetGap(
+                    deps.getAttr(child, "logicalCabinetId"),
+                    deps.getAttr(child, "gapIndex")
+                  )
+                );
+                if (child.style != nextStyle) {
+                  model.setStyle(child, nextStyle);
+                }
+              }
+            }
+          }
+        }
+      } finally {
+        model.endUpdate();
+      }
+    }
+    function setSelectedCabinetGap2(logicalCabinetId, gapIndex) {
+      if (deps.trim(logicalCabinetId).length == 0 || deps.toInt(gapIndex, -1) < 0) {
+        state.selectedCabinetGap = null;
+      } else {
+        state.selectedCabinetGap = {
+          logicalCabinetId: deps.trim(logicalCabinetId),
+          gapIndex: deps.toInt(gapIndex, -1)
+        };
+      }
+      updateCabinetGapHighlight();
+    }
+    function collectCabinetAttachments2(segments) {
+      var seen = {};
+      var attachments = [];
+      var i;
+      var j;
+      for (i = 0; i < segments.length; i++) {
+        var segment = segments[i];
+        var edgeCount = model.getEdgeCount(segment);
+        for (j = 0; j < edgeCount; j++) {
+          var edge = model.getEdgeAt(segment, j);
+          var sourceTerminal = model.getTerminal(edge, true);
+          var targetTerminal = model.getTerminal(edge, false);
+          var sourceIsSegment = sourceTerminal == segment;
+          var targetIsSegment = targetTerminal == segment;
+          if (!sourceIsSegment && !targetIsSegment) {
+            continue;
+          }
+          var key = mxCellPath.create(edge) + ":" + (sourceIsSegment ? "S" : "T");
+          if (seen[key]) {
+            continue;
+          }
+          seen[key] = true;
+          var source = sourceIsSegment;
+          var portId = deps.getEdgePortId(edge, segment, source);
+          var port = deps.getPortMetaById(segment, portId);
+          if (port == null) {
+            continue;
+          }
+          attachments.push({
+            edge,
+            source,
+            portId,
+            oldPortPosition: getPortAbsolutePosition2(segment, port),
+            otherTerminal: model.getTerminal(edge, !source)
+          });
+        }
+      }
+      return attachments;
+    }
+    function buildCabinetPortMap2(segments) {
+      var result = {};
+      var i;
+      for (i = 0; i < segments.length; i++) {
+        var segment = segments[i];
+        var frame = deps.findDrawingFrame(segment);
+        var ports = deps.parsePortLayout(deps.getAttr(segment, "portsJson"));
+        var j;
+        for (j = 0; j < ports.length; j++) {
+          result[deps.trim(ports[j].id)] = {
+            segment,
+            port: ports[j],
+            frame,
+            absolutePosition: getPortAbsolutePosition2(segment, ports[j])
+          };
+        }
+      }
+      return result;
+    }
+    function restoreCabinetAttachments2(attachments, newPortMap) {
+      var movedTerminals = {};
+      var i;
+      for (i = 0; i < attachments.length; i++) {
+        var attachment = attachments[i];
+        var target = newPortMap[deps.trim(attachment.portId)];
+        if (target == null) {
+          continue;
+        }
+        model.setTerminal(attachment.edge, target.segment, attachment.source);
+        deps.setConnectionConstraint(
+          attachment.edge,
+          target.segment,
+          attachment.source,
+          new mxConnectionConstraint(
+            new mxPoint(target.port.x, target.port.y),
+            false,
+            target.port.id
+          )
+        );
+        var edgeGeometry = model.getGeometry(attachment.edge);
+        if (edgeGeometry != null && edgeGeometry.points != null) {
+          edgeGeometry = edgeGeometry.clone();
+          edgeGeometry.points = null;
+          model.setGeometry(attachment.edge, edgeGeometry);
+        }
+        if (deps.isMovableConnectedTerminal(attachment.otherTerminal)) {
+          var moveKey = mxObjectIdentity.get(attachment.otherTerminal);
+          if (!movedTerminals[moveKey]) {
+            movedTerminals[moveKey] = true;
+            deps.moveCellToFrameByDelta(
+              attachment.otherTerminal,
+              target.frame,
+              target.absolutePosition.x - attachment.oldPortPosition.x,
+              target.absolutePosition.y - attachment.oldPortPosition.y
+            );
+          }
+        }
+      }
+    }
+    function findAutoFramesForCabinet(originFrameId, logicalCabinetId) {
+      var frames = deps.getAllDrawingFrames();
+      var result = [];
+      var i;
+      for (i = 0; i < frames.length; i++) {
+        if (deps.trim(deps.getAttr(frames[i], "originFrameId")) == deps.trim(originFrameId) && deps.trim(deps.getAttr(frames[i], "autoFrameOwner")) == deps.trim(logicalCabinetId)) {
+          result.push(frames[i]);
+        }
+      }
+      result.sort(function(a, b) {
+        return deps.toInt(deps.getAttr(a, "autoFrameIndex"), 0) - deps.toInt(deps.getAttr(b, "autoFrameIndex"), 0);
+      });
+      return result;
+    }
+    function frameHasOnlyCabinetChildren(frame, logicalCabinetId) {
+      var i;
+      for (i = 0; i < model.getChildCount(frame); i++) {
+        var child = model.getChildAt(frame, i);
+        if (deps.getAttr(child, "esKind") == deps.frameLabelKind) {
+          continue;
+        }
+        if (deps.isCabinetSegment(child) && deps.trim(deps.getAttr(child, "logicalCabinetId")) == deps.trim(logicalCabinetId)) {
+          continue;
+        }
+        return false;
+      }
+      return true;
+    }
+    function ensureCabinetFrames(originFrame, cabinetModel, pageCount, skipCleanup) {
+      var originFrameId = deps.trim(deps.getAttr(originFrame, "frameId"));
+      var originGroupId = deps.getFrameGroupId(originFrame);
+      var logicalCabinetId = deps.trim(cabinetModel.logicalCabinetId);
+      var config = deps.getFrameConfig(originFrame);
+      var autoFrames = findAutoFramesForCabinet(originFrameId, logicalCabinetId);
+      var frames = [originFrame];
+      var previousFrame = originFrame;
+      var i;
+      for (i = 1; i < pageCount; i++) {
+        var frame = autoFrames.length >= i ? autoFrames[i - 1] : null;
+        if (frame == null) {
+          var rightmostInGroup = deps.getRightmostFrameInGroup(originGroupId);
+          var rightmostGeometry = rightmostInGroup != null ? model.getGeometry(rightmostInGroup) : null;
+          frame = deps.createDrawingFrameCell(
+            config,
+            Math.max(
+              deps.getMaxFramePageNumberInGroup(originGroupId),
+              deps.getFramePageNumber(previousFrame)
+            ) + 1,
+            {
+              originFrameId,
+              groupId: originGroupId,
+              autoFrameOwner: logicalCabinetId,
+              autoFrameIndex: i
+            }
+          );
+          frame.geometry = frame.geometry.clone();
+          frame.geometry.x = Math.max(
+            model.getGeometry(previousFrame).x + config.width + deps.frameHorizontalGap,
+            rightmostGeometry != null ? rightmostGeometry.x + rightmostGeometry.width + deps.frameHorizontalGap : model.getGeometry(previousFrame).x + config.width + deps.frameHorizontalGap
+          );
+          frame.geometry.y = model.getGeometry(previousFrame).y;
+          deps.addTopLevelCell(frame);
+        }
+        frames.push(frame);
+        previousFrame = frame;
+      }
+      if (!skipCleanup) {
+        for (i = pageCount; i <= autoFrames.length; i++) {
+          var extraFrame = autoFrames[i - 1];
+          if (extraFrame != null && frameHasOnlyCabinetChildren(extraFrame, logicalCabinetId)) {
+            model.remove(extraFrame);
+          }
+        }
+      }
+      return frames;
+    }
+    function relayoutCabinetByModel2(cabinetModel) {
+      var normalized = normalizeCabinetModel(cabinetModel);
+      var originFrame = deps.findFrameById(normalized.originFrameId);
+      if (originFrame == null) {
+        throw new Error("\u672A\u627E\u5230\u914D\u7535\u67DC\u6240\u5C5E\u7684\u8D77\u59CB\u56FE\u6846");
+      }
+      var frameConfig = deps.getFrameConfig(originFrame);
+      var descriptors = buildCabinetPageDescriptors(normalized, frameConfig);
+      var oldSegments = findCabinetSegments2(normalized.logicalCabinetId);
+      var attachments = collectCabinetAttachments2(oldSegments);
+      var frames;
+      var newSegments = [];
+      var i;
+      frames = ensureCabinetFrames(
+        originFrame,
+        normalized,
+        descriptors.length,
+        true
+      );
+      for (i = 0; i < descriptors.length; i++) {
+        var segment = buildCabinetSegmentCell2(
+          normalized,
+          deps.trim(deps.getAttr(frames[i], "frameId")),
+          descriptors[i]
+        );
+        model.add(frames[i], segment);
+        newSegments.push(segment);
+      }
+      restoreCabinetAttachments2(attachments, buildCabinetPortMap2(newSegments));
+      for (i = 0; i < oldSegments.length; i++) {
+        model.remove(oldSegments[i]);
+      }
+      ensureCabinetFrames(originFrame, normalized, descriptors.length);
+      return newSegments;
     }
     return {
-      x: deps.clamp(x, minX, Math.max(minX, maxX)),
-      y: deps.clamp(y, minY, Math.max(minY, maxY))
+      buildCabinetPageDescriptors,
+      buildCabinetPortMap: buildCabinetPortMap2,
+      buildCabinetSegmentCell: buildCabinetSegmentCell2,
+      collectCabinetAttachments: collectCabinetAttachments2,
+      extractCabinetModel: extractCabinetModel2,
+      findCabinetSegment: findCabinetSegment2,
+      findCabinetSegments: findCabinetSegments2,
+      getCellAbsoluteGeometry: getCellAbsoluteGeometry2,
+      getPortAbsolutePosition: getPortAbsolutePosition2,
+      normalizeCabinetModel,
+      relayoutCabinetByModel: relayoutCabinetByModel2,
+      restoreCabinetAttachments: restoreCabinetAttachments2,
+      setSelectedCabinetGap: setSelectedCabinetGap2
     };
   }
-  function closeGapDialogWindow() {
-    var deps = getCabinetDialogDeps();
-    var ctx = deps.ctx;
-    var state = ctx.state;
-    if (state.gapDialogWindow != null) {
-      var wnd = state.gapDialogWindow;
-      state.gapDialogWindow = null;
-      wnd.destroy();
-    }
+
+  // domain/cabinet.js
+  function getCabinetDomain() {
+    return createCabinetDomain();
   }
-  function openInsertCabinetDialog() {
-    var deps = getCabinetDialogDeps();
-    var ctx = deps.ctx;
-    var constants = ctx.constants;
-    var trim2 = deps.trim;
-    var frame = deps.getActiveFrame(true);
-    if (frame == null) {
-      return;
-    }
-    var div = document.createElement("div");
-    div.style.padding = "12px";
-    div.style.display = "flex";
-    div.style.flexDirection = "column";
-    div.style.gap = "10px";
-    div.style.boxSizing = "border-box";
-    div.style.width = "100%";
-    div.style.height = "100%";
-    var nameRow = document.createElement("div");
-    nameRow.style.display = "grid";
-    nameRow.style.gridTemplateColumns = "90px 1fr";
-    nameRow.style.alignItems = "center";
-    nameRow.style.gap = "8px";
-    div.appendChild(nameRow);
-    var nameLabel = document.createElement("div");
-    nameLabel.innerText = "\u540D\u79F0";
-    nameRow.appendChild(nameLabel);
-    var nameInput = document.createElement("input");
-    nameInput.setAttribute("type", "text");
-    nameInput.value = "\u914D\u7535\u67DC";
-    nameRow.appendChild(nameInput);
-    var configRow = document.createElement("div");
-    configRow.style.display = "grid";
-    configRow.style.gridTemplateColumns = "90px 120px 90px 120px";
-    configRow.style.alignItems = "center";
-    configRow.style.gap = "8px";
-    div.appendChild(configRow);
-    var widthLabel = document.createElement("div");
-    widthLabel.innerText = "\u67DC\u5BBD";
-    configRow.appendChild(widthLabel);
-    var widthInput = document.createElement("input");
-    widthInput.setAttribute("type", "number");
-    widthInput.setAttribute("min", "30");
-    widthInput.value = String(constants.CABINET_DEFAULT_WIDTH);
-    configRow.appendChild(widthInput);
-    var countLabel = document.createElement("div");
-    countLabel.innerText = "\u53F3\u4FA7\u7AEF\u5B50\u6570";
-    configRow.appendChild(countLabel);
-    var countInput = document.createElement("input");
-    countInput.setAttribute("type", "number");
-    countInput.setAttribute("min", "2");
-    countInput.value = String(constants.CABINET_DEFAULT_PORT_COUNT);
-    configRow.appendChild(countInput);
-    var hint = document.createElement("div");
-    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
-    hint.style.fontSize = "12px";
-    hint.innerText = "\u4EC5\u751F\u6210\u4E13\u7528\u914D\u7535\u67DC\u4E3B\u4F53\u548C\u53F3\u4FA7\u8FDE\u63A5\u70B9\uFF0C\u95F4\u8DDD\u540E\u7EED\u901A\u8FC7\u53F3\u4FA7\u70ED\u70B9\u7F16\u8F91\u3002";
-    div.appendChild(hint);
-    var buttons = document.createElement("div");
-    div.appendChild(buttons);
-    var wnd = new mxWindow("\u63D2\u5165\u914D\u7535\u67DC", div, 200, 160, 460, 190, true, true);
-    wnd.destroyOnClose = true;
-    wnd.setClosable(true);
-    wnd.setMaximizable(false);
-    wnd.setResizable(false);
-    wnd.setScrollable(false);
-    var submitButton = deps.createButton("\u63D2\u5165\u914D\u7535\u67DC", function() {
-      var cabinetModel = deps.normalizeCabinetModel({
-        logicalCabinetId: deps.generateLogicalCabinetId(),
-        originFrameId: trim2(deps.getAttr(frame, "frameId")),
-        title: trim2(nameInput.value) || "\u914D\u7535\u67DC",
-        cabinetWidth: widthInput.value,
-        portCount: countInput.value
-      });
-      try {
-        deps.insertCabinet(cabinetModel);
-      } catch (e) {
-        deps.showStatus(e.message || String(e), true);
-        deps.setCanvasStatus(e.message || String(e));
-        return;
-      }
-      wnd.destroy();
-    });
-    submitButton.style.marginTop = "0";
-    buttons.appendChild(submitButton);
-    wnd.setVisible(true);
+  function buildCabinetPageDescriptors2() {
+    return getCabinetDomain().buildCabinetPageDescriptors.apply(null, arguments);
   }
-  function openCabinetGapDialog(gapCell, nativeEvent) {
-    var deps = getCabinetDialogDeps();
-    var ctx = deps.ctx;
-    var state = ctx.state;
-    var segment = deps.findCabinetSegment(gapCell);
-    var gapIndex = deps.toInt(deps.getAttr(gapCell, "gapIndex"), -1);
-    if (segment == null || gapIndex < 0) {
-      return;
-    }
-    closeGapDialogWindow();
-    var cabinetModel = deps.extractCabinetModel(segment);
-    var div = document.createElement("div");
-    div.style.padding = "12px";
-    div.style.display = "flex";
-    div.style.flexDirection = "column";
-    div.style.gap = "10px";
-    div.style.width = "100%";
-    div.style.height = "100%";
-    div.style.boxSizing = "border-box";
-    var label = document.createElement("div");
-    label.innerText = "\u8F93\u5165 0 \u5230 1 \u4E4B\u95F4\u7684\u6BD4\u4F8B\u503C";
-    div.appendChild(label);
-    var input = document.createElement("input");
-    input.setAttribute("type", "number");
-    input.setAttribute("min", "0");
-    input.setAttribute("max", "1");
-    input.setAttribute("step", "0.01");
-    input.value = String(cabinetModel.gapRatios[gapIndex] || 0);
-    div.appendChild(input);
-    var error = document.createElement("div");
-    error.style.minHeight = "18px";
-    error.style.fontSize = "12px";
-    error.style.color = "#b3261e";
-    div.appendChild(error);
-    var buttons = document.createElement("div");
-    div.appendChild(buttons);
-    var dialogWidth = 320;
-    var dialogHeight = 170;
-    var dialogPosition = getGapDialogPosition(nativeEvent, dialogWidth, dialogHeight);
-    var wnd = new mxWindow(
-      "\u8BBE\u7F6E\u7AEF\u5B50\u95F4\u8DDD",
-      div,
-      dialogPosition.x,
-      dialogPosition.y,
-      dialogWidth,
-      dialogHeight,
-      true,
-      true
-    );
-    wnd.destroyOnClose = true;
-    wnd.setClosable(true);
-    wnd.setMaximizable(false);
-    wnd.setResizable(false);
-    wnd.setScrollable(false);
-    wnd.addListener(mxEvent.DESTROY, function() {
-      if (state.gapDialogWindow == wnd) {
-        state.gapDialogWindow = null;
-      }
-    });
-    state.gapDialogWindow = wnd;
-    var saveButton = deps.createButton("\u4FDD\u5B58", function() {
-      var ratio = deps.toFloat(input.value, NaN);
-      if (isNaN(ratio) || ratio < 0 || ratio > 1) {
-        error.innerText = "\u8BF7\u8F93\u5165 0 \u5230 1 \u4E4B\u95F4\u7684\u6570\u503C";
-        return;
-      }
-      cabinetModel.gapRatios[gapIndex] = ratio;
-      try {
-        deps.updateCabinetGap(cabinetModel);
-      } catch (e) {
-        error.innerText = e.message || String(e);
-        return;
-      }
-      wnd.destroy();
-    });
-    saveButton.style.marginTop = "0";
-    buttons.appendChild(saveButton);
-    wnd.setVisible(true);
+  function buildCabinetPortMap() {
+    return getCabinetDomain().buildCabinetPortMap.apply(null, arguments);
   }
-  var cabinetDialogsApi = {
-    closeGapDialogWindow,
-    getGapDialogPosition,
-    openCabinetGapDialog,
-    openInsertCabinetDialog
+  function buildCabinetSegmentCell() {
+    return getCabinetDomain().buildCabinetSegmentCell.apply(null, arguments);
+  }
+  function collectCabinetAttachments() {
+    return getCabinetDomain().collectCabinetAttachments.apply(null, arguments);
+  }
+  function extractCabinetModel() {
+    return getCabinetDomain().extractCabinetModel.apply(null, arguments);
+  }
+  function findCabinetSegment() {
+    return getCabinetDomain().findCabinetSegment.apply(null, arguments);
+  }
+  function findCabinetSegments() {
+    return getCabinetDomain().findCabinetSegments.apply(null, arguments);
+  }
+  function getCellAbsoluteGeometry() {
+    return getCabinetDomain().getCellAbsoluteGeometry.apply(null, arguments);
+  }
+  function getPortAbsolutePosition() {
+    return getCabinetDomain().getPortAbsolutePosition.apply(null, arguments);
+  }
+  function relayoutCabinetByModel() {
+    return getCabinetDomain().relayoutCabinetByModel.apply(null, arguments);
+  }
+  function restoreCabinetAttachments() {
+    return getCabinetDomain().restoreCabinetAttachments.apply(null, arguments);
+  }
+  function setSelectedCabinetGap() {
+    return getCabinetDomain().setSelectedCabinetGap.apply(null, arguments);
+  }
+  var cabinetDomainApi = {
+    buildCabinetPageDescriptors: buildCabinetPageDescriptors2,
+    buildCabinetPortMap,
+    buildCabinetSegmentCell,
+    collectCabinetAttachments,
+    extractCabinetModel,
+    findCabinetSegment,
+    findCabinetSegments,
+    getCellAbsoluteGeometry,
+    getPortAbsolutePosition,
+    normalizeCabinetModel,
+    relayoutCabinetByModel,
+    restoreCabinetAttachments,
+    setSelectedCabinetGap
   };
 
   // services/backendSession.js
@@ -5068,21 +5678,21 @@
     } catch (e) {
     }
   }
-  function syncBackendState(state, constants, diagramId, version, snapshot, title, normalizeSnapshotGenericIds2, resetPendingChangeRecords2, exportDiagramSnapshot) {
+  function syncBackendState(state, constants, diagramId, version, snapshot, title, normalizeSnapshotGenericIds2, resetPendingChangeRecords2, exportDiagramSnapshot2) {
     snapshot = normalizeSnapshotGenericIds2(snapshot);
     state.backendDiagramId = trim(diagramId);
     state.backendDiagramTitle = trim(title || state.backendDiagramTitle);
     state.backendDiagramVersion = Math.max(0, toInt(version, 0));
     state.backendLastSnapshot = snapshot != null ? cloneJson(snapshot) : null;
-    resetPendingChangeRecords2(snapshot != null ? snapshot : exportDiagramSnapshot());
+    resetPendingChangeRecords2(snapshot != null ? snapshot : exportDiagramSnapshot2());
     saveBackendSession(state, constants, normalizeSnapshotGenericIds2);
   }
-  function resetBackendBinding(state, constants, normalizeSnapshotGenericIds2, resetPendingChangeRecords2, exportDiagramSnapshot) {
+  function resetBackendBinding(state, constants, normalizeSnapshotGenericIds2, resetPendingChangeRecords2, exportDiagramSnapshot2) {
     state.backendDiagramId = "";
     state.backendDiagramTitle = "";
     state.backendDiagramVersion = 0;
     state.backendLastSnapshot = null;
-    resetPendingChangeRecords2(exportDiagramSnapshot());
+    resetPendingChangeRecords2(exportDiagramSnapshot2());
     saveBackendSession(state, constants, normalizeSnapshotGenericIds2);
   }
 
@@ -5254,16 +5864,17 @@
   // services/backend.js
   function buildBackendServiceDeps() {
     var app = getApp();
+    var ctx = app.ctx;
     return {
-      state: app.appContext.getState(),
-      constants: app.constants,
-      normalizeSnapshotGenericIds: app.domains.snapshot.normalizeSnapshotGenericIds,
-      exportDiagramSnapshot: app.domains.snapshot.exportDiagramSnapshot,
+      state: ctx.state,
+      constants: ctx.constants,
+      normalizeSnapshotGenericIds: snapshotDomainApi.normalizeSnapshotGenericIds,
+      exportDiagramSnapshot: snapshotDomainApi.exportDiagramSnapshot,
       resetPendingChangeRecords,
-      computeSnapshotChanges: app.domains.snapshot.computeSnapshotChanges,
-      collectChangeObjectIds: app.domains.snapshot.collectChangeObjectIds,
+      computeSnapshotChanges: snapshotDomainApi.computeSnapshotChanges,
+      collectChangeObjectIds: snapshotDomainApi.collectChangeObjectIds,
       showStatus,
-      restoreDiagramSnapshot: app.domains.snapshot.restoreDiagramSnapshot
+      restoreDiagramSnapshot: snapshotDomainApi.restoreDiagramSnapshot
     };
   }
   function getBackendDeps() {
@@ -5762,8 +6373,269 @@
     openBackendSaveDialog
   };
 
+  // services/libraryGraphCodec.js
+  function createLibraryEntry(graph, buildSymbolCell2, spec) {
+    var root = buildSymbolCell2(spec);
+    var bounds = graph.getBoundingBoxFromGeometry([root]);
+    var xml;
+    if (bounds != null) {
+      root.geometry = root.geometry.clone();
+      root.geometry.x = -bounds.x;
+      root.geometry.y = -bounds.y;
+    }
+    xml = mxUtils.getXml(graph.encodeCells([root]));
+    if (Editor.defaultCompressed) {
+      xml = Graph.compress(xml);
+    }
+    return {
+      xml,
+      w: bounds != null ? Math.round(bounds.width) : spec.size.width,
+      h: bounds != null ? Math.round(bounds.height) : spec.size.height,
+      title: spec.templateName || spec.title,
+      spec: cloneJson(spec)
+    };
+  }
+  function getLibraryEntrySpec(ui, image, normalizeSpec2, isElectricalRoot2, extractSpec2) {
+    var xml;
+    var cells;
+    var i;
+    if (image != null && isObject(image.spec)) {
+      return normalizeSpec2(cloneJson(image.spec));
+    }
+    if (image == null || image.xml == null) {
+      throw new Error("\u6A21\u677F\u6761\u76EE\u7F3A\u5C11 xml");
+    }
+    xml = image.xml;
+    if ("<" != xml.charAt(0)) {
+      xml = Graph.decompress(xml);
+    }
+    cells = ui.stringToCells(xml);
+    for (i = 0; i < cells.length; i++) {
+      if (isElectricalRoot2(cells[i])) {
+        return extractSpec2(cells[i]);
+      }
+    }
+    throw new Error("\u5E93\u6761\u76EE\u4E2D\u672A\u627E\u5230\u7535\u6C14\u56FE\u5143");
+  }
+  function findLibraryEntryIndex(images, symbolId, getLibraryEntrySpecFn) {
+    var id = trim(symbolId);
+    var i;
+    for (i = 0; i < images.length; i++) {
+      try {
+        if (trim(getLibraryEntrySpecFn(images[i]).symbolId) == id) {
+          return i;
+        }
+      } catch (e) {
+      }
+    }
+    return -1;
+  }
+
+  // services/libraryStorage.js
+  function loadStoredLibrary(ui, state, libraryTitle, callback, openInSidebar) {
+    StorageFile.getFileContent(
+      ui,
+      libraryTitle,
+      function(data) {
+        var images = [];
+        if (data != null && data.length > 0) {
+          try {
+            var doc = mxUtils.parseXml(data);
+            if (doc.documentElement != null && doc.documentElement.nodeName == "mxlibrary") {
+              images = JSON.parse(mxUtils.getTextContent(doc.documentElement));
+            }
+          } catch (e) {
+            images = [];
+          }
+        }
+        state.libraryImages = images;
+        if (openInSidebar && data != null && data.length > 0) {
+          ui.libraryLoaded(new StorageLibrary(ui, data, libraryTitle), images, libraryTitle, true);
+        }
+        if (callback != null) {
+          callback(images);
+        }
+      },
+      function() {
+        state.libraryImages = [];
+        if (callback != null) {
+          callback([]);
+        }
+      }
+    );
+  }
+  function saveLibraryImages(ui, state, libraryTitle, images, callback) {
+    var xml = ui.createLibraryDataFromImages(images);
+    var file = new StorageLibrary(ui, xml, libraryTitle);
+    ui.libraryLoaded(file, images, libraryTitle, true);
+    file.save(
+      false,
+      function() {
+        state.libraryImages = images;
+        if (callback != null) {
+          callback(file, images, xml);
+        }
+      },
+      function(err) {
+        ui.handleError(err || { message: "\u4FDD\u5B58\u7535\u6C14\u56FE\u5E93\u5931\u8D25" });
+      }
+    );
+  }
+
+  // services/libraryStore.js
+  function buildLibraryStoreDeps() {
+    var app = getApp();
+    var ctx = app.ctx;
+    return {
+      ui: ctx.ui,
+      graph: ctx.graph,
+      state: ctx.state,
+      libraryTitle: ctx.constants.LIBRARY_TITLE,
+      normalizeSpec: specDomainApi.normalizeSpec,
+      isElectricalRoot,
+      extractSpec: symbolDomainApi.extractSpec,
+      buildSymbolCell: symbolDomainApi.buildSymbolCell,
+      showStatus
+    };
+  }
+  function getLibraryDeps() {
+    return buildLibraryStoreDeps();
+  }
+  function getLibraryEntrySpecCompat(image) {
+    var deps = getLibraryDeps();
+    return getLibraryEntrySpec(
+      deps.ui,
+      image,
+      deps.normalizeSpec,
+      deps.isElectricalRoot,
+      deps.extractSpec
+    );
+  }
+  function isTemplateNameTaken(name, ignoreSymbolId) {
+    var deps = getLibraryDeps();
+    var target = trim(name);
+    var ignoreId = trim(ignoreSymbolId);
+    var i;
+    var state = deps.state;
+    if (target.length == 0) {
+      return false;
+    }
+    for (i = 0; i < state.libraryImages.length; i++) {
+      try {
+        var spec = getLibraryEntrySpecCompat(state.libraryImages[i]);
+        if (trim(spec.templateName || spec.title) == target && trim(spec.symbolId) != ignoreId) {
+          return true;
+        }
+      } catch (e) {
+      }
+    }
+    return false;
+  }
+  function addToLibrary(spec, onSaved) {
+    var deps = getLibraryDeps();
+    loadStoredLibrary(deps.ui, deps.state, deps.libraryTitle, function(images) {
+      var next = images.slice();
+      var entry = createLibraryEntry(deps.graph, deps.buildSymbolCell, spec);
+      var index = findLibraryEntryIndex(next, spec.symbolId, getLibraryEntrySpecCompat);
+      var i;
+      for (i = 0; i < next.length; i++) {
+        try {
+          var currentSpec = getLibraryEntrySpecCompat(next[i]);
+          if (trim(currentSpec.templateName || currentSpec.title) == trim(spec.templateName || spec.title) && trim(currentSpec.symbolId) != trim(spec.symbolId)) {
+            deps.showStatus("\u56FE\u5143\u7C7B\u578B\u540D\u79F0\u4E0D\u80FD\u91CD\u590D", true);
+            return;
+          }
+        } catch (e) {
+        }
+      }
+      if (index >= 0) {
+        next[index] = entry;
+      } else {
+        next.push(entry);
+      }
+      saveLibraryImages(deps.ui, deps.state, deps.libraryTitle, next, function() {
+        deps.showStatus(index >= 0 ? "\u5DF2\u66F4\u65B0\u56FE\u5E93\u6A21\u677F" : "\u5DF2\u52A0\u5165\u56FE\u5E93", false);
+        if (typeof onSaved === "function") {
+          onSaved();
+        }
+      });
+    });
+  }
+  function removeTemplateFromLibrary(symbolId, onRemoved) {
+    var deps = getLibraryDeps();
+    loadStoredLibrary(deps.ui, deps.state, deps.libraryTitle, function(images) {
+      var next = [];
+      var removed = false;
+      var i;
+      for (i = 0; i < images.length; i++) {
+        try {
+          if (trim(getLibraryEntrySpecCompat(images[i]).symbolId) == trim(symbolId)) {
+            removed = true;
+            continue;
+          }
+        } catch (e) {
+        }
+        next.push(images[i]);
+      }
+      if (!removed) {
+        deps.showStatus("\u672A\u627E\u5230\u8981\u5220\u9664\u7684\u56FE\u5143\u6A21\u677F", true);
+        return;
+      }
+      saveLibraryImages(deps.ui, deps.state, deps.libraryTitle, next, function() {
+        deps.showStatus("\u5DF2\u5220\u9664\u56FE\u5143\u6A21\u677F", false);
+        if (typeof onRemoved === "function") {
+          onRemoved(next);
+        }
+      });
+    });
+  }
+  function loadStoredLibraryCompat(callback, openInSidebar) {
+    var deps = getLibraryDeps();
+    return loadStoredLibrary(
+      deps.ui,
+      deps.state,
+      deps.libraryTitle,
+      callback,
+      openInSidebar
+    );
+  }
+  function saveLibraryImagesCompat(images, callback) {
+    var deps = getLibraryDeps();
+    return saveLibraryImages(
+      deps.ui,
+      deps.state,
+      deps.libraryTitle,
+      images,
+      callback
+    );
+  }
+  var libraryStoreApi = {
+    addToLibrary,
+    getLibraryEntrySpec: getLibraryEntrySpecCompat,
+    isTemplateNameTaken,
+    loadStoredLibrary: loadStoredLibraryCompat,
+    removeTemplateFromLibrary,
+    saveLibraryImages: saveLibraryImagesCompat
+  };
+
   // ui/createInstanceDialog.js
-  function openCreateFromLibraryDialog(deps, preferredSymbolId) {
+  function getCreateInstanceDeps() {
+    return {
+      trim,
+      library: libraryStoreApi,
+      getLibraryEntrySpec: libraryStoreApi.getLibraryEntrySpec,
+      showStatus,
+      flattenSchemaFields: specDomainApi.flattenSchemaFields,
+      normalizeSchemaType: specDomainApi.normalizeSchemaType,
+      setValueByPath: specDomainApi.setValueByPath,
+      buildInstanceSpec: specDomainApi.buildInstanceSpec,
+      createButton: createPluginButton,
+      insertIntoGraph: commandApi.insertIntoGraph
+    };
+  }
+  function openCreateFromLibraryDialog() {
+    var deps = arguments.length > 0 && arguments[0] != null && typeof arguments[0] == "object" && !Array.isArray(arguments[0]) && arguments[0].library != null ? arguments[0] : getCreateInstanceDeps();
+    var preferredSymbolId = arguments.length > 1 || arguments.length > 0 && (arguments[0] == null || typeof arguments[0] != "object" || Array.isArray(arguments[0]) || arguments[0].library == null) ? arguments[arguments.length > 1 ? 1 : 0] : arguments[1];
     var trim2 = deps.trim;
     deps.library.loadStoredLibrary(function(images) {
       var templates = [];
@@ -6012,239 +6884,253 @@
     });
   }
 
-  // ui/templateBrowser.js
-  function buildTemplateBrowserDeps() {
+  // ui/exportSvgDialog.js
+  function buildExportDialogDeps() {
     var app = getApp();
     return {
       ctx: app.ctx,
-      library: libraryStoreApi,
-      getLibraryEntrySpec: libraryStoreApi.getLibraryEntrySpec,
-      showStatus,
-      normalizePortLayout: app.domains.spec.normalizePortLayout,
-      normalizeLabels: app.domains.spec.normalizeLabels,
-      trim,
+      toInt,
       createButton: createPluginButton,
-      openEditorWithTemplate: function(template) {
-        return app.ui != null && typeof app.ui.openEditorWithTemplate === "function" ? app.ui.openEditorWithTemplate(template) : null;
-      },
-      openCreateFromLibraryDialog: function(preferredSymbolId) {
-        return app.ui != null && typeof app.ui.openCreateFromLibraryDialog === "function" ? app.ui.openCreateFromLibraryDialog(preferredSymbolId) : null;
-      }
+      showStatus
     };
   }
-  function openTemplateBrowserDialog() {
-    var deps = arguments.length > 0 ? arguments[0] : buildTemplateBrowserDeps();
-    var ctx = deps.ctx;
-    var state = ctx.state;
-    if (state.templatesWindow != null) {
-      state.templatesWindow.setVisible(!state.templatesWindow.isVisible());
-      return;
+  function openSvgExportDialog() {
+    var deps = arguments.length > 0 ? arguments[0] : buildExportDialogDeps();
+    var ui = deps.ctx.ui;
+    var graph = deps.ctx.graph;
+    function getDiagramExportBounds() {
+      var bounds = graph.getGraphBounds();
+      var viewScale = graph.view.scale || 1;
+      if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
+        throw new Error("\u753B\u5E03\u4E0A\u6CA1\u6709\u53EF\u5BFC\u51FA\u7684\u56FE\u5F62");
+      }
+      return {
+        width: Math.max(1, Math.ceil(bounds.width / viewScale)),
+        height: Math.max(1, Math.ceil(bounds.height / viewScale))
+      };
     }
-    deps.library.loadStoredLibrary(function(images) {
-      var templates = [];
-      var i;
-      for (i = 0; i < images.length; i++) {
-        try {
-          templates.push(deps.getLibraryEntrySpec(images[i]));
-        } catch (e) {
-        }
+    function createSvgExportCode(width, height) {
+      var exportBounds2 = getDiagramExportBounds();
+      var targetWidth = Math.max(1, deps.toInt(width, exportBounds2.width));
+      var targetHeight = Math.max(1, deps.toInt(height, exportBounds2.height));
+      var scale = Math.min(
+        targetWidth / exportBounds2.width,
+        targetHeight / exportBounds2.height
+      );
+      var svgRoot = graph.getSvg(
+        null,
+        scale,
+        0,
+        false,
+        null,
+        true,
+        null,
+        null,
+        null,
+        null,
+        true,
+        null
+      );
+      if (graph.shadowVisible) {
+        graph.addSvgShadow(svgRoot);
       }
-      if (templates.length == 0) {
-        deps.showStatus("\u7535\u6C14\u56FE\u5E93\u4E3A\u7A7A\uFF0C\u8BF7\u5148\u4FDD\u5B58\u56FE\u5143\u7C7B\u578B", true);
-        return;
+      if (graph.mathEnabled) {
+        Editor.prototype.addMathCss(svgRoot);
       }
-      var div = document.createElement("div");
-      div.style.padding = "12px";
-      div.style.width = "100%";
-      div.style.height = "100%";
-      div.style.boxSizing = "border-box";
-      div.style.display = "flex";
-      div.style.flexDirection = "column";
-      div.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
-      var title = document.createElement("div");
-      title.style.fontWeight = "bold";
-      title.style.marginBottom = "10px";
-      title.innerText = "\u5DF2\u5B9A\u4E49\u56FE\u5143";
-      div.appendChild(title);
-      var list = document.createElement("div");
-      list.style.flex = "1 1 auto";
-      list.style.overflow = "auto";
-      list.style.display = "grid";
-      list.style.gridTemplateColumns = "repeat(auto-fill, minmax(220px, 1fr))";
-      list.style.gap = "12px";
-      list.style.alignContent = "start";
-      div.appendChild(list);
-      function renderTemplateCardPreview(container, template) {
-        container.innerHTML = "";
-        container.style.position = "relative";
-        container.style.overflow = "hidden";
-        var ports = deps.normalizePortLayout(template.ports);
-        var labels = deps.normalizeLabels(template.labels);
-        var bounds = {
-          minX: 0,
-          minY: 0,
-          maxX: template.size.width,
-          maxY: template.size.height
-        };
-        ports.forEach(function(point) {
-          var x = point.x * template.size.width;
-          var y = point.y * template.size.height;
-          bounds.minX = Math.min(bounds.minX, x - 10);
-          bounds.minY = Math.min(bounds.minY, y - 10);
-          bounds.maxX = Math.max(bounds.maxX, x + 10);
-          bounds.maxY = Math.max(bounds.maxY, y + 10);
-        });
-        labels.forEach(function(label) {
-          var x = label.x * template.size.width;
-          var y = label.y * template.size.height;
-          bounds.minX = Math.min(bounds.minX, x - label.width / 2);
-          bounds.minY = Math.min(bounds.minY, y - label.height / 2);
-          bounds.maxX = Math.max(bounds.maxX, x + label.width / 2);
-          bounds.maxY = Math.max(bounds.maxY, y + label.height / 2);
-        });
-        var contentWidth = Math.max(1, bounds.maxX - bounds.minX);
-        var contentHeight = Math.max(1, bounds.maxY - bounds.minY);
-        var rect = container.getBoundingClientRect();
-        var surfaceWidth = Math.max(200, Math.round(rect.width) || 0);
-        var surfaceHeight = Math.max(160, Math.round(rect.height) || 0);
-        var padding = 18;
-        var scale = Math.min(
-          (surfaceWidth - padding * 2) / contentWidth,
-          (surfaceHeight - padding * 2) / contentHeight
-        );
-        scale = Math.max(0.05, scale);
-        var left = Math.round(
-          (surfaceWidth - contentWidth * scale) / 2 - bounds.minX * scale
-        );
-        var top = Math.round(
-          (surfaceHeight - contentHeight * scale) / 2 - bounds.minY * scale
-        );
-        var img = document.createElement("img");
-        img.setAttribute(
-          "src",
-          "data:image/svg+xml," + encodeURIComponent(template.svg)
-        );
-        img.setAttribute("alt", template.title);
-        img.style.position = "absolute";
-        img.style.left = left + "px";
-        img.style.top = top + "px";
-        img.style.width = Math.round(template.size.width * scale) + "px";
-        img.style.height = Math.round(template.size.height * scale) + "px";
-        img.style.objectFit = "fill";
-        container.appendChild(img);
-        ports.forEach(function(point) {
-          var handle = document.createElement("div");
-          handle.style.position = "absolute";
-          handle.style.left = Math.round(left + point.x * template.size.width * scale - 7) + "px";
-          handle.style.top = Math.round(top + point.y * template.size.height * scale - 7) + "px";
-          handle.style.width = "14px";
-          handle.style.height = "14px";
-          handle.style.lineHeight = "14px";
-          handle.style.textAlign = "center";
-          handle.style.color = "#1a73e8";
-          handle.style.fontSize = point.marker == "circle" ? "12px" : "16px";
-          handle.style.fontWeight = "700";
-          handle.style.userSelect = "none";
-          handle.style.opacity = point.marker == "hidden" ? "0.35" : "1";
-          handle.innerText = point.marker == "circle" ? "\u25CF" : point.marker == "hidden" ? "" : "\xD7";
-          container.appendChild(handle);
-        });
-        labels.forEach(function(label) {
-          var box = document.createElement("div");
-          box.style.position = "absolute";
-          box.style.left = Math.round(
-            left + label.x * template.size.width * scale - label.width * scale / 2
-          ) + "px";
-          box.style.top = Math.round(
-            top + label.y * template.size.height * scale - label.height * scale / 2
-          ) + "px";
-          box.style.width = Math.max(36, Math.round(label.width * scale)) + "px";
-          box.style.minHeight = Math.max(20, Math.round(label.height * scale)) + "px";
-          box.style.padding = "1px 4px";
-          box.style.boxSizing = "border-box";
-          box.style.background = Editor.isDarkMode() ? "#1f1f1f" : "#ffffff";
-          box.style.border = "1px dashed #9aa4b2";
-          box.style.borderRadius = "4px";
-          box.style.fontSize = Math.max(10, Math.round(12 * scale)) + "px";
-          box.style.lineHeight = Math.max(14, Math.round(18 * scale)) + "px";
-          box.style.textAlign = label.align;
-          box.style.userSelect = "none";
-          box.innerText = deps.trim(label.binding).length > 0 ? "{{" + label.binding + "}}" : label.text || "";
-          container.appendChild(box);
-        });
+      svgRoot.setAttribute("width", String(targetWidth));
+      svgRoot.setAttribute("height", String(targetHeight));
+      svgRoot.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      return mxUtils.getXml(svgRoot);
+    }
+    function downloadSvgCode(svgCode) {
+      var blob = new Blob([svgCode], { type: "image/svg+xml;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var link = document.createElement("a");
+      link.href = url;
+      link.download = "diagram-export.svg";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.setTimeout(function() {
+        URL.revokeObjectURL(url);
+      }, 0);
+    }
+    var exportBounds = getDiagramExportBounds();
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.boxSizing = "border-box";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
+    var formRow = document.createElement("div");
+    formRow.style.display = "flex";
+    formRow.style.alignItems = "center";
+    formRow.style.gap = "8px";
+    formRow.style.flexWrap = "wrap";
+    div.appendChild(formRow);
+    var widthLabel = document.createElement("div");
+    widthLabel.innerText = "\u5BBD";
+    formRow.appendChild(widthLabel);
+    var widthInput = document.createElement("input");
+    widthInput.setAttribute("type", "number");
+    widthInput.setAttribute("min", "1");
+    widthInput.style.width = "120px";
+    widthInput.value = String(exportBounds.width);
+    formRow.appendChild(widthInput);
+    var heightLabel = document.createElement("div");
+    heightLabel.innerText = "\u9AD8";
+    formRow.appendChild(heightLabel);
+    var heightInput = document.createElement("input");
+    heightInput.setAttribute("type", "number");
+    heightInput.setAttribute("min", "1");
+    heightInput.style.width = "120px";
+    heightInput.value = String(exportBounds.height);
+    formRow.appendChild(heightInput);
+    var refreshButton = deps.createButton("\u5237\u65B0SVG\u4EE3\u7801", function() {
+      try {
+        textarea.value = createSvgExportCode(widthInput.value, heightInput.value);
+      } catch (e) {
+        deps.showStatus(e.message || String(e), true);
       }
-      templates.forEach(function(template) {
-        var card = document.createElement("div");
-        card.style.border = "1px solid #d0d7de";
-        card.style.borderRadius = "8px";
-        card.style.padding = "10px";
-        card.style.background = Editor.isDarkMode() ? "#161616" : "#ffffff";
-        card.style.display = "flex";
-        card.style.flexDirection = "column";
-        card.style.gap = "8px";
-        card.style.alignSelf = "start";
-        list.appendChild(card);
-        var preview = document.createElement("div");
-        preview.style.height = "220px";
-        preview.style.border = "1px solid #e5e7eb";
-        preview.style.borderRadius = "6px";
-        preview.style.background = Editor.isDarkMode() ? "#111111" : "#f8fafc";
-        card.appendChild(preview);
-        renderTemplateCardPreview(preview, template);
-        window.setTimeout(function() {
-          renderTemplateCardPreview(preview, template);
-        }, 0);
-        var actions = document.createElement("div");
-        actions.style.display = "flex";
-        actions.style.justifyContent = "flex-start";
-        actions.style.flexWrap = "wrap";
-        card.appendChild(actions);
-        var editBtn = deps.createButton("\u7F16\u8F91\u6A21\u677F", function() {
-          if (state.templatesWindow != null) {
-            state.templatesWindow.destroy();
-          }
-          deps.openEditorWithTemplate(template);
-        });
-        editBtn.style.marginTop = "0";
-        actions.appendChild(editBtn);
-        var createBtn = deps.createButton("\u521B\u5EFA\u5B9E\u4F8B", function() {
-          if (state.templatesWindow != null) {
-            state.templatesWindow.destroy();
-          }
-          deps.openCreateFromLibraryDialog(template.symbolId);
-        });
-        createBtn.style.marginTop = "0";
-        actions.appendChild(createBtn);
-        var deleteBtn = deps.createButton("\u5220\u9664\u6A21\u677F", function() {
-          if (!mxUtils.confirm(
-            "\u786E\u5B9A\u5220\u9664\u56FE\u5143\u6A21\u677F\u201C" + (template.templateName || template.title || template.symbolId) + "\u201D\u5417\uFF1F"
-          )) {
-            return;
-          }
-          deps.library.removeTemplateFromLibrary(template.symbolId, function(nextImages) {
-            if (state.templatesWindow != null) {
-              state.templatesWindow.destroy();
-            }
-            if (nextImages != null && nextImages.length > 0) {
-              openTemplateBrowserDialog(deps);
-            }
-          });
-        });
-        deleteBtn.style.marginTop = "0";
-        actions.appendChild(deleteBtn);
-      });
-      var wnd = new mxWindow("\u5DF2\u5B9A\u4E49\u56FE\u5143", div, 160, 120, 760, 560, true, true);
-      wnd.destroyOnClose = true;
-      wnd.setClosable(true);
-      wnd.setMaximizable(false);
-      wnd.setResizable(true);
-      wnd.setScrollable(true);
-      wnd.setVisible(true);
-      wnd.addListener(mxEvent.DESTROY, function() {
-        state.templatesWindow = null;
-      });
-      state.templatesWindow = wnd;
     });
+    refreshButton.style.marginTop = "0";
+    refreshButton.style.marginRight = "0";
+    formRow.appendChild(refreshButton);
+    var textarea = document.createElement("textarea");
+    textarea.spellcheck = false;
+    textarea.style.width = "100%";
+    textarea.style.flex = "1 1 auto";
+    textarea.style.minHeight = "320px";
+    textarea.style.marginTop = "10px";
+    textarea.style.boxSizing = "border-box";
+    div.appendChild(textarea);
+    var buttons = document.createElement("div");
+    buttons.style.marginTop = "10px";
+    buttons.style.flex = "0 0 auto";
+    div.appendChild(buttons);
+    var copyButton = deps.createButton("\u590D\u5236SVG\u4EE3\u7801", function() {
+      ui.writeTextToClipboard(
+        textarea.value,
+        function(e) {
+          ui.handleError(e);
+        },
+        function() {
+          ui.alert("\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F");
+        }
+      );
+    });
+    copyButton.style.marginTop = "0";
+    buttons.appendChild(copyButton);
+    var downloadButton = deps.createButton("\u4E0B\u8F7DSVG", function() {
+      try {
+        var svgCode = createSvgExportCode(widthInput.value, heightInput.value);
+        textarea.value = svgCode;
+        downloadSvgCode(svgCode);
+        wnd.destroy();
+      } catch (e) {
+        deps.showStatus(e.message || String(e), true);
+      }
+    });
+    downloadButton.style.marginTop = "0";
+    buttons.appendChild(downloadButton);
+    textarea.value = createSvgExportCode(exportBounds.width, exportBounds.height);
+    var wnd = new mxWindow("\u5BFC\u51FASVG", div, 160, 120, 720, 560, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(true);
+    wnd.setScrollable(true);
+    wnd.setVisible(true);
+  }
+
+  // ui/frameDialog.js
+  function buildFrameDialogDeps() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      cloneJson,
+      normalizeFrameConfig: frameDomainApi.normalizeFrameConfig,
+      findDrawingFrame: frameDomainApi.findDrawingFrame,
+      getAllDrawingFrames: frameDomainApi.getAllDrawingFrames,
+      createButton: createPluginButton,
+      getFrameGroupId: frameDomainApi.getFrameGroupId,
+      generateFrameGroupId,
+      getMaxFramePageNumberInGroup: frameDomainApi.getMaxFramePageNumberInGroup,
+      createDrawingFrameCell: frameDomainApi.createDrawingFrameCell,
+      getRightmostFrameInGroup: frameDomainApi.getRightmostFrameInGroup,
+      addTopLevelCell: frameDomainApi.addTopLevelCell,
+      getLeftmostFrame: frameDomainApi.getLeftmostFrame,
+      getBottommostFrame: frameDomainApi.getBottommostFrame,
+      insertFrame: commandApi.insertFrame,
+      showStatus,
+      setCanvasStatus
+    };
+  }
+  function openInsertFrameDialog() {
+    var deps = arguments.length > 0 ? arguments[0] : buildFrameDialogDeps();
+    var ctx = deps.ctx;
+    var graph = ctx.graph;
+    var state = ctx.state;
+    var defaultConfig = deps.normalizeFrameConfig(state.frameConfig || {});
+    var selectedFrame = deps.findDrawingFrame(graph.getSelectionCell());
+    var existingFrames = deps.getAllDrawingFrames();
+    var div = document.createElement("div");
+    div.style.padding = "12px";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.gap = "10px";
+    div.style.boxSizing = "border-box";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    var row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "8px";
+    div.appendChild(row);
+    var widthLabel = document.createElement("div");
+    widthLabel.innerText = "\u5BBD";
+    row.appendChild(widthLabel);
+    var widthInput = document.createElement("input");
+    widthInput.setAttribute("type", "number");
+    widthInput.setAttribute("min", "320");
+    widthInput.style.width = "140px";
+    widthInput.value = String(defaultConfig.width);
+    row.appendChild(widthInput);
+    var heightLabel = document.createElement("div");
+    heightLabel.innerText = "\u9AD8";
+    row.appendChild(heightLabel);
+    var heightInput = document.createElement("input");
+    heightInput.setAttribute("type", "number");
+    heightInput.setAttribute("min", "240");
+    heightInput.style.width = "140px";
+    heightInput.value = String(defaultConfig.height);
+    row.appendChild(heightInput);
+    var hint = document.createElement("div");
+    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+    hint.style.fontSize = "12px";
+    hint.innerText = selectedFrame != null ? "\u5DF2\u9009\u4E2D\u56FE\u6846\u7EC4\uFF1A\u65B0\u56FE\u6846\u4F1A\u7EED\u63A5\u5230\u5F53\u524D\u7EC4\u53F3\u4FA7\uFF1B\u672A\u9009\u4E2D\u56FE\u6846\u65F6\u4F1A\u5728\u73B0\u6709\u7EC4\u4E0B\u65B9\u65B0\u5EFA\u4E00\u7EC4\u3002" : existingFrames.length > 0 ? "\u5F53\u524D\u672A\u9009\u4E2D\u56FE\u6846\uFF1A\u65B0\u56FE\u6846\u4F1A\u5728\u73B0\u6709\u56FE\u6846\u7EC4\u4E0B\u65B9\u65B0\u5EFA\u4E00\u7EC4\u3002\u9009\u4E2D\u67D0\u4E2A\u56FE\u6846\u540E\u518D\u63D2\u5165\uFF0C\u53EF\u7EED\u63A5\u5230\u8BE5\u7EC4\u53F3\u4FA7\u3002" : "\u9996\u6B21\u8BBE\u7F6E\u7684\u5C3A\u5BF8\u4F1A\u4F5C\u4E3A\u540E\u7EED\u81EA\u52A8\u5206\u9875\u56FE\u6846\u7684\u9ED8\u8BA4\u5C3A\u5BF8\u3002";
+    div.appendChild(hint);
+    var buttons = document.createElement("div");
+    div.appendChild(buttons);
+    var wnd = new mxWindow("\u63D2\u5165\u56FE\u6846", div, 180, 140, 420, 170, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(false);
+    wnd.setScrollable(false);
+    var submitButton = deps.createButton("\u63D2\u5165\u56FE\u6846", function() {
+      var config = deps.normalizeFrameConfig({
+        width: widthInput.value,
+        height: heightInput.value
+      });
+      deps.insertFrame(config, selectedFrame, existingFrames);
+      wnd.destroy();
+    });
+    submitButton.style.marginTop = "0";
+    buttons.appendChild(submitButton);
+    wnd.setVisible(true);
   }
 
   // ui/shared/previewSurface.js
@@ -6501,12 +7387,481 @@
     };
   }
 
+  // ui/instanceEditor.js
+  function buildInstanceEditorDeps() {
+    var app = getApp();
+    var ctx = app.ctx;
+    return {
+      ctx,
+      findElectricalRoot,
+      showStatus,
+      extractSpec: symbolDomainApi.extractSpec,
+      normalizePortLayout: specDomainApi.normalizePortLayout,
+      normalizeLabels: specDomainApi.normalizeLabels,
+      trim,
+      getValueByPath: specDomainApi.getValueByPath,
+      createButton: createPluginButton,
+      normalizePortMarker: specDomainApi.normalizePortMarker,
+      normalizePortDirection: specDomainApi.normalizePortDirection,
+      normalizePortIoMode: specDomainApi.normalizePortIoMode,
+      normalizeLabelAlign: specDomainApi.normalizeLabelAlign,
+      toSvgDataUri: specDomainApi.toSvgDataUri,
+      portEdgeSnapThresholdPx: ctx.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
+      normalizePortPoint: specDomainApi.normalizePortPoint,
+      normalizeLabelItem: specDomainApi.normalizeLabelItem,
+      applyInstanceSpec: commandApi.applyInstanceSpec
+    };
+  }
+  function openEditInstanceDialog() {
+    var deps = arguments.length > 0 ? arguments[0] : buildInstanceEditorDeps();
+    var ctx = deps.ctx;
+    var graph = ctx.graph;
+    var state = ctx.state;
+    var root = deps.findElectricalRoot(graph.getSelectionCell());
+    if (root == null) {
+      deps.showStatus("\u8BF7\u5148\u9009\u62E9\u4E00\u4E2A\u7535\u6C14\u56FE\u5143\u5B9E\u4F8B", true);
+      return;
+    }
+    if (state.instanceWindow != null) {
+      state.instanceWindow.destroy();
+      state.instanceWindow = null;
+    }
+    var editorState = {
+      spec: deps.extractSpec(root),
+      selectedItem: null,
+      mode: "select",
+      nextId: 1,
+      preview: null,
+      statusNode: null
+    };
+    editorState.spec.ports = deps.normalizePortLayout(editorState.spec.ports);
+    editorState.spec.labels = deps.normalizeLabels(editorState.spec.labels);
+    function scanNextId() {
+      var maxId = 0;
+      function scan(id) {
+        var match = /:(\d+)$/.exec(deps.trim(id));
+        if (match != null) {
+          maxId = Math.max(maxId, parseInt(match[1], 10) || 0);
+        }
+      }
+      editorState.spec.ports.forEach(function(item) {
+        scan(item.id);
+      });
+      editorState.spec.labels.forEach(function(item) {
+        scan(item.id);
+      });
+      editorState.nextId = maxId + 1;
+    }
+    function nextEditorId(prefix) {
+      var id = prefix + ":" + editorState.nextId;
+      editorState.nextId += 1;
+      return id;
+    }
+    function setEditorSelection(type, id) {
+      editorState.selectedItem = type != null && id != null ? { type, id } : null;
+    }
+    function updateEditorStatus(message, isError) {
+      if (editorState.statusNode != null) {
+        editorState.statusNode.innerText = message || "";
+        editorState.statusNode.style.color = isError ? "#b3261e" : "#2e7d32";
+      }
+    }
+    function getEditorLabelText(label) {
+      var binding = deps.trim(label.binding);
+      if (binding.length > 0) {
+        var value = deps.getValueByPath(editorState.spec.data || {}, binding);
+        if (value != null) {
+          return String(value);
+        }
+        if (deps.trim(label.text).length > 0) {
+          return label.text;
+        }
+        return "{{" + binding + "}}";
+      }
+      return deps.trim(label.text).length > 0 ? label.text : "\u6587\u672C";
+    }
+    function deleteEditorSelection() {
+      if (editorState.selectedItem == null) {
+        return;
+      }
+      if (editorState.selectedItem.type == "port") {
+        editorState.spec.ports = editorState.spec.ports.filter(function(item) {
+          return item.id != editorState.selectedItem.id;
+        });
+      } else if (editorState.selectedItem.type == "label") {
+        editorState.spec.labels = editorState.spec.labels.filter(function(item) {
+          return item.id != editorState.selectedItem.id;
+        });
+      }
+      setEditorSelection(null, null);
+      renderEditorPreview();
+    }
+    function renderEditorPreview() {
+      var preview = editorState.preview;
+      preview.innerHTML = "";
+      var toolbar = document.createElement("div");
+      toolbar.style.display = "flex";
+      toolbar.style.alignItems = "center";
+      toolbar.style.padding = "8px";
+      toolbar.style.gap = "8px";
+      toolbar.style.borderBottom = "1px solid #d0d7de";
+      preview.appendChild(toolbar);
+      function createModeButton(mode, label) {
+        var btn = deps.createButton(label, function() {
+          editorState.mode = mode;
+          renderEditorPreview();
+        });
+        btn.style.marginTop = "0";
+        btn.style.marginRight = "0";
+        btn.style.padding = "4px 10px";
+        if (editorState.mode == mode) {
+          btn.style.borderColor = "#1a73e8";
+          btn.style.color = "#1a73e8";
+        }
+        return btn;
+      }
+      toolbar.appendChild(createModeButton("select", "\u9009\u62E9"));
+      toolbar.appendChild(createModeButton("port", "\u6DFB\u52A0\u8FDE\u63A5\u70B9"));
+      toolbar.appendChild(createModeButton("label", "\u6DFB\u52A0\u6587\u672C\u6846"));
+      var deleteBtn = deps.createButton("\u5220\u9664\u9009\u4E2D", function() {
+        deleteEditorSelection();
+      });
+      deleteBtn.style.marginTop = "0";
+      deleteBtn.style.marginRight = "0";
+      deleteBtn.style.padding = "4px 10px";
+      toolbar.appendChild(deleteBtn);
+      if (editorState.selectedItem != null && editorState.selectedItem.type == "port") {
+        var selectedPort = findPreviewItemById(
+          editorState.spec.ports,
+          editorState.selectedItem.id
+        );
+        if (selectedPort != null) {
+          var portEditor = document.createElement("div");
+          portEditor.style.display = "flex";
+          portEditor.style.alignItems = "center";
+          portEditor.style.gap = "8px";
+          portEditor.style.padding = "8px";
+          portEditor.style.borderBottom = "1px solid #d0d7de";
+          preview.appendChild(portEditor);
+          var portNameInput = document.createElement("input");
+          portNameInput.setAttribute("type", "text");
+          portNameInput.setAttribute("placeholder", "\u7AEF\u5B50\u540D\u79F0\uFF0C\u5982 L1 / N / PE");
+          portNameInput.value = selectedPort.name || "";
+          portNameInput.style.width = "180px";
+          portEditor.appendChild(portNameInput);
+          var markerSelect = document.createElement("select");
+          [
+            { value: "cross", label: "\u53C9\u53F7" },
+            { value: "circle", label: "\u5706\u70B9" },
+            { value: "hidden", label: "\u9690\u85CF" }
+          ].forEach(function(item) {
+            var option = document.createElement("option");
+            option.value = item.value;
+            option.innerText = item.label;
+            markerSelect.appendChild(option);
+          });
+          markerSelect.value = selectedPort.marker || "cross";
+          portEditor.appendChild(markerSelect);
+          var directionSelect = document.createElement("select");
+          [
+            { value: "any", label: "\u4EFB\u610F\u65B9\u5411" },
+            { value: "left", label: "\u5DE6\u4FA7\u63A5\u5165" },
+            { value: "right", label: "\u53F3\u4FA7\u63A5\u5165" },
+            { value: "up", label: "\u4E0A\u4FA7\u63A5\u5165" },
+            { value: "down", label: "\u4E0B\u4FA7\u63A5\u5165" }
+          ].forEach(function(item) {
+            var option = document.createElement("option");
+            option.value = item.value;
+            option.innerText = item.label;
+            directionSelect.appendChild(option);
+          });
+          directionSelect.value = selectedPort.direction || "any";
+          portEditor.appendChild(directionSelect);
+          var ioSelect = document.createElement("select");
+          [
+            { value: "both", label: "\u53EF\u63A5\u5165\u53EF\u63A5\u51FA" },
+            { value: "in", label: "\u4EC5\u63A5\u5165" },
+            { value: "out", label: "\u4EC5\u63A5\u51FA" }
+          ].forEach(function(item) {
+            var option = document.createElement("option");
+            option.value = item.value;
+            option.innerText = item.label;
+            ioSelect.appendChild(option);
+          });
+          ioSelect.value = selectedPort.ioMode || "both";
+          portEditor.appendChild(ioSelect);
+          mxEvent.addListener(portNameInput, "input", function() {
+            selectedPort.name = deps.trim(portNameInput.value);
+          });
+          mxEvent.addListener(markerSelect, "change", function() {
+            selectedPort.marker = deps.normalizePortMarker(markerSelect.value);
+            renderEditorPreview();
+          });
+          mxEvent.addListener(directionSelect, "change", function() {
+            selectedPort.direction = deps.normalizePortDirection(
+              directionSelect.value
+            );
+          });
+          mxEvent.addListener(ioSelect, "change", function() {
+            selectedPort.ioMode = deps.normalizePortIoMode(ioSelect.value);
+          });
+        }
+      } else if (editorState.selectedItem != null && editorState.selectedItem.type == "label") {
+        var selectedLabel = findPreviewItemById(
+          editorState.spec.labels,
+          editorState.selectedItem.id
+        );
+        if (selectedLabel != null) {
+          var labelEditor = document.createElement("div");
+          labelEditor.style.display = "flex";
+          labelEditor.style.alignItems = "center";
+          labelEditor.style.gap = "8px";
+          labelEditor.style.padding = "8px";
+          labelEditor.style.borderBottom = "1px solid #d0d7de";
+          preview.appendChild(labelEditor);
+          var textInput = document.createElement("input");
+          textInput.setAttribute("type", "text");
+          textInput.setAttribute("placeholder", "\u6587\u672C\u5185\u5BB9");
+          textInput.value = selectedLabel.text || "";
+          textInput.style.width = "180px";
+          labelEditor.appendChild(textInput);
+          var bindingInput = document.createElement("input");
+          bindingInput.setAttribute("type", "text");
+          bindingInput.setAttribute("placeholder", "\u53EF\u9009\uFF1A\u7ED1\u5B9A\u5C5E\u6027\u8DEF\u5F84");
+          bindingInput.value = selectedLabel.binding || "";
+          bindingInput.style.width = "180px";
+          labelEditor.appendChild(bindingInput);
+          var alignSelect = document.createElement("select");
+          [
+            { value: "left", label: "\u5DE6\u5BF9\u9F50" },
+            { value: "center", label: "\u5C45\u4E2D" },
+            { value: "right", label: "\u53F3\u5BF9\u9F50" }
+          ].forEach(function(item) {
+            var option = document.createElement("option");
+            option.value = item.value;
+            option.innerText = item.label;
+            alignSelect.appendChild(option);
+          });
+          alignSelect.value = selectedLabel.align || "center";
+          labelEditor.appendChild(alignSelect);
+          mxEvent.addListener(textInput, "change", function() {
+            selectedLabel.text = deps.trim(textInput.value);
+            renderEditorPreview();
+          });
+          mxEvent.addListener(bindingInput, "change", function() {
+            selectedLabel.binding = deps.trim(bindingInput.value);
+            renderEditorPreview();
+          });
+          mxEvent.addListener(alignSelect, "change", function() {
+            selectedLabel.align = deps.normalizeLabelAlign(alignSelect.value);
+            renderEditorPreview();
+          });
+        }
+      }
+      renderInteractivePreviewSurface(
+        null,
+        {
+          container: preview,
+          spec: editorState.spec,
+          height: 300,
+          title: editorState.spec.title || "\u56FE\u5143\u5B9E\u4F8B",
+          svgDataUri: deps.toSvgDataUri(editorState.spec),
+          mode: editorState.mode,
+          selectedItem: editorState.selectedItem,
+          ports: editorState.spec.ports,
+          labels: editorState.spec.labels,
+          getPortById: function(id) {
+            return findPreviewItemById(editorState.spec.ports, id);
+          },
+          getLabelById: function(id) {
+            return findPreviewItemById(editorState.spec.labels, id);
+          },
+          getLabelText: getEditorLabelText,
+          buildPortTitle: function(point, index) {
+            return point.name || point.id || "\u8FDE\u63A5\u70B9" + (index + 1);
+          },
+          onSelect: setEditorSelection,
+          onRequestRender: renderEditorPreview,
+          onDragMove: function(type, id, point) {
+            if (type == "port") {
+              var port = findPreviewItemById(editorState.spec.ports, id);
+              if (port != null) {
+                port.x = point.x;
+                port.y = point.y;
+              }
+            } else {
+              var label = findPreviewItemById(editorState.spec.labels, id);
+              if (label != null) {
+                label.x = point.x;
+                label.y = point.y;
+              }
+            }
+          },
+          onDragEnd: function(type, id, metrics) {
+            if (type != "port") {
+              return;
+            }
+            var finalPort = findPreviewItemById(editorState.spec.ports, id);
+            if (finalPort != null) {
+              var snapped = snapPortPointToEdge(
+                { x: finalPort.x, y: finalPort.y },
+                metrics,
+                deps.portEdgeSnapThresholdPx
+              );
+              finalPort.x = snapped.x;
+              finalPort.y = snapped.y;
+            }
+          },
+          onSurfaceClick: function(point, metrics) {
+            if (editorState.mode == "port") {
+              var portId = nextEditorId("port");
+              point = snapPortPointToEdge(
+                point,
+                metrics,
+                deps.portEdgeSnapThresholdPx
+              );
+              editorState.spec.ports.push(
+                deps.normalizePortPoint(
+                  {
+                    id: portId,
+                    x: point.x,
+                    y: point.y,
+                    name: "",
+                    marker: "cross",
+                    direction: "any",
+                    ioMode: "both"
+                  },
+                  portId,
+                  point.x,
+                  point.y
+                )
+              );
+              setEditorSelection(
+                "port",
+                editorState.spec.ports[editorState.spec.ports.length - 1].id
+              );
+            } else if (editorState.mode == "label") {
+              var labelId = nextEditorId("label");
+              editorState.spec.labels.push(
+                deps.normalizeLabelItem(
+                  {
+                    id: labelId,
+                    text: "\u6587\u672C",
+                    binding: "",
+                    x: point.x,
+                    y: point.y,
+                    width: 120,
+                    height: 26,
+                    align: "center"
+                  },
+                  labelId,
+                  "\u6587\u672C"
+                )
+              );
+              setEditorSelection(
+                "label",
+                editorState.spec.labels[editorState.spec.labels.length - 1].id
+              );
+            } else {
+              setEditorSelection(null, null);
+            }
+            renderEditorPreview();
+          }
+        }
+      );
+    }
+    scanNextId();
+    var container = document.createElement("div");
+    container.style.width = "100%";
+    container.style.height = "100%";
+    container.style.boxSizing = "border-box";
+    container.style.padding = "12px";
+    container.style.overflow = "auto";
+    container.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
+    container.style.display = "flex";
+    container.style.flexDirection = "column";
+    var title = document.createElement("div");
+    title.style.fontWeight = "bold";
+    title.style.marginBottom = "8px";
+    title.innerText = "\u7F16\u8F91\u56FE\u5143\u5B9E\u4F8B";
+    container.appendChild(title);
+    var hint = document.createElement("div");
+    hint.style.marginBottom = "10px";
+    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
+    hint.style.fontSize = "12px";
+    hint.innerText = "\u8FD9\u91CC\u4FEE\u6539\u7684\u662F\u5F53\u524D\u753B\u5E03\u4E0A\u7684\u8FD9\u4E2A\u56FE\u5143\u5B9E\u4F8B\uFF0C\u4E0D\u4F1A\u5F71\u54CD\u56FE\u5143\u7C7B\u578B\u6A21\u677F\u3002";
+    container.appendChild(hint);
+    editorState.preview = document.createElement("div");
+    editorState.preview.style.flex = "1 1 auto";
+    editorState.preview.style.border = "1px solid #d0d7de";
+    editorState.preview.style.borderRadius = "8px";
+    editorState.preview.style.overflow = "hidden";
+    container.appendChild(editorState.preview);
+    var buttons = document.createElement("div");
+    buttons.style.marginTop = "10px";
+    buttons.style.display = "flex";
+    buttons.style.alignItems = "center";
+    buttons.style.gap = "8px";
+    container.appendChild(buttons);
+    var applyButton = deps.createButton("\u5E94\u7528\u5230\u56FE\u5143", function() {
+      try {
+        deps.applyInstanceSpec(root, editorState.spec);
+      } catch (e) {
+        updateEditorStatus(e.message || String(e), true);
+        return;
+      }
+      updateEditorStatus("\u5DF2\u66F4\u65B0\u56FE\u5143\u5B9E\u4F8B", false);
+      if (state.instanceWindow != null) {
+        state.instanceWindow.destroy();
+      }
+    });
+    applyButton.style.marginTop = "0";
+    applyButton.style.marginRight = "0";
+    buttons.appendChild(applyButton);
+    var closeButton = deps.createButton("\u5173\u95ED", function() {
+      if (state.instanceWindow != null) {
+        state.instanceWindow.destroy();
+      }
+    });
+    closeButton.style.marginTop = "0";
+    closeButton.style.marginRight = "0";
+    buttons.appendChild(closeButton);
+    editorState.statusNode = document.createElement("div");
+    editorState.statusNode.style.marginLeft = "8px";
+    editorState.statusNode.style.fontSize = "12px";
+    editorState.statusNode.style.minHeight = "18px";
+    buttons.appendChild(editorState.statusNode);
+    renderEditorPreview();
+    var wnd = new mxWindow(
+      "\u7F16\u8F91\u56FE\u5143\u5B9E\u4F8B",
+      container,
+      220,
+      120,
+      680,
+      520,
+      true,
+      true
+    );
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(true);
+    wnd.setScrollable(true);
+    wnd.addListener(mxEvent.DESTROY, function() {
+      if (state.instanceWindow == wnd) {
+        state.instanceWindow = null;
+      }
+    });
+    wnd.setVisible(true);
+    state.instanceWindow = wnd;
+  }
+
   // services/draftStore.js
   function buildDraftStoreDeps() {
     var app = getApp();
     return {
-      state: app.appContext.getState(),
-      storageKey: app.constants.TEMPLATE_DRAFT_STORAGE_KEY,
+      state: app.ctx.state,
+      storageKey: app.ctx.constants.TEMPLATE_DRAFT_STORAGE_KEY,
       trim,
       cloneJson
     };
@@ -6613,20 +7968,21 @@
   // ui/templateEditor.js
   function getTemplateEditorDeps() {
     var app = getApp();
+    var ctx = app.ctx;
     return {
-      ctx: app.ctx,
+      ctx,
       trim,
       cloneJson,
-      normalizePortLayout: app.domains.spec.normalizePortLayout,
-      normalizeLabels: app.domains.spec.normalizeLabels,
-      toSvgDataUri: app.domains.spec.toSvgDataUri,
+      normalizePortLayout: specDomainApi.normalizePortLayout,
+      normalizeLabels: specDomainApi.normalizeLabels,
+      toSvgDataUri: specDomainApi.toSvgDataUri,
       createButton: createPluginButton,
-      normalizePortMarker: app.domains.spec.normalizePortMarker,
-      normalizePortDirection: app.domains.spec.normalizePortDirection,
-      normalizePortIoMode: app.domains.spec.normalizePortIoMode,
-      portEdgeSnapThresholdPx: app.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
+      normalizePortMarker: specDomainApi.normalizePortMarker,
+      normalizePortDirection: specDomainApi.normalizePortDirection,
+      normalizePortIoMode: specDomainApi.normalizePortIoMode,
+      portEdgeSnapThresholdPx: ctx.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
       nextItemId,
-      normalizeLabelItem: app.domains.spec.normalizeLabelItem,
+      normalizeLabelItem: specDomainApi.normalizeLabelItem,
       validateSvg,
       extractSvgSize,
       scheduleEditorDraftSave: draftStoreApi.scheduleEditorDraftSave,
@@ -6634,18 +7990,18 @@
       loadEditorDraft: draftStoreApi.loadEditorDraft,
       clearEditorDraft: draftStoreApi.clearEditorDraft,
       generateSymbolId,
-      getDefaultSchemaFields: app.domains.spec.getDefaultSchemaFields,
-      buildSchemaFromFields: app.domains.spec.buildSchemaFromFields,
-      hasSchemaPath: app.domains.spec.hasSchemaPath,
-      normalizeSchemaField: app.domains.spec.normalizeSchemaField,
-      normalizeSchemaType: app.domains.spec.normalizeSchemaType,
-      normalizeEnumOptions: app.domains.spec.normalizeEnumOptions,
-      isValidFieldPath: app.domains.spec.isValidFieldPath,
+      getDefaultSchemaFields: specDomainApi.getDefaultSchemaFields,
+      buildSchemaFromFields: specDomainApi.buildSchemaFromFields,
+      hasSchemaPath: specDomainApi.hasSchemaPath,
+      normalizeSchemaField: specDomainApi.normalizeSchemaField,
+      normalizeSchemaType: specDomainApi.normalizeSchemaType,
+      normalizeEnumOptions: specDomainApi.normalizeEnumOptions,
+      isValidFieldPath: specDomainApi.isValidFieldPath,
       toInt,
       showStatus,
-      normalizeSpec: app.domains.spec.normalizeSpec,
-      normalizeVariantLayouts: app.domains.spec.normalizeVariantLayouts,
-      flattenSchemaFields: app.domains.spec.flattenSchemaFields,
+      normalizeSpec: specDomainApi.normalizeSpec,
+      normalizeVariantLayouts: specDomainApi.normalizeVariantLayouts,
+      flattenSchemaFields: specDomainApi.flattenSchemaFields,
       isObject,
       addToLibrary: libraryStoreApi.addToLibrary,
       isTemplateNameTaken: libraryStoreApi.isTemplateNameTaken,
@@ -8091,1420 +9447,302 @@
     updateSelectedItem
   };
 
-  // ui/instanceEditor.js
-  function buildInstanceEditorDeps() {
+  // ui/templateBrowser.js
+  function buildTemplateBrowserDeps() {
     var app = getApp();
     return {
       ctx: app.ctx,
-      findElectricalRoot,
+      library: libraryStoreApi,
+      getLibraryEntrySpec: libraryStoreApi.getLibraryEntrySpec,
       showStatus,
-      extractSpec: app.domains.symbol.extractSpec,
-      normalizePortLayout: app.domains.spec.normalizePortLayout,
-      normalizeLabels: app.domains.spec.normalizeLabels,
+      normalizePortLayout: specDomainApi.normalizePortLayout,
+      normalizeLabels: specDomainApi.normalizeLabels,
       trim,
-      getValueByPath: app.domains.spec.getValueByPath,
       createButton: createPluginButton,
-      normalizePortMarker: app.domains.spec.normalizePortMarker,
-      normalizePortDirection: app.domains.spec.normalizePortDirection,
-      normalizePortIoMode: app.domains.spec.normalizePortIoMode,
-      normalizeLabelAlign: app.domains.spec.normalizeLabelAlign,
-      toSvgDataUri: app.domains.spec.toSvgDataUri,
-      portEdgeSnapThresholdPx: app.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
-      normalizePortPoint: app.domains.spec.normalizePortPoint,
-      normalizeLabelItem: app.domains.spec.normalizeLabelItem,
-      applyInstanceSpec: commandApi.applyInstanceSpec
+      openEditorWithTemplate: function(template) {
+        return templateEditorApi.openEditorWithTemplate(template);
+      },
+      openCreateFromLibraryDialog: function(preferredSymbolId) {
+        return openCreateFromLibraryDialog(preferredSymbolId);
+      }
     };
   }
-  function openEditInstanceDialog() {
-    var deps = arguments.length > 0 ? arguments[0] : buildInstanceEditorDeps();
+  function openTemplateBrowserDialog() {
+    var deps = arguments.length > 0 ? arguments[0] : buildTemplateBrowserDeps();
     var ctx = deps.ctx;
-    var graph = ctx.graph;
     var state = ctx.state;
-    var root = deps.findElectricalRoot(graph.getSelectionCell());
-    if (root == null) {
-      deps.showStatus("\u8BF7\u5148\u9009\u62E9\u4E00\u4E2A\u7535\u6C14\u56FE\u5143\u5B9E\u4F8B", true);
+    if (state.templatesWindow != null) {
+      state.templatesWindow.setVisible(!state.templatesWindow.isVisible());
       return;
     }
-    if (state.instanceWindow != null) {
-      state.instanceWindow.destroy();
-      state.instanceWindow = null;
-    }
-    var editorState = {
-      spec: deps.extractSpec(root),
-      selectedItem: null,
-      mode: "select",
-      nextId: 1,
-      preview: null,
-      statusNode: null
-    };
-    editorState.spec.ports = deps.normalizePortLayout(editorState.spec.ports);
-    editorState.spec.labels = deps.normalizeLabels(editorState.spec.labels);
-    function scanNextId() {
-      var maxId = 0;
-      function scan(id) {
-        var match = /:(\d+)$/.exec(deps.trim(id));
-        if (match != null) {
-          maxId = Math.max(maxId, parseInt(match[1], 10) || 0);
+    deps.library.loadStoredLibrary(function(images) {
+      var templates = [];
+      var i;
+      for (i = 0; i < images.length; i++) {
+        try {
+          templates.push(deps.getLibraryEntrySpec(images[i]));
+        } catch (e) {
         }
       }
-      editorState.spec.ports.forEach(function(item) {
-        scan(item.id);
-      });
-      editorState.spec.labels.forEach(function(item) {
-        scan(item.id);
-      });
-      editorState.nextId = maxId + 1;
-    }
-    function nextEditorId(prefix) {
-      var id = prefix + ":" + editorState.nextId;
-      editorState.nextId += 1;
-      return id;
-    }
-    function setEditorSelection(type, id) {
-      editorState.selectedItem = type != null && id != null ? { type, id } : null;
-    }
-    function updateEditorStatus(message, isError) {
-      if (editorState.statusNode != null) {
-        editorState.statusNode.innerText = message || "";
-        editorState.statusNode.style.color = isError ? "#b3261e" : "#2e7d32";
-      }
-    }
-    function getEditorLabelText(label) {
-      var binding = deps.trim(label.binding);
-      if (binding.length > 0) {
-        var value = deps.getValueByPath(editorState.spec.data || {}, binding);
-        if (value != null) {
-          return String(value);
-        }
-        if (deps.trim(label.text).length > 0) {
-          return label.text;
-        }
-        return "{{" + binding + "}}";
-      }
-      return deps.trim(label.text).length > 0 ? label.text : "\u6587\u672C";
-    }
-    function deleteEditorSelection() {
-      if (editorState.selectedItem == null) {
+      if (templates.length == 0) {
+        deps.showStatus("\u7535\u6C14\u56FE\u5E93\u4E3A\u7A7A\uFF0C\u8BF7\u5148\u4FDD\u5B58\u56FE\u5143\u7C7B\u578B", true);
         return;
       }
-      if (editorState.selectedItem.type == "port") {
-        editorState.spec.ports = editorState.spec.ports.filter(function(item) {
-          return item.id != editorState.selectedItem.id;
+      var div = document.createElement("div");
+      div.style.padding = "12px";
+      div.style.width = "100%";
+      div.style.height = "100%";
+      div.style.boxSizing = "border-box";
+      div.style.display = "flex";
+      div.style.flexDirection = "column";
+      div.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
+      var title = document.createElement("div");
+      title.style.fontWeight = "bold";
+      title.style.marginBottom = "10px";
+      title.innerText = "\u5DF2\u5B9A\u4E49\u56FE\u5143";
+      div.appendChild(title);
+      var list = document.createElement("div");
+      list.style.flex = "1 1 auto";
+      list.style.overflow = "auto";
+      list.style.display = "grid";
+      list.style.gridTemplateColumns = "repeat(auto-fill, minmax(220px, 1fr))";
+      list.style.gap = "12px";
+      list.style.alignContent = "start";
+      div.appendChild(list);
+      function renderTemplateCardPreview(container, template) {
+        container.innerHTML = "";
+        container.style.position = "relative";
+        container.style.overflow = "hidden";
+        var ports = deps.normalizePortLayout(template.ports);
+        var labels = deps.normalizeLabels(template.labels);
+        var bounds = {
+          minX: 0,
+          minY: 0,
+          maxX: template.size.width,
+          maxY: template.size.height
+        };
+        ports.forEach(function(point) {
+          var x = point.x * template.size.width;
+          var y = point.y * template.size.height;
+          bounds.minX = Math.min(bounds.minX, x - 10);
+          bounds.minY = Math.min(bounds.minY, y - 10);
+          bounds.maxX = Math.max(bounds.maxX, x + 10);
+          bounds.maxY = Math.max(bounds.maxY, y + 10);
         });
-      } else if (editorState.selectedItem.type == "label") {
-        editorState.spec.labels = editorState.spec.labels.filter(function(item) {
-          return item.id != editorState.selectedItem.id;
+        labels.forEach(function(label) {
+          var x = label.x * template.size.width;
+          var y = label.y * template.size.height;
+          bounds.minX = Math.min(bounds.minX, x - label.width / 2);
+          bounds.minY = Math.min(bounds.minY, y - label.height / 2);
+          bounds.maxX = Math.max(bounds.maxX, x + label.width / 2);
+          bounds.maxY = Math.max(bounds.maxY, y + label.height / 2);
         });
-      }
-      setEditorSelection(null, null);
-      renderEditorPreview();
-    }
-    function renderEditorPreview() {
-      var preview = editorState.preview;
-      preview.innerHTML = "";
-      var toolbar = document.createElement("div");
-      toolbar.style.display = "flex";
-      toolbar.style.alignItems = "center";
-      toolbar.style.padding = "8px";
-      toolbar.style.gap = "8px";
-      toolbar.style.borderBottom = "1px solid #d0d7de";
-      preview.appendChild(toolbar);
-      function createModeButton(mode, label) {
-        var btn = deps.createButton(label, function() {
-          editorState.mode = mode;
-          renderEditorPreview();
-        });
-        btn.style.marginTop = "0";
-        btn.style.marginRight = "0";
-        btn.style.padding = "4px 10px";
-        if (editorState.mode == mode) {
-          btn.style.borderColor = "#1a73e8";
-          btn.style.color = "#1a73e8";
-        }
-        return btn;
-      }
-      toolbar.appendChild(createModeButton("select", "\u9009\u62E9"));
-      toolbar.appendChild(createModeButton("port", "\u6DFB\u52A0\u8FDE\u63A5\u70B9"));
-      toolbar.appendChild(createModeButton("label", "\u6DFB\u52A0\u6587\u672C\u6846"));
-      var deleteBtn = deps.createButton("\u5220\u9664\u9009\u4E2D", function() {
-        deleteEditorSelection();
-      });
-      deleteBtn.style.marginTop = "0";
-      deleteBtn.style.marginRight = "0";
-      deleteBtn.style.padding = "4px 10px";
-      toolbar.appendChild(deleteBtn);
-      if (editorState.selectedItem != null && editorState.selectedItem.type == "port") {
-        var selectedPort = findPreviewItemById(
-          editorState.spec.ports,
-          editorState.selectedItem.id
+        var contentWidth = Math.max(1, bounds.maxX - bounds.minX);
+        var contentHeight = Math.max(1, bounds.maxY - bounds.minY);
+        var rect = container.getBoundingClientRect();
+        var surfaceWidth = Math.max(200, Math.round(rect.width) || 0);
+        var surfaceHeight = Math.max(160, Math.round(rect.height) || 0);
+        var padding = 18;
+        var scale = Math.min(
+          (surfaceWidth - padding * 2) / contentWidth,
+          (surfaceHeight - padding * 2) / contentHeight
         );
-        if (selectedPort != null) {
-          var portEditor = document.createElement("div");
-          portEditor.style.display = "flex";
-          portEditor.style.alignItems = "center";
-          portEditor.style.gap = "8px";
-          portEditor.style.padding = "8px";
-          portEditor.style.borderBottom = "1px solid #d0d7de";
-          preview.appendChild(portEditor);
-          var portNameInput = document.createElement("input");
-          portNameInput.setAttribute("type", "text");
-          portNameInput.setAttribute("placeholder", "\u7AEF\u5B50\u540D\u79F0\uFF0C\u5982 L1 / N / PE");
-          portNameInput.value = selectedPort.name || "";
-          portNameInput.style.width = "180px";
-          portEditor.appendChild(portNameInput);
-          var markerSelect = document.createElement("select");
-          [
-            { value: "cross", label: "\u53C9\u53F7" },
-            { value: "circle", label: "\u5706\u70B9" },
-            { value: "hidden", label: "\u9690\u85CF" }
-          ].forEach(function(item) {
-            var option = document.createElement("option");
-            option.value = item.value;
-            option.innerText = item.label;
-            markerSelect.appendChild(option);
-          });
-          markerSelect.value = selectedPort.marker || "cross";
-          portEditor.appendChild(markerSelect);
-          var directionSelect = document.createElement("select");
-          [
-            { value: "any", label: "\u4EFB\u610F\u65B9\u5411" },
-            { value: "left", label: "\u5DE6\u4FA7\u63A5\u5165" },
-            { value: "right", label: "\u53F3\u4FA7\u63A5\u5165" },
-            { value: "up", label: "\u4E0A\u4FA7\u63A5\u5165" },
-            { value: "down", label: "\u4E0B\u4FA7\u63A5\u5165" }
-          ].forEach(function(item) {
-            var option = document.createElement("option");
-            option.value = item.value;
-            option.innerText = item.label;
-            directionSelect.appendChild(option);
-          });
-          directionSelect.value = selectedPort.direction || "any";
-          portEditor.appendChild(directionSelect);
-          var ioSelect = document.createElement("select");
-          [
-            { value: "both", label: "\u53EF\u63A5\u5165\u53EF\u63A5\u51FA" },
-            { value: "in", label: "\u4EC5\u63A5\u5165" },
-            { value: "out", label: "\u4EC5\u63A5\u51FA" }
-          ].forEach(function(item) {
-            var option = document.createElement("option");
-            option.value = item.value;
-            option.innerText = item.label;
-            ioSelect.appendChild(option);
-          });
-          ioSelect.value = selectedPort.ioMode || "both";
-          portEditor.appendChild(ioSelect);
-          mxEvent.addListener(portNameInput, "input", function() {
-            selectedPort.name = deps.trim(portNameInput.value);
-          });
-          mxEvent.addListener(markerSelect, "change", function() {
-            selectedPort.marker = deps.normalizePortMarker(markerSelect.value);
-            renderEditorPreview();
-          });
-          mxEvent.addListener(directionSelect, "change", function() {
-            selectedPort.direction = deps.normalizePortDirection(
-              directionSelect.value
-            );
-          });
-          mxEvent.addListener(ioSelect, "change", function() {
-            selectedPort.ioMode = deps.normalizePortIoMode(ioSelect.value);
-          });
-        }
-      } else if (editorState.selectedItem != null && editorState.selectedItem.type == "label") {
-        var selectedLabel = findPreviewItemById(
-          editorState.spec.labels,
-          editorState.selectedItem.id
+        scale = Math.max(0.05, scale);
+        var left = Math.round(
+          (surfaceWidth - contentWidth * scale) / 2 - bounds.minX * scale
         );
-        if (selectedLabel != null) {
-          var labelEditor = document.createElement("div");
-          labelEditor.style.display = "flex";
-          labelEditor.style.alignItems = "center";
-          labelEditor.style.gap = "8px";
-          labelEditor.style.padding = "8px";
-          labelEditor.style.borderBottom = "1px solid #d0d7de";
-          preview.appendChild(labelEditor);
-          var textInput = document.createElement("input");
-          textInput.setAttribute("type", "text");
-          textInput.setAttribute("placeholder", "\u6587\u672C\u5185\u5BB9");
-          textInput.value = selectedLabel.text || "";
-          textInput.style.width = "180px";
-          labelEditor.appendChild(textInput);
-          var bindingInput = document.createElement("input");
-          bindingInput.setAttribute("type", "text");
-          bindingInput.setAttribute("placeholder", "\u53EF\u9009\uFF1A\u7ED1\u5B9A\u5C5E\u6027\u8DEF\u5F84");
-          bindingInput.value = selectedLabel.binding || "";
-          bindingInput.style.width = "180px";
-          labelEditor.appendChild(bindingInput);
-          var alignSelect = document.createElement("select");
-          [
-            { value: "left", label: "\u5DE6\u5BF9\u9F50" },
-            { value: "center", label: "\u5C45\u4E2D" },
-            { value: "right", label: "\u53F3\u5BF9\u9F50" }
-          ].forEach(function(item) {
-            var option = document.createElement("option");
-            option.value = item.value;
-            option.innerText = item.label;
-            alignSelect.appendChild(option);
-          });
-          alignSelect.value = selectedLabel.align || "center";
-          labelEditor.appendChild(alignSelect);
-          mxEvent.addListener(textInput, "change", function() {
-            selectedLabel.text = deps.trim(textInput.value);
-            renderEditorPreview();
-          });
-          mxEvent.addListener(bindingInput, "change", function() {
-            selectedLabel.binding = deps.trim(bindingInput.value);
-            renderEditorPreview();
-          });
-          mxEvent.addListener(alignSelect, "change", function() {
-            selectedLabel.align = deps.normalizeLabelAlign(alignSelect.value);
-            renderEditorPreview();
-          });
-        }
+        var top = Math.round(
+          (surfaceHeight - contentHeight * scale) / 2 - bounds.minY * scale
+        );
+        var img = document.createElement("img");
+        img.setAttribute(
+          "src",
+          "data:image/svg+xml," + encodeURIComponent(template.svg)
+        );
+        img.setAttribute("alt", template.title);
+        img.style.position = "absolute";
+        img.style.left = left + "px";
+        img.style.top = top + "px";
+        img.style.width = Math.round(template.size.width * scale) + "px";
+        img.style.height = Math.round(template.size.height * scale) + "px";
+        img.style.objectFit = "fill";
+        container.appendChild(img);
+        ports.forEach(function(point) {
+          var handle = document.createElement("div");
+          handle.style.position = "absolute";
+          handle.style.left = Math.round(left + point.x * template.size.width * scale - 7) + "px";
+          handle.style.top = Math.round(top + point.y * template.size.height * scale - 7) + "px";
+          handle.style.width = "14px";
+          handle.style.height = "14px";
+          handle.style.lineHeight = "14px";
+          handle.style.textAlign = "center";
+          handle.style.color = "#1a73e8";
+          handle.style.fontSize = point.marker == "circle" ? "12px" : "16px";
+          handle.style.fontWeight = "700";
+          handle.style.userSelect = "none";
+          handle.style.opacity = point.marker == "hidden" ? "0.35" : "1";
+          handle.innerText = point.marker == "circle" ? "\u25CF" : point.marker == "hidden" ? "" : "\xD7";
+          container.appendChild(handle);
+        });
+        labels.forEach(function(label) {
+          var box = document.createElement("div");
+          box.style.position = "absolute";
+          box.style.left = Math.round(
+            left + label.x * template.size.width * scale - label.width * scale / 2
+          ) + "px";
+          box.style.top = Math.round(
+            top + label.y * template.size.height * scale - label.height * scale / 2
+          ) + "px";
+          box.style.width = Math.max(36, Math.round(label.width * scale)) + "px";
+          box.style.minHeight = Math.max(20, Math.round(label.height * scale)) + "px";
+          box.style.padding = "1px 4px";
+          box.style.boxSizing = "border-box";
+          box.style.background = Editor.isDarkMode() ? "#1f1f1f" : "#ffffff";
+          box.style.border = "1px dashed #9aa4b2";
+          box.style.borderRadius = "4px";
+          box.style.fontSize = Math.max(10, Math.round(12 * scale)) + "px";
+          box.style.lineHeight = Math.max(14, Math.round(18 * scale)) + "px";
+          box.style.textAlign = label.align;
+          box.style.userSelect = "none";
+          box.innerText = deps.trim(label.binding).length > 0 ? "{{" + label.binding + "}}" : label.text || "";
+          container.appendChild(box);
+        });
       }
-      renderInteractivePreviewSurface(
-        null,
-        {
-          container: preview,
-          spec: editorState.spec,
-          height: 300,
-          title: editorState.spec.title || "\u56FE\u5143\u5B9E\u4F8B",
-          svgDataUri: deps.toSvgDataUri(editorState.spec),
-          mode: editorState.mode,
-          selectedItem: editorState.selectedItem,
-          ports: editorState.spec.ports,
-          labels: editorState.spec.labels,
-          getPortById: function(id) {
-            return findPreviewItemById(editorState.spec.ports, id);
-          },
-          getLabelById: function(id) {
-            return findPreviewItemById(editorState.spec.labels, id);
-          },
-          getLabelText: getEditorLabelText,
-          buildPortTitle: function(point, index) {
-            return point.name || point.id || "\u8FDE\u63A5\u70B9" + (index + 1);
-          },
-          onSelect: setEditorSelection,
-          onRequestRender: renderEditorPreview,
-          onDragMove: function(type, id, point) {
-            if (type == "port") {
-              var port = findPreviewItemById(editorState.spec.ports, id);
-              if (port != null) {
-                port.x = point.x;
-                port.y = point.y;
-              }
-            } else {
-              var label = findPreviewItemById(editorState.spec.labels, id);
-              if (label != null) {
-                label.x = point.x;
-                label.y = point.y;
-              }
-            }
-          },
-          onDragEnd: function(type, id, metrics) {
-            if (type != "port") {
-              return;
-            }
-            var finalPort = findPreviewItemById(editorState.spec.ports, id);
-            if (finalPort != null) {
-              var snapped = snapPortPointToEdge(
-                { x: finalPort.x, y: finalPort.y },
-                metrics,
-                deps.portEdgeSnapThresholdPx
-              );
-              finalPort.x = snapped.x;
-              finalPort.y = snapped.y;
-            }
-          },
-          onSurfaceClick: function(point, metrics) {
-            if (editorState.mode == "port") {
-              var portId = nextEditorId("port");
-              point = snapPortPointToEdge(
-                point,
-                metrics,
-                deps.portEdgeSnapThresholdPx
-              );
-              editorState.spec.ports.push(
-                deps.normalizePortPoint(
-                  {
-                    id: portId,
-                    x: point.x,
-                    y: point.y,
-                    name: "",
-                    marker: "cross",
-                    direction: "any",
-                    ioMode: "both"
-                  },
-                  portId,
-                  point.x,
-                  point.y
-                )
-              );
-              setEditorSelection(
-                "port",
-                editorState.spec.ports[editorState.spec.ports.length - 1].id
-              );
-            } else if (editorState.mode == "label") {
-              var labelId = nextEditorId("label");
-              editorState.spec.labels.push(
-                deps.normalizeLabelItem(
-                  {
-                    id: labelId,
-                    text: "\u6587\u672C",
-                    binding: "",
-                    x: point.x,
-                    y: point.y,
-                    width: 120,
-                    height: 26,
-                    align: "center"
-                  },
-                  labelId,
-                  "\u6587\u672C"
-                )
-              );
-              setEditorSelection(
-                "label",
-                editorState.spec.labels[editorState.spec.labels.length - 1].id
-              );
-            } else {
-              setEditorSelection(null, null);
-            }
-            renderEditorPreview();
+      templates.forEach(function(template) {
+        var card = document.createElement("div");
+        card.style.border = "1px solid #d0d7de";
+        card.style.borderRadius = "8px";
+        card.style.padding = "10px";
+        card.style.background = Editor.isDarkMode() ? "#161616" : "#ffffff";
+        card.style.display = "flex";
+        card.style.flexDirection = "column";
+        card.style.gap = "8px";
+        card.style.alignSelf = "start";
+        list.appendChild(card);
+        var preview = document.createElement("div");
+        preview.style.height = "220px";
+        preview.style.border = "1px solid #e5e7eb";
+        preview.style.borderRadius = "6px";
+        preview.style.background = Editor.isDarkMode() ? "#111111" : "#f8fafc";
+        card.appendChild(preview);
+        renderTemplateCardPreview(preview, template);
+        window.setTimeout(function() {
+          renderTemplateCardPreview(preview, template);
+        }, 0);
+        var actions = document.createElement("div");
+        actions.style.display = "flex";
+        actions.style.justifyContent = "flex-start";
+        actions.style.flexWrap = "wrap";
+        card.appendChild(actions);
+        var editBtn = deps.createButton("\u7F16\u8F91\u6A21\u677F", function() {
+          if (state.templatesWindow != null) {
+            state.templatesWindow.destroy();
           }
-        }
-      );
-    }
-    scanNextId();
-    var container = document.createElement("div");
-    container.style.width = "100%";
-    container.style.height = "100%";
-    container.style.boxSizing = "border-box";
-    container.style.padding = "12px";
-    container.style.overflow = "auto";
-    container.style.background = Editor.isDarkMode() ? "#1e1e1e" : "#ffffff";
-    container.style.display = "flex";
-    container.style.flexDirection = "column";
-    var title = document.createElement("div");
-    title.style.fontWeight = "bold";
-    title.style.marginBottom = "8px";
-    title.innerText = "\u7F16\u8F91\u56FE\u5143\u5B9E\u4F8B";
-    container.appendChild(title);
-    var hint = document.createElement("div");
-    hint.style.marginBottom = "10px";
-    hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
-    hint.style.fontSize = "12px";
-    hint.innerText = "\u8FD9\u91CC\u4FEE\u6539\u7684\u662F\u5F53\u524D\u753B\u5E03\u4E0A\u7684\u8FD9\u4E2A\u56FE\u5143\u5B9E\u4F8B\uFF0C\u4E0D\u4F1A\u5F71\u54CD\u56FE\u5143\u7C7B\u578B\u6A21\u677F\u3002";
-    container.appendChild(hint);
-    editorState.preview = document.createElement("div");
-    editorState.preview.style.flex = "1 1 auto";
-    editorState.preview.style.border = "1px solid #d0d7de";
-    editorState.preview.style.borderRadius = "8px";
-    editorState.preview.style.overflow = "hidden";
-    container.appendChild(editorState.preview);
-    var buttons = document.createElement("div");
-    buttons.style.marginTop = "10px";
-    buttons.style.display = "flex";
-    buttons.style.alignItems = "center";
-    buttons.style.gap = "8px";
-    container.appendChild(buttons);
-    var applyButton = deps.createButton("\u5E94\u7528\u5230\u56FE\u5143", function() {
-      try {
-        deps.applyInstanceSpec(root, editorState.spec);
-      } catch (e) {
-        updateEditorStatus(e.message || String(e), true);
-        return;
-      }
-      updateEditorStatus("\u5DF2\u66F4\u65B0\u56FE\u5143\u5B9E\u4F8B", false);
-      if (state.instanceWindow != null) {
-        state.instanceWindow.destroy();
-      }
-    });
-    applyButton.style.marginTop = "0";
-    applyButton.style.marginRight = "0";
-    buttons.appendChild(applyButton);
-    var closeButton = deps.createButton("\u5173\u95ED", function() {
-      if (state.instanceWindow != null) {
-        state.instanceWindow.destroy();
-      }
-    });
-    closeButton.style.marginTop = "0";
-    closeButton.style.marginRight = "0";
-    buttons.appendChild(closeButton);
-    editorState.statusNode = document.createElement("div");
-    editorState.statusNode.style.marginLeft = "8px";
-    editorState.statusNode.style.fontSize = "12px";
-    editorState.statusNode.style.minHeight = "18px";
-    buttons.appendChild(editorState.statusNode);
-    renderEditorPreview();
-    var wnd = new mxWindow(
-      "\u7F16\u8F91\u56FE\u5143\u5B9E\u4F8B",
-      container,
-      220,
-      120,
-      680,
-      520,
-      true,
-      true
-    );
-    wnd.destroyOnClose = true;
-    wnd.setClosable(true);
-    wnd.setMaximizable(false);
-    wnd.setResizable(true);
-    wnd.setScrollable(true);
-    wnd.addListener(mxEvent.DESTROY, function() {
-      if (state.instanceWindow == wnd) {
-        state.instanceWindow = null;
-      }
-    });
-    wnd.setVisible(true);
-    state.instanceWindow = wnd;
-  }
-
-  // runtime/portSwapMode.js
-  function getPortSwapDeps() {
-    var app = getApp();
-    var ctx = app.ctx;
-    return {
-      ctx,
-      trim,
-      cloneJson,
-      parsePortLayout: app.domains.spec.parsePortLayout,
-      getAttr,
-      findCabinetSegments: app.domains.cabinet.findCabinetSegments,
-      findPortHostRoot,
-      isCabinetSegment,
-      isMovableConnectedTerminal: app.domains.connectionConstraints.isMovableConnectedTerminal,
-      closeGapDialogWindow: function() {
-        return app.ui != null && typeof app.ui.closeGapDialogWindow === "function" ? app.ui.closeGapDialogWindow() : null;
-      },
-      setSelectedCabinetGap: app.domains.cabinet.setSelectedCabinetGap,
-      showStatus,
-      setCanvasStatus,
-      getPortAbsolutePosition: app.domains.cabinet.getPortAbsolutePosition,
-      getPortMetaByConstraint: app.domains.connectionConstraints.getPortMetaByConstraint,
-      mapPortDirectionToConstraint: app.domains.connectionConstraints.mapPortDirectionToConstraint,
-      clearEdgePoints: app.domains.connectionConstraints.clearEdgePoints,
-      moveConnectedGroupToCabinetPort: app.domains.connectionConstraints.moveConnectedGroupToCabinetPort,
-      setConnectionConstraint: function(edge, root, source, constraint) {
-        app.domains.connectionConstraints.applyNativeConnectionConstraint(
-          edge,
-          root,
-          source,
-          constraint
-        );
-      }
-    };
-  }
-  function getPortSwapRuntime() {
-    var deps = getPortSwapDeps();
-    var ctx = deps.ctx;
-    return {
-      deps,
-      graph: ctx.graph,
-      model: ctx.model,
-      state: ctx.state
-    };
-  }
-  function buildPortSwapContextFromEdge(edge) {
-    var runtime = getPortSwapRuntime();
-    var deps = runtime.deps;
-    var graph = runtime.graph;
-    var model = runtime.model;
-    var sourceTerminal = model.getTerminal(edge, true);
-    var targetTerminal = model.getTerminal(edge, false);
-    var sourceRoot = deps.findPortHostRoot(sourceTerminal);
-    var targetRoot = deps.findPortHostRoot(targetTerminal);
-    var sourceCabinet = deps.isCabinetSegment(sourceRoot);
-    var targetCabinet = deps.isCabinetSegment(targetRoot);
-    if (sourceCabinet == targetCabinet) {
-      return null;
-    }
-    return {
-      edge,
-      source: sourceCabinet,
-      cabinetRoot: sourceCabinet ? sourceRoot : targetRoot,
-      portId: deps.trim(
-        mxUtils.getValue(
-          graph.getCellStyle(edge) || {},
-          sourceCabinet ? "sourcePortId" : "targetPortId",
-          ""
-        )
-      ),
-      otherTerminal: sourceCabinet ? targetTerminal : sourceTerminal
-    };
-  }
-  function getPortSwapContextFromSelection() {
-    var runtime = getPortSwapRuntime();
-    var deps = runtime.deps;
-    var graph = runtime.graph;
-    var model = runtime.model;
-    var cell = graph.getSelectionCell();
-    var i;
-    if (model.isEdge(cell)) {
-      return buildPortSwapContextFromEdge(cell);
-    }
-    if (deps.isMovableConnectedTerminal(cell)) {
-      var match = null;
-      for (i = 0; i < model.getEdgeCount(cell); i++) {
-        var edge = model.getEdgeAt(cell, i);
-        var context = buildPortSwapContextFromEdge(edge);
-        if (context != null && context.otherTerminal == cell && context.portId.length > 0) {
-          if (match != null) {
-            return {
-              error: "\u8BE5\u56FE\u5143\u8FDE\u63A5\u4E86\u591A\u4E2A\u914D\u7535\u67DC\u7AEF\u5B50\uFF0C\u8BF7\u76F4\u63A5\u9009\u4E2D\u7B2C\u4E00\u6761\u8FB9\u518D\u6267\u884C\u66F4\u6362\u6302\u70B9"
-            };
+          deps.openEditorWithTemplate(template);
+        });
+        editBtn.style.marginTop = "0";
+        actions.appendChild(editBtn);
+        var createBtn = deps.createButton("\u521B\u5EFA\u5B9E\u4F8B", function() {
+          if (state.templatesWindow != null) {
+            state.templatesWindow.destroy();
           }
-          match = context;
-        }
-      }
-      return match;
-    }
-    return null;
-  }
-  function clearPortSwapOverlay() {
-    var runtime = getPortSwapRuntime();
-    var state = runtime.state;
-    if (state.portSwapOverlay != null && state.portSwapOverlay.parentNode != null) {
-      state.portSwapOverlay.parentNode.removeChild(state.portSwapOverlay);
-    }
-    state.portSwapOverlay = null;
-  }
-  function exitPortSwapMode(clearStatus) {
-    var runtime = getPortSwapRuntime();
-    var deps = runtime.deps;
-    var state = runtime.state;
-    clearPortSwapOverlay();
-    state.portSwapSession = null;
-    if (clearStatus !== false) {
-      deps.setCanvasStatus("");
-    }
-  }
-  function renderPortSwapOverlay(session) {
-    var runtime = getPortSwapRuntime();
-    var deps = runtime.deps;
-    var graph = runtime.graph;
-    var state = runtime.state;
-    var container = document.createElement("div");
-    var segments = deps.findCabinetSegments(
-      deps.trim(deps.getAttr(session.cabinetRoot, "logicalCabinetId"))
-    );
-    var i;
-    var j;
-    clearPortSwapOverlay();
-    container.style.position = "absolute";
-    container.style.left = "0";
-    container.style.top = "0";
-    container.style.width = "100%";
-    container.style.height = "100%";
-    container.style.pointerEvents = "none";
-    container.style.zIndex = "3";
-    for (i = 0; i < segments.length; i++) {
-      var stateView = graph.view.getState(segments[i]);
-      var ports = deps.parsePortLayout(deps.getAttr(segments[i], "portsJson"));
-      if (stateView == null) {
-        continue;
-      }
-      for (j = 0; j < ports.length; j++) {
-        var marker = document.createElement("div");
-        var portId = deps.trim(ports[j].id);
-        var selected = deps.trim(ports[j].id) == deps.trim(session.portId);
-        var occupied = !selected && isCabinetPortOccupied(segments[i], portId, session.edge);
-        marker.style.position = "absolute";
-        marker.style.width = "14px";
-        marker.style.height = "14px";
-        marker.style.borderRadius = "50%";
-        marker.style.boxSizing = "border-box";
-        marker.style.border = selected ? "2px solid #1a73e8" : occupied ? "2px solid #94a3b8" : "2px solid #16a34a";
-        marker.style.background = selected ? "rgba(26,115,232,0.15)" : occupied ? "rgba(148,163,184,0.18)" : "rgba(22,163,74,0.18)";
-        marker.style.pointerEvents = "auto";
-        marker.style.cursor = selected || occupied ? "default" : "pointer";
-        marker.style.left = Math.round(stateView.x + ports[j].x * stateView.width - 7) + "px";
-        marker.style.top = Math.round(stateView.y + ports[j].y * stateView.height - 7) + "px";
-        marker.title = selected ? "\u5F53\u524D\u6302\u70B9" : occupied ? "\u8BE5\u6302\u70B9\u5DF2\u8FDE\u63A5\u5176\u4ED6\u8BBE\u5907\uFF0C\u4E0D\u80FD\u518D\u9009\u62E9" : "\u70B9\u51FB\u5207\u6362\u5230\u8BE5\u6302\u70B9";
-        if (!selected && !occupied) {
-          mxEvent.addListener(
-            marker,
-            "click",
-            /* @__PURE__ */ (function(root, port) {
-              return function(evt) {
-                mxEvent.consume(evt);
-                commitPortSwap(state.portSwapSession, root, port);
-              };
-            })(segments[i], deps.cloneJson(ports[j]))
-          );
-        }
-        container.appendChild(marker);
-      }
-    }
-    graph.container.appendChild(container);
-    state.portSwapOverlay = container;
-  }
-  function isCabinetPortOccupied(root, portId, ignoreEdge) {
-    var runtime = getPortSwapRuntime();
-    var deps = runtime.deps;
-    var graph = runtime.graph;
-    var model = runtime.model;
-    var targetPortId = deps.trim(portId);
-    var i;
-    if (root == null || targetPortId.length == 0) {
-      return false;
-    }
-    for (i = 0; i < model.getEdgeCount(root); i++) {
-      var edge = model.getEdgeAt(root, i);
-      var sourceRoot = deps.findPortHostRoot(model.getTerminal(edge, true));
-      var targetRoot = deps.findPortHostRoot(model.getTerminal(edge, false));
-      var sourcePortId = sourceRoot == root ? deps.trim(
-        mxUtils.getValue(graph.getCellStyle(edge) || {}, "sourcePortId", "")
-      ) : "";
-      var targetPortIdOnEdge = targetRoot == root ? deps.trim(
-        mxUtils.getValue(graph.getCellStyle(edge) || {}, "targetPortId", "")
-      ) : "";
-      if (edge == ignoreEdge) {
-        continue;
-      }
-      if (sourcePortId == targetPortId || targetPortIdOnEdge == targetPortId) {
-        return true;
-      }
-    }
-    return false;
-  }
-  function installGraphClickBehavior(extraDeps) {
-    var runtime = getPortSwapRuntime();
-    var deps = runtime.deps;
-    var graph = runtime.graph;
-    var state = runtime.state;
-    graph.addListener(mxEvent.CLICK, function(sender, evt) {
-      var cell = evt.getProperty("cell");
-      var mouseEvent = evt.getProperty("event");
-      if (state.portSwapSession != null) {
-        var portRoot = deps.findPortHostRoot(cell);
-        var sessionLogicalId = state.portSwapSession.cabinetRoot != null ? deps.trim(
-          deps.getAttr(state.portSwapSession.cabinetRoot, "logicalCabinetId")
-        ) : "";
-        if (deps.isCabinetSegment(portRoot) && deps.trim(deps.getAttr(portRoot, "logicalCabinetId")) == sessionLogicalId) {
-          var nextPort = getNearestCabinetPortFromClick(portRoot, mouseEvent);
-          if (nextPort != null) {
-            commitPortSwap(state.portSwapSession, portRoot, nextPort);
-            evt.consume();
+          deps.openCreateFromLibraryDialog(template.symbolId);
+        });
+        createBtn.style.marginTop = "0";
+        actions.appendChild(createBtn);
+        var deleteBtn = deps.createButton("\u5220\u9664\u6A21\u677F", function() {
+          if (!mxUtils.confirm(
+            "\u786E\u5B9A\u5220\u9664\u56FE\u5143\u6A21\u677F\u201C" + (template.templateName || template.title || template.symbolId) + "\u201D\u5417\uFF1F"
+          )) {
             return;
           }
-        }
-        if (cell == null) {
-          exitPortSwapMode();
-          evt.consume();
-          return;
-        }
-      }
-      if (extraDeps.isCabinetGap(cell)) {
-        extraDeps.setSelectedCabinetGap(
-          deps.getAttr(cell, "logicalCabinetId"),
-          deps.getAttr(cell, "gapIndex")
-        );
-        extraDeps.openCabinetGapDialog(cell, mouseEvent);
-        evt.consume();
-      } else if (state.selectedCabinetGap != null) {
-        extraDeps.closeGapDialogWindow();
-        extraDeps.setSelectedCabinetGap(null, null);
-      }
+          deps.library.removeTemplateFromLibrary(template.symbolId, function(nextImages) {
+            if (state.templatesWindow != null) {
+              state.templatesWindow.destroy();
+            }
+            if (nextImages != null && nextImages.length > 0) {
+              openTemplateBrowserDialog(deps);
+            }
+          });
+        });
+        deleteBtn.style.marginTop = "0";
+        actions.appendChild(deleteBtn);
+      });
+      var wnd = new mxWindow("\u5DF2\u5B9A\u4E49\u56FE\u5143", div, 160, 120, 760, 560, true, true);
+      wnd.destroyOnClose = true;
+      wnd.setClosable(true);
+      wnd.setMaximizable(false);
+      wnd.setResizable(true);
+      wnd.setScrollable(true);
+      wnd.setVisible(true);
+      wnd.addListener(mxEvent.DESTROY, function() {
+        state.templatesWindow = null;
+      });
+      state.templatesWindow = wnd;
     });
   }
-  function getNearestCabinetPortFromClick(root, mouseEvent) {
-    var runtime = getPortSwapRuntime();
-    var deps = runtime.deps;
-    var graph = runtime.graph;
-    var state = runtime.state;
-    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
-    var graphX = mouseEvent != null && typeof mouseEvent.getGraphX === "function" ? mouseEvent.getGraphX() : null;
-    var graphY = mouseEvent != null && typeof mouseEvent.getGraphY === "function" ? mouseEvent.getGraphY() : null;
-    var threshold = 18 / graph.view.scale;
-    var best = null;
-    var bestDistance = Infinity;
-    var i;
-    if (graphX == null || graphY == null) {
-      return null;
-    }
-    for (i = 0; i < ports.length; i++) {
-      if (deps.trim(ports[i].id) != deps.trim(state.portSwapSession.portId) && isCabinetPortOccupied(root, ports[i].id, state.portSwapSession.edge)) {
-        continue;
-      }
-      var position = deps.getPortAbsolutePosition(root, ports[i]);
-      var dx = position.x - graphX;
-      var dy = position.y - graphY;
-      var distance = Math.sqrt(dx * dx + dy * dy);
-      if (distance <= threshold && distance < bestDistance) {
-        best = ports[i];
-        bestDistance = distance;
-      }
-    }
-    return best;
-  }
-  function applyEdgePortConstraintMetadata(edge, root, source, constraint) {
-    var runtime = getPortSwapRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    var port = deps.getPortMetaByConstraint(root, constraint);
-    var direction = port != null ? deps.mapPortDirectionToConstraint(port.direction) : "";
-    var key = source ? "sourcePortConstraint" : "targetPortConstraint";
-    var portKey = source ? "sourcePortId" : "targetPortId";
-    var style = model.getStyle(edge) || "";
-    style = mxUtils.setStyle(
-      style,
-      key,
-      direction.length > 0 ? direction : null
-    );
-    style = mxUtils.setStyle(
-      style,
-      portKey,
-      port != null && deps.trim(port.id).length > 0 ? deps.trim(port.id) : null
-    );
-    model.setStyle(edge, style);
-  }
-  function commitPortSwap(session, newRoot, newPort) {
-    var runtime = getPortSwapRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    var state = runtime.state;
-    var edge = session.edge;
-    var source = !!session.source;
-    var oldRoot = session.cabinetRoot;
-    var oldPortId = deps.trim(session.portId);
-    var constraint = new mxConnectionConstraint(
-      new mxPoint(newPort.x, newPort.y),
-      false,
-      newPort.id
-    );
-    if (edge == null || newRoot == null || newPort == null || oldPortId.length == 0 || oldRoot == newRoot && oldPortId == deps.trim(newPort.id)) {
-      exitPortSwapMode();
-      return;
-    }
-    if (isCabinetPortOccupied(newRoot, newPort.id, edge)) {
-      deps.showStatus("\u76EE\u6807\u6302\u70B9\u5DF2\u8FDE\u63A5\u5176\u4ED6\u8BBE\u5907\uFF0C\u4E0D\u80FD\u91CD\u590D\u9009\u62E9", true);
-      deps.setCanvasStatus("\u76EE\u6807\u6302\u70B9\u5DF2\u8FDE\u63A5\u5176\u4ED6\u8BBE\u5907\uFF0C\u4E0D\u80FD\u91CD\u590D\u9009\u62E9");
-      return;
-    }
-    state.updatingModel = true;
-    model.beginUpdate();
-    try {
-      model.setTerminal(edge, newRoot, source);
-      deps.setConnectionConstraint(edge, newRoot, source, constraint);
-      applyEdgePortConstraintMetadata(edge, newRoot, source, constraint);
-      deps.clearEdgePoints(edge);
-    } finally {
-      model.endUpdate();
-      state.updatingModel = false;
-    }
-    deps.moveConnectedGroupToCabinetPort(
-      edge,
-      source,
-      oldRoot,
-      oldPortId,
-      newRoot,
-      newPort
-    );
-    exitPortSwapMode();
-    deps.showStatus("\u5DF2\u66F4\u6362\u6302\u70B9", false);
-    deps.setCanvasStatus("\u5DF2\u66F4\u6362\u6302\u70B9");
-  }
-  function enterPortSwapMode() {
-    var runtime = getPortSwapRuntime();
-    var deps = runtime.deps;
-    var state = runtime.state;
-    if (state.portSwapSession != null) {
-      exitPortSwapMode();
-      return;
-    }
-    deps.closeGapDialogWindow();
-    deps.setSelectedCabinetGap(null, null);
-    var context = getPortSwapContextFromSelection();
-    if (context == null) {
-      deps.showStatus("\u8BF7\u5148\u9009\u4E2D\u4E0E\u914D\u7535\u67DC\u76F4\u63A5\u76F8\u8FDE\u7684\u7B2C\u4E00\u6761\u8FB9\u6216\u7B2C\u4E00\u4E2A\u56FE\u5143", true);
-      deps.setCanvasStatus("\u8BF7\u5148\u9009\u4E2D\u4E0E\u914D\u7535\u67DC\u76F4\u63A5\u76F8\u8FDE\u7684\u7B2C\u4E00\u6761\u8FB9\u6216\u7B2C\u4E00\u4E2A\u56FE\u5143");
-      return;
-    }
-    if (context.error != null) {
-      deps.showStatus(context.error, true);
-      deps.setCanvasStatus(context.error);
-      return;
-    }
-    if (context.portId.length == 0 || context.cabinetRoot == null) {
-      deps.showStatus("\u5F53\u524D\u9009\u4E2D\u5BF9\u8C61\u672A\u7ED1\u5B9A\u5230\u6709\u6548\u7684\u914D\u7535\u67DC\u7AEF\u5B50", true);
-      deps.setCanvasStatus("\u5F53\u524D\u9009\u4E2D\u5BF9\u8C61\u672A\u7ED1\u5B9A\u5230\u6709\u6548\u7684\u914D\u7535\u67DC\u7AEF\u5B50");
-      return;
-    }
-    state.portSwapSession = context;
-    renderPortSwapOverlay(context);
-    deps.setCanvasStatus("\u66F4\u6362\u6302\u70B9\u6A21\u5F0F\uFF1A\u70B9\u51FB\u540C\u4E00\u914D\u7535\u67DC\u4E0A\u7684\u76EE\u6807\u8FDE\u63A5\u70B9\uFF0C\u6216\u70B9\u7A7A\u767D\u53D6\u6D88");
-  }
-  var portSwapModeApi = {
-    applyEdgePortConstraintMetadata,
-    clearPortSwapOverlay,
-    commitPortSwap,
-    enterPortSwapMode,
-    exitPortSwapMode,
-    getNearestCabinetPortFromClick,
-    installGraphClickBehavior
-  };
 
-  // runtime/composeMode.js
-  function getComposeDeps() {
-    var app = getApp();
-    return {
-      ctx: app.ctx,
-      trim,
-      clamp,
-      padding: app.constants.INSTANCE_COMPOSE_ZONE_PADDING,
-      minWidth: app.constants.INSTANCE_COMPOSE_ZONE_MIN_WIDTH,
-      minHeight: app.constants.INSTANCE_COMPOSE_ZONE_MIN_HEIGHT,
-      showStatus,
-      setCanvasStatus,
-      closeGapDialogWindow: function() {
-        return app.ui != null && typeof app.ui.closeGapDialogWindow === "function" ? app.ui.closeGapDialogWindow() : null;
-      },
-      exitPortSwapMode: function(clearStatus) {
-        return app.runtime != null && typeof app.runtime.exitPortSwapMode === "function" ? app.runtime.exitPortSwapMode(clearStatus) : null;
-      },
-      isDrawingFrame,
-      isCabinetSegment,
-      isCabinetGap,
-      isPluginInternalCell: app.domains.snapshot.isPluginInternalCell,
-      isElectricalRoot,
-      shouldExportGenericObject: app.domains.snapshot.shouldExportGenericObject,
-      findElectricalRoot
-    };
-  }
-  function getComposeRuntime() {
-    var deps = getComposeDeps();
-    var ctx = deps.ctx;
-    return {
-      deps,
-      graph: ctx.graph,
-      model: ctx.model,
-      state: ctx.state
-    };
-  }
-  function isCellDescendantOf(cell, ancestor) {
-    var model = getComposeRuntime().model;
-    while (cell != null) {
-      if (cell == ancestor) {
-        return true;
-      }
-      cell = model.getParent(cell);
-    }
-    return false;
-  }
-  function getCellViewBounds(cell) {
-    var graph = getComposeRuntime().graph;
-    var stateView = graph.view.getState(cell);
-    if (stateView == null) {
-      return null;
-    }
-    return {
-      x: stateView.x,
-      y: stateView.y,
-      width: stateView.width,
-      height: stateView.height
-    };
-  }
-  function getCellModelBounds(cell) {
-    var runtime = getComposeRuntime();
-    var graph = runtime.graph;
-    var model = runtime.model;
-    var stateView = graph.view.getState(cell);
-    var scale = graph.view.scale || 1;
-    var translate = graph.view.translate || { x: 0, y: 0 };
-    if (stateView != null) {
-      return {
-        x: stateView.x / scale - translate.x,
-        y: stateView.y / scale - translate.y,
-        width: stateView.width / scale,
-        height: stateView.height / scale
-      };
-    }
-    var geometry = model.getGeometry(cell);
-    if (geometry == null) {
-      return null;
-    }
-    return {
-      x: geometry.x,
-      y: geometry.y,
-      width: geometry.width,
-      height: geometry.height
-    };
-  }
-  function getUnionViewBounds(cells) {
-    var bounds = null;
-    var i;
-    for (i = 0; i < cells.length; i++) {
-      var cellBounds = getCellViewBounds(cells[i]);
-      if (cellBounds == null) {
-        continue;
-      }
-      if (bounds == null) {
-        bounds = {
-          x: cellBounds.x,
-          y: cellBounds.y,
-          width: cellBounds.width,
-          height: cellBounds.height
-        };
-      } else {
-        var right = Math.max(
-          bounds.x + bounds.width,
-          cellBounds.x + cellBounds.width
-        );
-        var bottom = Math.max(
-          bounds.y + bounds.height,
-          cellBounds.y + cellBounds.height
-        );
-        bounds.x = Math.min(bounds.x, cellBounds.x);
-        bounds.y = Math.min(bounds.y, cellBounds.y);
-        bounds.width = right - bounds.x;
-        bounds.height = bottom - bounds.y;
-      }
-    }
-    return bounds;
-  }
-  function getInstanceComposeZoneBounds(root, extraCells) {
-    var runtime = getComposeRuntime();
-    var deps = runtime.deps;
-    var graph = runtime.graph;
-    var candidates = [root];
-    var bounds;
-    var container = graph.container;
-    var scrollLeft = container.scrollLeft;
-    var scrollTop = container.scrollTop;
-    var viewportLeft = scrollLeft + 20;
-    var viewportTop = scrollTop + 20;
-    var viewportRight = scrollLeft + container.clientWidth - 20;
-    var viewportBottom = scrollTop + container.clientHeight - 20;
-    var width;
-    var height;
-    var left;
-    var top;
-    var maxLeft;
-    var maxTop;
-    if (Array.isArray(extraCells) && extraCells.length > 0) {
-      candidates = candidates.concat(extraCells);
-    }
-    bounds = getUnionViewBounds(candidates);
-    if (bounds == null) {
-      return null;
-    }
-    width = Math.max(deps.minWidth, bounds.width + deps.padding * 2);
-    height = Math.max(deps.minHeight, bounds.height + deps.padding * 2);
-    left = bounds.x + (bounds.width - width) / 2;
-    top = bounds.y + (bounds.height - height) / 2;
-    maxLeft = Math.max(viewportLeft, viewportRight - width);
-    maxTop = Math.max(viewportTop, viewportBottom - height);
-    return {
-      left: deps.clamp(Math.round(left), viewportLeft, maxLeft),
-      top: deps.clamp(Math.round(top), viewportTop, maxTop),
-      width: Math.round(Math.min(width, viewportRight - viewportLeft)),
-      height: Math.round(Math.min(height, viewportBottom - viewportTop))
-    };
-  }
-  function clearInstanceComposeOverlay() {
-    var state = getComposeRuntime().state;
-    if (state.instanceComposeOverlay != null && state.instanceComposeOverlay.parentNode != null) {
-      state.instanceComposeOverlay.parentNode.removeChild(
-        state.instanceComposeOverlay
-      );
-    }
-    state.instanceComposeOverlay = null;
-  }
-  function completeInstanceComposeMode() {
-    var runtime = getComposeRuntime();
-    var deps = runtime.deps;
-    var graph = runtime.graph;
-    var state = runtime.state;
-    var session = state.instanceComposeSession;
-    var root;
-    var candidates;
-    var matched = [];
-    var attached;
-    var i;
-    if (session == null) {
-      return;
-    }
-    root = session.root;
-    if (root == null || root.parent == null) {
-      exitInstanceComposeMode();
-      return;
-    }
-    candidates = collectComposableCellsInZone(root, session.zoneBounds);
-    for (i = 0; i < candidates.length; i++) {
-      if (!session.initialZoneCellIds[candidates[i].id]) {
-        matched.push(candidates[i]);
-      }
-    }
-    if (matched.length == 0) {
-      deps.showStatus("\u7EFF\u8272\u533A\u57DF\u5185\u6CA1\u6709\u65B0\u7684\u53EF\u7EC4\u5408\u56FE\u5143", true);
-      return;
-    }
-    attached = attachCellsToElectricalRoot(root, matched);
-    if (attached.length == 0) {
-      deps.showStatus("\u6CA1\u6709\u68C0\u6D4B\u5230\u53EF\u7EC4\u5408\u7684\u56FE\u5143", true);
-      return;
-    }
-    exitInstanceComposeMode(false);
-    graph.setSelectionCell(root);
-    deps.showStatus("\u5DF2\u7EC4\u5408\u5230\u5F53\u524D\u56FE\u5143\u5B9E\u4F8B", false);
-    deps.setCanvasStatus("");
-  }
-  function renderInstanceComposeOverlay(session) {
-    var runtime = getComposeRuntime();
-    var deps = runtime.deps;
-    var graph = runtime.graph;
-    var state = runtime.state;
-    var containerRect = graph.container.getBoundingClientRect();
-    var zone = getInstanceComposeZoneBounds(
-      session.root,
-      session.dragging ? session.dragCandidates : null
-    );
-    var scrollLeft = graph.container.scrollLeft || 0;
-    var scrollTop = graph.container.scrollTop || 0;
-    var container = document.createElement("div");
-    var shade = document.createElement("div");
-    var zoneNode = document.createElement("div");
-    var hint = document.createElement("div");
-    var actions = document.createElement("div");
-    var completeButton = document.createElement("button");
-    var cancelButton = document.createElement("button");
-    var controlsTop;
-    clearInstanceComposeOverlay();
-    if (zone == null) {
-      return;
-    }
-    session.zoneBounds = zone;
-    container.style.position = "fixed";
-    container.style.left = Math.round(containerRect.left) + "px";
-    container.style.top = Math.round(containerRect.top) + "px";
-    container.style.width = graph.container.clientWidth + "px";
-    container.style.height = graph.container.clientHeight + "px";
-    container.style.pointerEvents = "none";
-    container.style.zIndex = "3";
-    shade.style.position = "absolute";
-    shade.style.left = "0";
-    shade.style.top = "0";
-    shade.style.width = "100%";
-    shade.style.height = "100%";
-    shade.style.background = "rgba(15, 23, 42, 0.18)";
-    container.appendChild(shade);
-    zoneNode.style.position = "absolute";
-    zoneNode.style.left = zone.left - scrollLeft + "px";
-    zoneNode.style.top = zone.top - scrollTop + "px";
-    zoneNode.style.width = zone.width + "px";
-    zoneNode.style.height = zone.height + "px";
-    zoneNode.style.border = "3px solid #16a34a";
-    zoneNode.style.borderRadius = "10px";
-    zoneNode.style.background = "rgba(22,163,74,0.06)";
-    zoneNode.style.boxSizing = "border-box";
-    zoneNode.style.backdropFilter = "none";
-    container.appendChild(zoneNode);
-    hint.style.position = "absolute";
-    hint.style.left = zone.left - scrollLeft + "px";
-    hint.style.top = Math.max(8, zone.top - 28 - scrollTop) + "px";
-    hint.style.padding = "4px 10px";
-    hint.style.maxWidth = Math.max(120, zone.width - 176) + "px";
-    hint.style.borderRadius = "6px";
-    hint.style.background = "rgba(22,163,74,0.92)";
-    hint.style.color = "#ffffff";
-    hint.style.fontSize = "12px";
-    hint.style.fontWeight = "bold";
-    hint.style.whiteSpace = "nowrap";
-    hint.style.overflow = "hidden";
-    hint.style.textOverflow = "ellipsis";
-    hint.innerText = "\u62D6\u5165\u7EFF\u8272\u533A\u57DF\u5373\u53EF\u7EC4\u5408\u5230\u5F53\u524D\u56FE\u5143\u5B9E\u4F8B";
-    container.appendChild(hint);
-    controlsTop = Math.max(8, zone.top - 30 - scrollTop);
-    actions.style.position = "absolute";
-    actions.style.right = Math.max(
-      8,
-      graph.container.clientWidth - (zone.left + zone.width - scrollLeft)
-    ) + "px";
-    actions.style.top = controlsTop + "px";
-    actions.style.display = "flex";
-    actions.style.gap = "8px";
-    actions.style.pointerEvents = "auto";
-    completeButton.type = "button";
-    completeButton.innerText = "\u5B8C\u6210";
-    completeButton.style.height = "28px";
-    completeButton.style.padding = "0 14px";
-    completeButton.style.border = "1px solid #16a34a";
-    completeButton.style.borderRadius = "6px";
-    completeButton.style.background = "#16a34a";
-    completeButton.style.color = "#ffffff";
-    completeButton.style.cursor = "pointer";
-    mxEvent.addListener(completeButton, "click", function(evt) {
-      mxEvent.consume(evt);
-      completeInstanceComposeMode();
-    });
-    actions.appendChild(completeButton);
-    cancelButton.type = "button";
-    cancelButton.innerText = "\u53D6\u6D88";
-    cancelButton.style.height = "28px";
-    cancelButton.style.padding = "0 14px";
-    cancelButton.style.border = "1px solid #cbd5e1";
-    cancelButton.style.borderRadius = "6px";
-    cancelButton.style.background = "#ffffff";
-    cancelButton.style.color = "#334155";
-    cancelButton.style.cursor = "pointer";
-    mxEvent.addListener(cancelButton, "click", function(evt) {
-      mxEvent.consume(evt);
-      exitInstanceComposeMode();
-    });
-    actions.appendChild(cancelButton);
-    container.appendChild(actions);
-    document.body.appendChild(container);
-    state.instanceComposeOverlay = container;
-  }
-  function refreshInstanceComposeOverlay() {
-    var state = getComposeRuntime().state;
-    if (state.instanceComposeSession == null) {
-      return;
-    }
-    renderInstanceComposeOverlay(state.instanceComposeSession);
-  }
-  function exitInstanceComposeMode(clearStatus) {
-    var runtime = getComposeRuntime();
-    var deps = runtime.deps;
-    var state = runtime.state;
-    clearInstanceComposeOverlay();
-    state.instanceComposeSession = null;
-    if (state.instanceComposeKeyHandler != null) {
-      mxEvent.removeListener(
-        document,
-        "keydown",
-        state.instanceComposeKeyHandler
-      );
-      state.instanceComposeKeyHandler = null;
-    }
-    if (clearStatus !== false) {
-      deps.setCanvasStatus("");
-    }
-  }
-  function findOwningElectricalRoot(cell) {
-    var runtime = getComposeRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    var current = cell;
-    while (current != null) {
-      if (deps.isElectricalRoot(current)) {
-        return current;
-      }
-      current = model.getParent(current);
-    }
-    return null;
-  }
-  function isBlockedComposeTarget(cell) {
-    var runtime = getComposeRuntime();
-    var deps = runtime.deps;
-    var state = runtime.state;
-    var session = state.instanceComposeSession;
-    var ownerRoot;
-    if (session == null || session.root == null || cell == null) {
-      return false;
-    }
-    if (cell == session.root) {
-      return true;
-    }
-    ownerRoot = findOwningElectricalRoot(cell);
-    return ownerRoot == session.root && deps.isPluginInternalCell(cell);
-  }
-  function isLockedComposedChild(cell) {
-    var runtime = getComposeRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    var state = runtime.state;
-    var composeSession = state.instanceComposeSession;
-    if (cell == null || deps.isDrawingFrame(cell) || deps.isCabinetSegment(cell)) {
-      return false;
-    }
-    var ownerRoot = findOwningElectricalRoot(model.getParent(cell));
-    if (ownerRoot == null) {
-      return false;
-    }
-    if (composeSession != null && composeSession.root == ownerRoot) {
-      return false;
-    }
-    return true;
-  }
-  function isComposableCandidateCell(cell, root) {
-    var runtime = getComposeRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    return cell != null && !model.isEdge(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isCabinetGap(cell) && !deps.isPluginInternalCell(cell) && cell != root && !isCellDescendantOf(cell, root) && (deps.isElectricalRoot(cell) || deps.shouldExportGenericObject(cell));
-  }
-  function filterTopLevelSelection(cells) {
-    var result = [];
-    var i;
-    var j;
-    var nested;
-    for (i = 0; i < cells.length; i++) {
-      nested = false;
-      for (j = 0; j < cells.length; j++) {
-        if (i != j && isCellDescendantOf(cells[i], cells[j])) {
-          nested = true;
-          break;
-        }
-      }
-      if (!nested) {
-        result.push(cells[i]);
-      }
-    }
-    return result;
-  }
-  function collectComposableSelection(root) {
-    var graph = getComposeRuntime().graph;
-    var selection = graph.getSelectionCells();
-    var candidates = [];
-    var i;
-    for (i = 0; i < selection.length; i++) {
-      if (isComposableCandidateCell(selection[i], root)) {
-        candidates.push(selection[i]);
-      }
-    }
-    return filterTopLevelSelection(candidates);
-  }
-  function collectComposeDragCandidates(root, eventCell) {
-    var candidates = collectComposableSelection(root);
-    if (candidates.length == 0 && isComposableCandidateCell(eventCell, root)) {
-      candidates = [eventCell];
-    }
-    return filterTopLevelSelection(candidates);
-  }
-  function collectComposableCells(root) {
-    var model = getComposeRuntime().model;
-    var cells = model.cells || {};
-    var result = [];
-    var id;
-    var cell;
-    for (id in cells) {
-      if (!Object.prototype.hasOwnProperty.call(cells, id)) {
-        continue;
-      }
-      cell = cells[id];
-      if (isComposableCandidateCell(cell, root)) {
-        result.push(cell);
-      }
-    }
-    return filterTopLevelSelection(result);
-  }
-  function intersectsComposeZone(cell, zone) {
-    var bounds = getCellViewBounds(cell);
-    if (bounds == null || zone == null) {
-      return false;
-    }
-    return !(bounds.x + bounds.width < zone.left || bounds.x > zone.left + zone.width || bounds.y + bounds.height < zone.top || bounds.y > zone.top + zone.height);
-  }
-  function collectComposableCellsInZone(root, zone) {
-    var candidates = collectComposableCells(root);
-    var result = [];
-    var i;
-    for (i = 0; i < candidates.length; i++) {
-      if (intersectsComposeZone(candidates[i], zone)) {
-        result.push(candidates[i]);
-      }
-    }
-    return result;
-  }
-  function toCellIdMap(cells) {
-    var trim2 = getComposeRuntime().deps.trim;
-    var map = {};
-    var i;
-    for (i = 0; i < cells.length; i++) {
-      if (cells[i] != null && trim2(cells[i].id).length > 0) {
-        map[cells[i].id] = true;
-      }
-    }
-    return map;
-  }
-  function attachCellsToElectricalRoot(root, cells) {
-    var runtime = getComposeRuntime();
-    var model = runtime.model;
-    var state = runtime.state;
-    var rootBounds = getCellModelBounds(root);
-    var attached = [];
-    var i;
-    if (rootBounds == null) {
-      throw new Error("\u5F53\u524D\u76EE\u6807\u56FE\u5143\u65E0\u6CD5\u8BA1\u7B97\u4F4D\u7F6E\uFF0C\u4E0D\u80FD\u6267\u884C\u7EC4\u5408");
-    }
-    state.updatingModel = true;
-    model.beginUpdate();
+  // application/actions.js
+  function execute(fn, resetDeleteFlag) {
     try {
-      for (i = 0; i < cells.length; i++) {
-        var cell = cells[i];
-        var geometry = model.getGeometry(cell);
-        var cellBounds = getCellModelBounds(cell);
-        if (geometry == null || cellBounds == null || model.getParent(cell) == root) {
-          continue;
-        }
-        geometry = geometry.clone();
-        geometry.relative = false;
-        geometry.x = cellBounds.x - rootBounds.x;
-        geometry.y = cellBounds.y - rootBounds.y;
-        model.add(root, cell, model.getChildCount(root));
-        model.setGeometry(cell, geometry);
-        attached.push(cell);
+      return fn();
+    } catch (e) {
+      if (resetDeleteFlag) {
+        getApp().ctx.state.allowProtectedDelete = false;
       }
-    } finally {
-      model.endUpdate();
-      state.updatingModel = false;
+      showStatus(e.message || String(e), true);
+      return null;
     }
-    return attached;
   }
-  function enterInstanceComposeMode() {
-    var runtime = getComposeRuntime();
-    var deps = runtime.deps;
-    var graph = runtime.graph;
-    var state = runtime.state;
-    if (state.instanceComposeSession != null) {
-      exitInstanceComposeMode();
-      return;
+  var actionApi = {
+    electricalBrowse: function() {
+      return execute(openTemplateBrowserDialog);
+    },
+    electricalClearScreen: function() {
+      return execute(commandApi.clearCurrentPage, true);
+    },
+    electricalComposeInstance: function() {
+      return execute(composeModeApi.enterInstanceComposeMode);
+    },
+    electricalCreate: function() {
+      return execute(openCreateFromLibraryDialog);
+    },
+    electricalEditInstance: function() {
+      return execute(openEditInstanceDialog);
+    },
+    electricalExportSvg: function() {
+      return execute(openSvgExportDialog);
+    },
+    electricalInsertCabinet: function() {
+      return execute(cabinetDialogsApi.openInsertCabinetDialog);
+    },
+    electricalInsertFrame: function() {
+      return execute(openInsertFrameDialog);
+    },
+    electricalLoadBackend: function() {
+      return execute(backendDialogsApi.openBackendLoadDialog);
+    },
+    electricalNewBackend: function() {
+      return execute(function() {
+        backendServiceApi.resetBackendBinding();
+        showStatus("\u5DF2\u65B0\u5EFA\u540E\u7AEF\u56FE\u7EB8\u4F1A\u8BDD\uFF0C\u4E0B\u4E00\u6B21\u4FDD\u5B58\u5C06\u521B\u5EFA\u65B0\u56FE\u7EB8", false);
+      });
+    },
+    electricalReassignPort: function() {
+      return execute(portSwapModeApi.enterPortSwapMode);
+    },
+    electricalRefresh: function() {
+      return execute(commandApi.refreshSelection);
+    },
+    electricalRollbackBackend: function() {
+      return execute(backendDialogsApi.openBackendRollbackDialog);
+    },
+    electricalSaveBackend: function() {
+      return execute(backendDialogsApi.openBackendSaveDialog);
+    },
+    electricalSymbols: function() {
+      return execute(templateEditorApi.toggleWindow);
     }
-    var root = deps.findElectricalRoot(graph.getSelectionCell());
-    if (root == null) {
-      deps.showStatus("\u8BF7\u5148\u9009\u4E2D\u4E00\u4E2A\u81EA\u5B9A\u4E49\u56FE\u5143\u5B9E\u4F8B\uFF0C\u518D\u6267\u884C\u7EC4\u5408\u56FE\u5143\u5B9E\u4F8B", true);
-      deps.setCanvasStatus("\u8BF7\u5148\u9009\u4E2D\u4E00\u4E2A\u81EA\u5B9A\u4E49\u56FE\u5143\u5B9E\u4F8B\uFF0C\u518D\u6267\u884C\u7EC4\u5408\u56FE\u5143\u5B9E\u4F8B");
-      return;
-    }
-    state.instanceComposeSession = {
-      root,
-      pointerDown: false,
-      dragging: false,
-      startPoint: null,
-      dragCandidates: [],
-      zoneBounds: null,
-      initialZoneCellIds: {}
-    };
-    deps.closeGapDialogWindow();
-    deps.exitPortSwapMode(false);
-    graph.clearSelection();
-    if (graph.selectionCellsHandler != null && typeof graph.selectionCellsHandler.clear === "function") {
-      graph.selectionCellsHandler.clear();
-    }
-    refreshInstanceComposeOverlay();
-    state.instanceComposeSession.initialZoneCellIds = toCellIdMap(
-      collectComposableCellsInZone(
-        root,
-        state.instanceComposeSession.zoneBounds
-      )
-    );
-    deps.setCanvasStatus(
-      "\u7EC4\u5408\u6A21\u5F0F\uFF1A\u628A\u666E\u901A\u56FE\u5143\u6216\u81EA\u5B9A\u4E49\u56FE\u5143\u62D6\u5165\u7EFF\u8272\u533A\u57DF\uFF0C\u7136\u540E\u70B9\u51FB\u5B8C\u6210"
-    );
-    state.instanceComposeKeyHandler = function(evt) {
-      if (evt.key == "Escape") {
-        exitInstanceComposeMode();
-      }
-    };
-    mxEvent.addListener(document, "keydown", state.instanceComposeKeyHandler);
-  }
-  var composeModeApi = {
-    collectComposeDragCandidates,
-    enterInstanceComposeMode,
-    exitInstanceComposeMode,
-    isBlockedComposeTarget,
-    isLockedComposedChild,
-    refreshInstanceComposeOverlay
   };
 
   // runtime/modelSync.js
@@ -9514,10 +9752,10 @@
       ctx: app.ctx,
       isObject,
       cloneJson,
-      exportDiagramSnapshot: app.domains.snapshot.exportDiagramSnapshot,
-      computeSnapshotChanges: app.domains.snapshot.computeSnapshotChanges,
+      exportDiagramSnapshot: snapshotDomainApi.exportDiagramSnapshot,
+      computeSnapshotChanges: snapshotDomainApi.computeSnapshotChanges,
       isElectricalRoot,
-      refreshRoot: app.domains.symbol.refreshRoot
+      refreshRoot: symbolDomainApi.refreshRoot
     };
   }
   function getModelSyncDeps() {
@@ -9670,15 +9908,12 @@
     "electricalLoadBackend",
     "electricalRollbackBackend"
   ];
-  function installCanvasFeatures(app) {
-    var ctx = app.ctx;
+  function installCanvasFeatures(ctx) {
     var graph = ctx.graph;
     var model = ctx.model;
     var state = ctx.state;
     var ui = ctx.ui;
-    var actions = app.actions;
-    var helpers = app.helpers;
-    var runtimeApi = app.runtime;
+    var actions = actionApi;
     var graphIsCellDeletable = graph.isCellDeletable;
     var graphIsCellMovable = graph.isCellMovable;
     var graphIsCellSelectable = graph.isCellSelectable;
@@ -9687,25 +9922,25 @@
     var menu = ui.menus.get("extras");
     var oldExtrasMenu = menu.funct;
     graph.isCellDeletable = function(cell) {
-      if (helpers.isDrawingFrame(cell)) {
+      if (isDrawingFrame(cell)) {
         return !!state.allowProtectedDelete;
       }
       return graphIsCellDeletable.apply(this, arguments);
     };
     graph.isCellMovable = function(cell) {
-      if (runtimeApi.isBlockedComposeTarget(cell) || runtimeApi.isLockedComposedChild(cell)) {
+      if (composeModeApi.isBlockedComposeTarget(cell) || composeModeApi.isLockedComposedChild(cell)) {
         return false;
       }
       return graphIsCellMovable.apply(this, arguments);
     };
     graph.isCellSelectable = function(cell) {
-      if (runtimeApi.isBlockedComposeTarget(cell)) {
+      if (composeModeApi.isBlockedComposeTarget(cell)) {
         return false;
       }
       return graphIsCellSelectable.apply(this, arguments);
     };
     graph.selectCellForEvent = function(cell) {
-      if (runtimeApi.isBlockedComposeTarget(cell)) {
+      if (composeModeApi.isBlockedComposeTarget(cell)) {
         return;
       }
       return graphSelectCellForEvent.apply(this, arguments);
@@ -9715,7 +9950,7 @@
       var filtered = [];
       var i;
       for (i = 0; i < result.length; i++) {
-        if (!runtimeApi.isBlockedComposeTarget(result[i])) {
+        if (!composeModeApi.isBlockedComposeTarget(result[i])) {
           filtered.push(result[i]);
         }
       }
@@ -9761,16 +9996,16 @@
         session.dragging = false;
         session.startPoint = null;
         session.dragCandidates = [];
-        if (runtimeApi.isBlockedComposeTarget(eventCell)) {
-          runtimeApi.refreshInstanceComposeOverlay();
+        if (composeModeApi.isBlockedComposeTarget(eventCell)) {
+          composeModeApi.refreshInstanceComposeOverlay();
           return;
         }
-        session.dragCandidates = runtimeApi.collectComposeDragCandidates(
+        session.dragCandidates = composeModeApi.collectComposeDragCandidates(
           session.root,
           eventCell
         );
         if (session.dragCandidates.length == 0) {
-          runtimeApi.refreshInstanceComposeOverlay();
+          composeModeApi.refreshInstanceComposeOverlay();
           return;
         }
         session.pointerDown = true;
@@ -9790,7 +10025,7 @@
         dy = Math.abs(me.getGraphY() - session.startPoint.y);
         if (dx > 2 || dy > 2) {
           session.dragging = true;
-          runtimeApi.refreshInstanceComposeOverlay();
+          composeModeApi.refreshInstanceComposeOverlay();
         }
       },
       mouseUp: function() {
@@ -9802,26 +10037,26 @@
         session.dragging = false;
         session.startPoint = null;
         session.dragCandidates = [];
-        runtimeApi.refreshInstanceComposeOverlay();
+        composeModeApi.refreshInstanceComposeOverlay();
       }
     });
     mxEvent.addListener(
       graph.container,
       "scroll",
-      runtimeApi.refreshInstanceComposeOverlay
+      composeModeApi.refreshInstanceComposeOverlay
     );
-    graph.view.addListener(mxEvent.SCALE, runtimeApi.refreshInstanceComposeOverlay);
+    graph.view.addListener(mxEvent.SCALE, composeModeApi.refreshInstanceComposeOverlay);
     graph.view.addListener(
       mxEvent.SCALE_AND_TRANSLATE,
-      runtimeApi.refreshInstanceComposeOverlay
+      composeModeApi.refreshInstanceComposeOverlay
     );
     graph.view.addListener(
       mxEvent.TRANSLATE,
-      runtimeApi.refreshInstanceComposeOverlay
+      composeModeApi.refreshInstanceComposeOverlay
     );
-    state.lastOperationSnapshot = app.domains.snapshot.exportDiagramSnapshot();
-    model.addListener(mxEvent.CHANGE, runtimeApi.recordCanvasOperation);
-    model.addListener(mxEvent.CHANGE, runtimeApi.handleModelChange);
+    state.lastOperationSnapshot = snapshotDomainApi.exportDiagramSnapshot();
+    model.addListener(mxEvent.CHANGE, modelSyncApi.recordCanvasOperation);
+    model.addListener(mxEvent.CHANGE, modelSyncApi.handleModelChange);
   }
 
   // ui/topActionBar.js
@@ -9855,152 +10090,38 @@
   }
 
   // bootstrap/createApp.js
-  function createDomains(app) {
-    var domains = app.domains != null ? app.domains : {};
-    app.domains = domains;
-    domains.spec = specDomainApi;
-    domains.connectionConstraints = connectionConstraintsApi;
-    domains.symbol = createSymbolDomain();
-    domains.frame = createFrameDomain();
-    domains.cabinet = createCabinetDomain();
-    domains.snapshot = createSnapshotDomain();
-    return domains;
-  }
-  function createUi(app) {
-    var spec = app.domains.spec;
-    var library = libraryStoreApi;
-    var uiApi = {};
-    var cabinetDialogs = cabinetDialogsApi;
-    uiApi.closeGapDialogWindow = cabinetDialogs.closeGapDialogWindow;
-    uiApi.openInsertCabinetDialog = cabinetDialogs.openInsertCabinetDialog;
-    uiApi.openCabinetGapDialog = cabinetDialogs.openCabinetGapDialog;
-    uiApi.openInsertFrameDialog = function() {
-      return openInsertFrameDialog();
-    };
-    uiApi.openSvgExportDialog = function() {
-      return openSvgExportDialog();
-    };
-    uiApi.openCreateFromLibraryDialog = function(preferredSymbolId) {
-      return openCreateFromLibraryDialog(
-        {
-          library,
-          trim,
-          getLibraryEntrySpec: library.getLibraryEntrySpec,
-          showStatus,
-          flattenSchemaFields: spec.flattenSchemaFields,
-          normalizeSchemaType: spec.normalizeSchemaType,
-          toFloat,
-          setValueByPath: spec.setValueByPath,
-          buildInstanceSpec: spec.buildInstanceSpec,
-          createButton: createPluginButton,
-          insertIntoGraph: commandApi.insertIntoGraph
-        },
-        preferredSymbolId
-      );
-    };
-    uiApi.openTemplateBrowserDialog = function() {
-      return openTemplateBrowserDialog();
-    };
-    var templateEditorUi = templateEditorApi;
-    uiApi.updateSelectedItem = templateEditorUi.updateSelectedItem;
-    uiApi.updatePreview = templateEditorUi.updatePreview;
-    uiApi.createWindow = templateEditorUi.createWindow;
-    uiApi.toggleWindow = templateEditorUi.toggleWindow;
-    uiApi.openEditorWithTemplate = templateEditorUi.openEditorWithTemplate;
-    uiApi.openEditInstanceDialog = function() {
-      return openEditInstanceDialog();
-    };
-    var backendDialogs = backendDialogsApi;
-    uiApi.openBackendSaveDialog = backendDialogs.openBackendSaveDialog;
-    uiApi.openBackendLoadDialog = backendDialogs.openBackendLoadDialog;
-    uiApi.openBackendRollbackDialog = backendDialogs.openBackendRollbackDialog;
-    return uiApi;
-  }
-  function createRuntime(app) {
-    var runtimeApi = {};
-    var portSwapMode = portSwapModeApi;
-    runtimeApi.applyEdgePortConstraintMetadata = portSwapMode.applyEdgePortConstraintMetadata;
-    runtimeApi.clearPortSwapOverlay = portSwapMode.clearPortSwapOverlay;
-    runtimeApi.commitPortSwap = portSwapMode.commitPortSwap;
-    runtimeApi.enterPortSwapMode = portSwapMode.enterPortSwapMode;
-    runtimeApi.exitPortSwapMode = portSwapMode.exitPortSwapMode;
-    runtimeApi.getNearestCabinetPortFromClick = portSwapMode.getNearestCabinetPortFromClick;
-    var composeMode = composeModeApi;
-    runtimeApi.collectComposeDragCandidates = composeMode.collectComposeDragCandidates;
-    runtimeApi.enterInstanceComposeMode = composeMode.enterInstanceComposeMode;
-    runtimeApi.exitInstanceComposeMode = composeMode.exitInstanceComposeMode;
-    runtimeApi.isBlockedComposeTarget = composeMode.isBlockedComposeTarget;
-    runtimeApi.isLockedComposedChild = composeMode.isLockedComposedChild;
-    runtimeApi.refreshInstanceComposeOverlay = composeMode.refreshInstanceComposeOverlay;
-    var modelSync = modelSyncApi;
-    runtimeApi.recordCanvasOperation = modelSync.recordCanvasOperation;
-    runtimeApi.handleModelChange = modelSync.handleModelChange;
-    function activateRuntime() {
-      portSwapMode.installGraphClickBehavior({
-        isCabinetGap,
-        openCabinetGapDialog: function() {
-          var currentApp2 = getApp();
-          if (currentApp2.ui == null || typeof currentApp2.ui.openCabinetGapDialog !== "function") {
-            return null;
-          }
-          return currentApp2.ui.openCabinetGapDialog.apply(
-            null,
-            Array.prototype.slice.call(arguments)
-          );
-        },
-        closeGapDialogWindow: function() {
-          var currentApp2 = getApp();
-          return currentApp2.ui != null && typeof currentApp2.ui.closeGapDialogWindow === "function" ? currentApp2.ui.closeGapDialogWindow() : null;
-        },
-        setSelectedCabinetGap: app.domains.cabinet.setSelectedCabinetGap
-      });
-      app.domains.connectionConstraints.installGraphBehavior({
-        applyEdgePortConstraintMetadata: runtimeApi.applyEdgePortConstraintMetadata,
-        setCanvasStatus
-      });
-      installCanvasFeatures(app);
-      installTopActionBar({
-        ui: app.ctx.ui,
-        createButton: createPluginButton,
-        items: ACTION_ITEMS
-      });
-      app.ctx.ui.addListener("languageChanged", function() {
-        installTopActionBar({
-          ui: app.ctx.ui,
-          createButton: createPluginButton,
-          items: ACTION_ITEMS
-        });
-      });
-      app.ctx.ui.addListener("currentThemeChanged", function() {
-        installTopActionBar({
-          ui: app.ctx.ui,
-          createButton: createPluginButton,
-          items: ACTION_ITEMS
-        });
-      });
-    }
-    return {
-      activateRuntime,
-      runtimeApi
-    };
+  function installTopBar(ui) {
+    installTopActionBar({
+      ui,
+      createButton: createPluginButton,
+      items: ACTION_ITEMS
+    });
   }
   function createApp(ctx) {
-    var constants = ctx.constants;
-    var app = {
-      ctx,
-      constants,
-      appContext: createAppContext(ctx),
-      graphApi: createGraphApi(ctx),
-      runtime: null,
-      ui: null
+    return {
+      ctx
     };
-    setApp(app);
-    app.domains = createDomains(app);
-    app.ui = createUi(app);
-    var runtime = createRuntime(app);
-    app.runtime = runtime.runtimeApi;
-    app.activateRuntime = runtime.activateRuntime;
-    return app;
+  }
+  function activateAppRuntime(app) {
+    var ui = app.ctx.ui;
+    portSwapModeApi.installGraphClickBehavior({
+      isCabinetGap,
+      openCabinetGapDialog: cabinetDialogsApi.openCabinetGapDialog,
+      closeGapDialogWindow: cabinetDialogsApi.closeGapDialogWindow,
+      setSelectedCabinetGap: cabinetDomainApi.setSelectedCabinetGap
+    });
+    connectionConstraintsApi.installGraphBehavior({
+      applyEdgePortConstraintMetadata: portSwapModeApi.applyEdgePortConstraintMetadata,
+      setCanvasStatus
+    });
+    installCanvasFeatures(app.ctx);
+    installTopBar(ui);
+    ui.addListener("languageChanged", function() {
+      installTopBar(ui);
+    });
+    ui.addListener("currentThemeChanged", function() {
+      installTopBar(ui);
+    });
   }
 
   // bootstrap/installElectricalSymbols.js
@@ -10008,7 +10129,7 @@
     var app = createApp(ctx);
     setApp(app);
     backendServiceApi.loadBackendSession();
-    app.activateRuntime();
+    activateAppRuntime(app);
   }
 
   // index.js

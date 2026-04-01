@@ -4,6 +4,7 @@
  */
 import { getApp } from "../core/appRuntime.js";
 import { resetPendingChangeRecords, showStatus } from "../core/runtimeHelpers.js";
+import { snapshotDomainApi } from "../domain/snapshot.js";
 import {
   loadBackendSession,
   normalizeBackendBaseUrl,
@@ -22,17 +23,18 @@ import {
 
 function buildBackendServiceDeps() {
   var app = getApp();
+  var ctx = app.ctx;
 
   return {
-    state: app.appContext.getState(),
-    constants: app.constants,
-    normalizeSnapshotGenericIds: app.domains.snapshot.normalizeSnapshotGenericIds,
-    exportDiagramSnapshot: app.domains.snapshot.exportDiagramSnapshot,
+    state: ctx.state,
+    constants: ctx.constants,
+    normalizeSnapshotGenericIds: snapshotDomainApi.normalizeSnapshotGenericIds,
+    exportDiagramSnapshot: snapshotDomainApi.exportDiagramSnapshot,
     resetPendingChangeRecords,
-    computeSnapshotChanges: app.domains.snapshot.computeSnapshotChanges,
-    collectChangeObjectIds: app.domains.snapshot.collectChangeObjectIds,
+    computeSnapshotChanges: snapshotDomainApi.computeSnapshotChanges,
+    collectChangeObjectIds: snapshotDomainApi.collectChangeObjectIds,
     showStatus,
-    restoreDiagramSnapshot: app.domains.snapshot.restoreDiagramSnapshot,
+    restoreDiagramSnapshot: snapshotDomainApi.restoreDiagramSnapshot,
   };
 }
 

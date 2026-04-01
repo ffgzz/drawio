@@ -6,6 +6,8 @@
 import { getApp } from "../core/appRuntime.js";
 import { cloneJson, isObject } from "../utils/base.js";
 import { isElectricalRoot } from "../core/runtimeHelpers.js";
+import { snapshotDomainApi } from "../domain/snapshot.js";
+import { symbolDomainApi } from "../domain/symbol.js";
 
 function buildModelSyncDeps() {
   var app = getApp();
@@ -14,10 +16,10 @@ function buildModelSyncDeps() {
     ctx: app.ctx,
     isObject,
     cloneJson,
-    exportDiagramSnapshot: app.domains.snapshot.exportDiagramSnapshot,
-    computeSnapshotChanges: app.domains.snapshot.computeSnapshotChanges,
+    exportDiagramSnapshot: snapshotDomainApi.exportDiagramSnapshot,
+    computeSnapshotChanges: snapshotDomainApi.computeSnapshotChanges,
     isElectricalRoot,
-    refreshRoot: app.domains.symbol.refreshRoot,
+    refreshRoot: symbolDomainApi.refreshRoot,
   };
 }
 

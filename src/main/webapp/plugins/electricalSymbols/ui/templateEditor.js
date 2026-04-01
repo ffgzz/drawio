@@ -17,26 +17,28 @@ import {
 } from "../core/runtimeHelpers.js";
 import { draftStoreApi } from "../services/draftStore.js";
 import { libraryStoreApi } from "../services/libraryStore.js";
+import { specDomainApi } from "../domain/spec.js";
 import { createPluginButton } from "./shared/buttonFactory.js";
 
 // 这是插件里最复杂的 UI 模块，承载模板定义的完整编辑流程。
 function getTemplateEditorDeps() {
   var app = getApp();
+  var ctx = app.ctx;
 
   return {
-    ctx: app.ctx,
+    ctx,
     trim,
     cloneJson,
-    normalizePortLayout: app.domains.spec.normalizePortLayout,
-    normalizeLabels: app.domains.spec.normalizeLabels,
-    toSvgDataUri: app.domains.spec.toSvgDataUri,
+    normalizePortLayout: specDomainApi.normalizePortLayout,
+    normalizeLabels: specDomainApi.normalizeLabels,
+    toSvgDataUri: specDomainApi.toSvgDataUri,
     createButton: createPluginButton,
-    normalizePortMarker: app.domains.spec.normalizePortMarker,
-    normalizePortDirection: app.domains.spec.normalizePortDirection,
-    normalizePortIoMode: app.domains.spec.normalizePortIoMode,
-    portEdgeSnapThresholdPx: app.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
+    normalizePortMarker: specDomainApi.normalizePortMarker,
+    normalizePortDirection: specDomainApi.normalizePortDirection,
+    normalizePortIoMode: specDomainApi.normalizePortIoMode,
+    portEdgeSnapThresholdPx: ctx.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
     nextItemId,
-    normalizeLabelItem: app.domains.spec.normalizeLabelItem,
+    normalizeLabelItem: specDomainApi.normalizeLabelItem,
     validateSvg,
     extractSvgSize,
     scheduleEditorDraftSave: draftStoreApi.scheduleEditorDraftSave,
@@ -44,18 +46,18 @@ function getTemplateEditorDeps() {
     loadEditorDraft: draftStoreApi.loadEditorDraft,
     clearEditorDraft: draftStoreApi.clearEditorDraft,
     generateSymbolId,
-    getDefaultSchemaFields: app.domains.spec.getDefaultSchemaFields,
-    buildSchemaFromFields: app.domains.spec.buildSchemaFromFields,
-    hasSchemaPath: app.domains.spec.hasSchemaPath,
-    normalizeSchemaField: app.domains.spec.normalizeSchemaField,
-    normalizeSchemaType: app.domains.spec.normalizeSchemaType,
-    normalizeEnumOptions: app.domains.spec.normalizeEnumOptions,
-    isValidFieldPath: app.domains.spec.isValidFieldPath,
+    getDefaultSchemaFields: specDomainApi.getDefaultSchemaFields,
+    buildSchemaFromFields: specDomainApi.buildSchemaFromFields,
+    hasSchemaPath: specDomainApi.hasSchemaPath,
+    normalizeSchemaField: specDomainApi.normalizeSchemaField,
+    normalizeSchemaType: specDomainApi.normalizeSchemaType,
+    normalizeEnumOptions: specDomainApi.normalizeEnumOptions,
+    isValidFieldPath: specDomainApi.isValidFieldPath,
     toInt,
     showStatus,
-    normalizeSpec: app.domains.spec.normalizeSpec,
-    normalizeVariantLayouts: app.domains.spec.normalizeVariantLayouts,
-    flattenSchemaFields: app.domains.spec.flattenSchemaFields,
+    normalizeSpec: specDomainApi.normalizeSpec,
+    normalizeVariantLayouts: specDomainApi.normalizeVariantLayouts,
+    flattenSchemaFields: specDomainApi.flattenSchemaFields,
     isObject,
     addToLibrary: libraryStoreApi.addToLibrary,
     isTemplateNameTaken: libraryStoreApi.isTemplateNameTaken,

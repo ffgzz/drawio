@@ -9,7 +9,13 @@ import {
   setCanvasStatus,
   showStatus,
 } from "../core/runtimeHelpers.js";
+import { cabinetDialogsApi } from "../ui/cabinetDialog.js";
+import { cabinetDomainApi } from "../domain/cabinet.js";
+import { composeModeApi } from "../runtime/composeMode.js";
+import { frameDomainApi } from "../domain/frame.js";
+import { portSwapModeApi } from "../runtime/portSwapMode.js";
 import { selectionApi } from "./selection.js";
+import { symbolDomainApi } from "../domain/symbol.js";
 
 function getDefaultParentChildren() {
   var app = getApp();
@@ -29,7 +35,7 @@ function getDefaultParentChildren() {
 function insertCellIntoFrame(cell, frame) {
   var app = getApp();
   var graph = app.ctx.graph;
-  var insertPoint = app.domains.frame.getFrameChildInsertPoint(
+  var insertPoint = frameDomainApi.getFrameChildInsertPoint(
     frame,
     cell.geometry != null ? cell.geometry.width : 0,
     cell.geometry != null ? cell.geometry.height : 0,
@@ -41,8 +47,8 @@ function insertCellIntoFrame(cell, frame) {
 export function insertIntoGraph(spec) {
   var app = getApp();
   var graph = app.ctx.graph;
-  var root = app.domains.symbol.buildSymbolCell(spec);
-  var frame = app.domains.frame.getActiveFrame(false);
+  var root = symbolDomainApi.buildSymbolCell(spec);
+  var frame = frameDomainApi.getActiveFrame(false);
 
   if (frame != null) {
     insertCellIntoFrame(root, frame);
@@ -68,8 +74,8 @@ export function refreshSelection() {
     try {
       state.updatingModel = true;
       model.beginUpdate();
-      app.domains.cabinet.relayoutCabinetByModel(
-        app.domains.cabinet.extractCabinetModel(cabinet),
+      cabinetDomainApi.relayoutCabinetByModel(
+        cabinetDomainApi.extractCabinetModel(cabinet),
       );
       showStatus("配电柜已刷新", false);
       setCanvasStatus("配电柜已刷新");
@@ -93,7 +99,7 @@ export function refreshSelection() {
   model.beginUpdate();
 
   try {
-    app.domains.symbol.refreshRoot(root);
+    symbolDomainApi.refreshRoot(root);
   } catch (e) {
     showStatus(e.message || String(e), true);
     return;
@@ -111,19 +117,19 @@ export function insertFrame(config, selectedFrame, existingFrames) {
   var model = app.ctx.model;
   var state = app.ctx.state;
   var constants = app.ctx.constants;
-  var normalizedConfig = app.domains.frame.normalizeFrameConfig(config || {});
+  var normalizedConfig = frameDomainApi.normalizeFrameConfig(config || {});
   var frames = Array.isArray(existingFrames)
     ? existingFrames
-    : app.domains.frame.getAllDrawingFrames();
+    : frameDomainApi.getAllDrawingFrames();
     var groupId =
       selectedFrame != null
-        ? app.domains.frame.getFrameGroupId(selectedFrame)
+        ? frameDomainApi.getFrameGroupId(selectedFrame)
         : generateFrameGroupId();
     var nextPageNumber =
       selectedFrame != null
-        ? app.domains.frame.getMaxFramePageNumberInGroup(groupId) + 1
+        ? frameDomainApi.getMaxFramePageNumberInGroup(groupId) + 1
         : 1;
-    var frame = app.domains.frame.createDrawingFrameCell(normalizedConfig, nextPageNumber, {
+    var frame = frameDomainApi.createDrawingFrameCell(normalizedConfig, nextPageNumber, {
       groupId,
     });
 
@@ -131,7 +137,7 @@ export function insertFrame(config, selectedFrame, existingFrames) {
 
   if (selectedFrame != null) {
       var anchorFrame =
-        app.domains.frame.getRightmostFrameInGroup(groupId) || selectedFrame;
+        frameDomainApi.getRightmostFrameInGroup(groupId) || selectedFrame;
       var anchorGeometry = model.getGeometry(anchorFrame);
       frame.geometry = frame.geometry.clone();
       frame.geometry.x =
@@ -139,11 +145,11 @@ export function insertFrame(config, selectedFrame, existingFrames) {
         anchorGeometry.width +
         constants.FRAME_HORIZONTAL_GAP;
       frame.geometry.y = anchorGeometry.y;
-      app.domains.frame.addTopLevelCell(frame);
+      frameDomainApi.addTopLevelCell(frame);
       graph.setSelectionCell(frame);
   } else if (frames.length > 0) {
-      var leftmostFrame = app.domains.frame.getLeftmostFrame();
-      var bottommostFrame = app.domains.frame.getBottommostFrame();
+      var leftmostFrame = frameDomainApi.getLeftmostFrame();
+      var bottommostFrame = frameDomainApi.getBottommostFrame();
       var leftGeometry =
         leftmostFrame != null ? model.getGeometry(leftmostFrame) : null;
       var bottomGeometry =
@@ -156,7 +162,7 @@ export function insertFrame(config, selectedFrame, existingFrames) {
             bottomGeometry.height +
             constants.FRAME_VERTICAL_GAP
           : 0;
-      app.domains.frame.addTopLevelCell(frame);
+      frameDomainApi.addTopLevelCell(frame);
       graph.setSelectionCell(frame);
   } else {
       var point = graph.getFreeInsertPoint();
@@ -177,13 +183,13 @@ export function insertCabinet(cabinetModel) {
   model.beginUpdate();
 
   try {
-    app.domains.cabinet.relayoutCabinetByModel(cabinetModel);
+    cabinetDomainApi.relayoutCabinetByModel(cabinetModel);
   } finally {
     model.endUpdate();
     state.updatingModel = false;
   }
 
-  var segments = app.domains.cabinet.findCabinetSegments(cabinetModel.logicalCabinetId);
+  var segments = cabinetDomainApi.findCabinetSegments(cabinetModel.logicalCabinetId);
 
   if (segments.length > 0) {
     graph.setSelectionCell(segments[0]);
@@ -202,7 +208,7 @@ export function updateCabinetGap(cabinetModel) {
   model.beginUpdate();
 
   try {
-    app.domains.cabinet.relayoutCabinetByModel(cabinetModel);
+    cabinetDomainApi.relayoutCabinetByModel(cabinetModel);
   } finally {
     model.endUpdate();
     state.updatingModel = false;
@@ -225,7 +231,7 @@ export function applyInstanceSpec(root, spec) {
   model.beginUpdate();
 
   try {
-    app.domains.symbol.syncRoot(root, spec, spec.ports);
+    symbolDomainApi.syncRoot(root, spec, spec.ports);
     graph.setSelectionCell(root);
   } finally {
     model.endUpdate();
@@ -254,21 +260,12 @@ export function clearCurrentPage() {
     return;
   }
 
-  if (app.ui != null && typeof app.ui.closeGapDialogWindow === "function") {
-    app.ui.closeGapDialogWindow();
-  }
-  app.domains.cabinet.setSelectedCabinetGap(null, null);
+  cabinetDialogsApi.closeGapDialogWindow();
+  cabinetDomainApi.setSelectedCabinetGap(null, null);
 
-  if (app.runtime != null && typeof app.runtime.exitPortSwapMode === "function") {
-    app.runtime.exitPortSwapMode(false);
-  }
+  portSwapModeApi.exitPortSwapMode(false);
 
-  if (
-    app.runtime != null &&
-    typeof app.runtime.exitInstanceComposeMode === "function"
-  ) {
-    app.runtime.exitInstanceComposeMode(false);
-  }
+  composeModeApi.exitInstanceComposeMode(false);
 
   state.allowProtectedDelete = true;
 

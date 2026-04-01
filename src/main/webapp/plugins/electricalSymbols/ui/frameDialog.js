@@ -10,6 +10,7 @@ import {
   setCanvasStatus,
   showStatus,
 } from "../core/runtimeHelpers.js";
+import { frameDomainApi } from "../domain/frame.js";
 import { commandApi } from "../application/commands.js";
 import { createPluginButton } from "./shared/buttonFactory.js";
 
@@ -19,19 +20,18 @@ function buildFrameDialogDeps() {
   return {
     ctx: app.ctx,
     cloneJson,
-    normalizeFrameConfig: app.domains.frame.normalizeFrameConfig,
-    findDrawingFrame: app.domains.frame.findDrawingFrame,
-    getAllDrawingFrames: app.domains.frame.getAllDrawingFrames,
+    normalizeFrameConfig: frameDomainApi.normalizeFrameConfig,
+    findDrawingFrame: frameDomainApi.findDrawingFrame,
+    getAllDrawingFrames: frameDomainApi.getAllDrawingFrames,
     createButton: createPluginButton,
-    getFrameGroupId: app.domains.frame.getFrameGroupId,
+    getFrameGroupId: frameDomainApi.getFrameGroupId,
     generateFrameGroupId,
-    getMaxFramePageNumberInGroup:
-      app.domains.frame.getMaxFramePageNumberInGroup,
-    createDrawingFrameCell: app.domains.frame.createDrawingFrameCell,
-    getRightmostFrameInGroup: app.domains.frame.getRightmostFrameInGroup,
-    addTopLevelCell: app.domains.frame.addTopLevelCell,
-    getLeftmostFrame: app.domains.frame.getLeftmostFrame,
-    getBottommostFrame: app.domains.frame.getBottommostFrame,
+    getMaxFramePageNumberInGroup: frameDomainApi.getMaxFramePageNumberInGroup,
+    createDrawingFrameCell: frameDomainApi.createDrawingFrameCell,
+    getRightmostFrameInGroup: frameDomainApi.getRightmostFrameInGroup,
+    addTopLevelCell: frameDomainApi.addTopLevelCell,
+    getLeftmostFrame: frameDomainApi.getLeftmostFrame,
+    getBottommostFrame: frameDomainApi.getBottommostFrame,
     insertFrame: commandApi.insertFrame,
     showStatus,
     setCanvasStatus,

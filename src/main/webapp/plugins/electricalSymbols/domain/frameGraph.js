@@ -20,13 +20,13 @@ import {
 
 function buildFrameDeps() {
   var app = getApp();
-  var constants = app.constants;
-  var graphApi = app.graphApi;
+  var ctx = app.ctx;
+  var constants = ctx.constants;
 
   return {
-    graph: graphApi.graph,
-    model: graphApi.model,
-    state: graphApi.state,
+    graph: ctx.graph,
+    model: ctx.model,
+    state: ctx.state,
     frameTag: constants.FRAME_TAG,
     frameType: constants.FRAME_TYPE,
     frameLabelTag: constants.FRAME_LABEL_TAG,

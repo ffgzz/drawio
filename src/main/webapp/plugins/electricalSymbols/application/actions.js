@@ -4,15 +4,25 @@
  */
 import { getApp } from "../core/appRuntime.js";
 import { showStatus } from "../core/runtimeHelpers.js";
+import { commandApi } from "./commands.js";
 import { backendServiceApi } from "../services/backend.js";
+import { backendDialogsApi } from "../ui/backendDialogs.js";
+import { cabinetDialogsApi } from "../ui/cabinetDialog.js";
+import { openCreateFromLibraryDialog } from "../ui/createInstanceDialog.js";
+import { openSvgExportDialog } from "../ui/exportSvgDialog.js";
+import { openInsertFrameDialog } from "../ui/frameDialog.js";
+import { openEditInstanceDialog } from "../ui/instanceEditor.js";
+import { templateEditorApi } from "../ui/templateEditor.js";
+import { openTemplateBrowserDialog } from "../ui/templateBrowser.js";
+import { composeModeApi } from "../runtime/composeMode.js";
+import { portSwapModeApi } from "../runtime/portSwapMode.js";
 
 function execute(fn, resetDeleteFlag) {
-  var app = getApp();
   try {
     return fn();
   } catch (e) {
     if (resetDeleteFlag) {
-      app.ctx.state.allowProtectedDelete = false;
+      getApp().ctx.state.allowProtectedDelete = false;
     }
 
     showStatus(e.message || String(e), true);
@@ -22,49 +32,31 @@ function execute(fn, resetDeleteFlag) {
 
 export var actionApi = {
   electricalBrowse: function () {
-    return execute(function () {
-      return getApp().ui.openTemplateBrowserDialog();
-    });
+    return execute(openTemplateBrowserDialog);
   },
   electricalClearScreen: function () {
-    return execute(function () {
-      return getApp().commands.clearCurrentPage();
-    }, true);
+    return execute(commandApi.clearCurrentPage, true);
   },
   electricalComposeInstance: function () {
-    return execute(function () {
-      return getApp().runtime.enterInstanceComposeMode();
-    });
+    return execute(composeModeApi.enterInstanceComposeMode);
   },
   electricalCreate: function () {
-    return execute(function () {
-      return getApp().ui.openCreateFromLibraryDialog();
-    });
+    return execute(openCreateFromLibraryDialog);
   },
   electricalEditInstance: function () {
-    return execute(function () {
-      return getApp().ui.openEditInstanceDialog();
-    });
+    return execute(openEditInstanceDialog);
   },
   electricalExportSvg: function () {
-    return execute(function () {
-      return getApp().ui.openSvgExportDialog();
-    });
+    return execute(openSvgExportDialog);
   },
   electricalInsertCabinet: function () {
-    return execute(function () {
-      return getApp().ui.openInsertCabinetDialog();
-    });
+    return execute(cabinetDialogsApi.openInsertCabinetDialog);
   },
   electricalInsertFrame: function () {
-    return execute(function () {
-      return getApp().ui.openInsertFrameDialog();
-    });
+    return execute(openInsertFrameDialog);
   },
   electricalLoadBackend: function () {
-    return execute(function () {
-      return getApp().ui.openBackendLoadDialog();
-    });
+    return execute(backendDialogsApi.openBackendLoadDialog);
   },
   electricalNewBackend: function () {
     return execute(function () {
@@ -73,28 +65,18 @@ export var actionApi = {
     });
   },
   electricalReassignPort: function () {
-    return execute(function () {
-      return getApp().runtime.enterPortSwapMode();
-    });
+    return execute(portSwapModeApi.enterPortSwapMode);
   },
   electricalRefresh: function () {
-    return execute(function () {
-      return getApp().commands.refreshSelection();
-    });
+    return execute(commandApi.refreshSelection);
   },
   electricalRollbackBackend: function () {
-    return execute(function () {
-      return getApp().ui.openBackendRollbackDialog();
-    });
+    return execute(backendDialogsApi.openBackendRollbackDialog);
   },
   electricalSaveBackend: function () {
-    return execute(function () {
-      return getApp().ui.openBackendSaveDialog();
-    });
+    return execute(backendDialogsApi.openBackendSaveDialog);
   },
   electricalSymbols: function () {
-    return execute(function () {
-      return getApp().ui.toggleWindow();
-    });
+    return execute(templateEditorApi.toggleWindow);
   },
 };

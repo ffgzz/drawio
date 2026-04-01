@@ -4,6 +4,8 @@
  */
 import { getApp } from "../core/appRuntime.js";
 import { findElectricalRoot, isCabinetGap } from "../core/runtimeHelpers.js";
+import { cabinetDomainApi } from "../domain/cabinet.js";
+import { frameDomainApi } from "../domain/frame.js";
 
 export function getSelectedCell() {
   return getApp().ctx.graph.getSelectionCell();
@@ -14,13 +16,11 @@ export function getSelectedRoot() {
 }
 
 export function getSelectedFrame() {
-  var app = getApp();
-  return app.domains.frame.findDrawingFrame(getSelectedCell());
+  return frameDomainApi.findDrawingFrame(getSelectedCell());
 }
 
 export function getSelectedCabinetSegment() {
-  var app = getApp();
-  return app.domains.cabinet.findCabinetSegment(getSelectedCell());
+  return cabinetDomainApi.findCabinetSegment(getSelectedCell());
 }
 
 export function getSelectedCabinetGap() {

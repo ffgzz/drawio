@@ -3,17 +3,18 @@
  * 负责 root/body/label 的样式和值元数据拼装，不直接操作 graph/model。
  */
 import { getApp } from "../core/appRuntime.js";
+import { specDomainApi } from "./spec.js";
 import { trim } from "../utils/base.js";
 
 function buildSymbolCoreDeps() {
   var app = getApp();
 
   return {
-    toStyleImageUri: app.domains.spec.toStyleImageUri,
-    ROOT_TYPE: app.constants.ROOT_TYPE,
+    toStyleImageUri: specDomainApi.toStyleImageUri,
+    ROOT_TYPE: app.ctx.constants.ROOT_TYPE,
     trim,
-    serializePortLayout: app.domains.spec.serializePortLayout,
-    normalizeLabels: app.domains.spec.normalizeLabels,
+    serializePortLayout: specDomainApi.serializePortLayout,
+    normalizeLabels: specDomainApi.normalizeLabels,
   };
 }
 

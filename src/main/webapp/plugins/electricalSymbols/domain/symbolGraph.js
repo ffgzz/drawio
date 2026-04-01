@@ -3,6 +3,7 @@
  * 负责 root/body/label 三层结构在 mxGraph 中的创建、提取和同步刷新。
  */
 import { symbolCoreApi } from "./symbolCore.js";
+import { specDomainApi } from "./spec.js";
 import { getApp } from "../core/appRuntime.js";
 import { isObject, trim } from "../utils/base.js";
 import { cloneValue, createMetaCell, createNode, getAttr } from "../utils/xml.js";
@@ -10,31 +11,31 @@ import { normalizeMode } from "../core/runtimeHelpers.js";
 
 function buildSymbolGraphDeps() {
   var app = getApp();
-  var graphApi = app.graphApi;
+  var ctx = app.ctx;
 
   return {
-    model: graphApi.model,
-    ROOT_TAG: app.constants.ROOT_TAG,
-    ROOT_TYPE: app.constants.ROOT_TYPE,
-    BODY_TAG: app.constants.BODY_TAG,
-    BODY_KIND: app.constants.BODY_KIND,
-    LABEL_TAG: app.constants.LABEL_TAG,
-    LABEL_KIND: app.constants.LABEL_KIND,
+    model: ctx.model,
+    ROOT_TAG: ctx.constants.ROOT_TAG,
+    ROOT_TYPE: ctx.constants.ROOT_TYPE,
+    BODY_TAG: ctx.constants.BODY_TAG,
+    BODY_KIND: ctx.constants.BODY_KIND,
+    LABEL_TAG: ctx.constants.LABEL_TAG,
+    LABEL_KIND: ctx.constants.LABEL_KIND,
     trim,
     isObject,
     normalizeMode,
-    normalizeSpec: app.domains.spec.normalizeSpec,
-    normalizePortLayout: app.domains.spec.normalizePortLayout,
-    normalizeLabels: app.domains.spec.normalizeLabels,
-    parsePortLayout: app.domains.spec.parsePortLayout,
+    normalizeSpec: specDomainApi.normalizeSpec,
+    normalizePortLayout: specDomainApi.normalizePortLayout,
+    normalizeLabels: specDomainApi.normalizeLabels,
+    parsePortLayout: specDomainApi.parsePortLayout,
     getAttr,
     createNode,
     createMetaCell,
     cloneValue,
-    toStyleImageUri: app.domains.spec.toStyleImageUri,
-    serializePortLayout: app.domains.spec.serializePortLayout,
-    buildPortLayout: app.domains.spec.buildPortLayout,
-    buildResolvedLabels: app.domains.spec.buildResolvedLabels,
+    toStyleImageUri: specDomainApi.toStyleImageUri,
+    serializePortLayout: specDomainApi.serializePortLayout,
+    buildPortLayout: specDomainApi.buildPortLayout,
+    buildResolvedLabels: specDomainApi.buildResolvedLabels,
   };
 }
 

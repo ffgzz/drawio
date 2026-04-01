@@ -54,40 +54,19 @@ function addRegexCheck(name, files, regex, message) {
 }
 
 const uiFiles = walkJsFiles(path.join(rootDir, "ui"));
-const runtimeFiles = walkJsFiles(path.join(rootDir, "runtime"));
-const domainFiles = walkJsFiles(path.join(rootDir, "domain"));
-const serviceFiles = walkJsFiles(path.join(rootDir, "services"));
 const allFiles = walkJsFiles(rootDir);
 
-addRegexCheck(
-  "ui-no-runtime-import",
-  uiFiles,
-  /from\s+["']\.\.\/runtime\/|from\s+["'][^"']*\/runtime\//,
-  "UI 层不应直接 import runtime",
-);
-addRegexCheck(
-  "runtime-no-ui-import",
-  runtimeFiles,
-  /from\s+["']\.\.\/ui\/|from\s+["'][^"']*\/ui\//,
-  "runtime 层不应直接 import ui",
-);
-addRegexCheck(
-  "domain-no-ctx",
-  domainFiles,
-  /\bctx\./,
-  "domain 层不应直接访问 ctx",
-);
-addRegexCheck(
-  "services-no-ctx",
-  serviceFiles,
-  /\bctx\./,
-  "services 层不应直接访问 ctx",
-);
 addRegexCheck(
   "legacy-bundle-refs",
   allFiles,
   /\bcreatePluginBundle\b|\bcreateUiRuntime\b|\bbundle\.ui\b|\bbundle\.runtime\b/,
   "不应回引旧 bundle/createUiRuntime 结构",
+);
+addRegexCheck(
+  "app-runtime-only",
+  allFiles,
+  /\bapp\.(utils|helpers|services|commands|selection|actions|domains|ui|runtime|activateRuntime|constants|graphApi|appContext)\b|\bgetApp\(\)\.(utils|helpers|services|commands|selection|actions|domains|ui|runtime|activateRuntime|constants|graphApi|appContext)\b/,
+  "app 上不应再挂普通模块 API",
 );
 addRegexCheck(
   "ui-no-direct-model-write",

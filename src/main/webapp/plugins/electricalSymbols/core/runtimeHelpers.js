@@ -14,11 +14,11 @@ import {
 import { getAttr } from "../utils/xml.js";
 
 function getGraphApi() {
-  return getApp().graphApi;
+  return getApp().ctx;
 }
 
 function getConstants() {
-  return getApp().constants;
+  return getApp().ctx.constants;
 }
 
 function getState() {
@@ -73,16 +73,10 @@ export function isPortHostRoot(cell) {
 
 // 遇到通用图元时停止向上查找，避免误把普通图形当成插件端口宿主。
 export function findPortHostRoot(cell) {
-  var app = getApp();
   var model = getGraphApi().model;
 
   while (cell != null) {
-    if (
-      app.domains != null &&
-      app.domains.snapshot != null &&
-      typeof app.domains.snapshot.shouldExportGenericObject === "function" &&
-      app.domains.snapshot.shouldExportGenericObject(cell)
-    ) {
+    if (shouldExportGenericObject(cell)) {
       return null;
     }
 
@@ -94,6 +88,33 @@ export function findPortHostRoot(cell) {
   }
 
   return null;
+}
+
+function isPluginInternalCell(cell) {
+  var constants = getConstants();
+  var kind = trim(getAttr(cell, "esKind"));
+
+  return (
+    isCabinetGap(cell) ||
+    kind == constants.BODY_KIND ||
+    kind == constants.LABEL_KIND ||
+    kind == constants.FRAME_LABEL_KIND ||
+    kind == constants.CABINET_BODY_KIND ||
+    kind == constants.CABINET_GAP_KIND
+  );
+}
+
+function shouldExportGenericObject(cell) {
+  var model = getGraphApi().model;
+
+  return (
+    cell != null &&
+    model.isVertex(cell) &&
+    !isDrawingFrame(cell) &&
+    !isCabinetSegment(cell) &&
+    !isElectricalRoot(cell) &&
+    !isPluginInternalCell(cell)
+  );
 }
 
 // mode 只允许 primary / standby 两种显式取值。

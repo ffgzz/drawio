@@ -3,7 +3,39 @@
  * 用户在这里选择模板、填写 schema 字段，并生成实例规格插入画布。
  */
 // 这里的表单结构完全来自模板 schema，而不是写死字段。
-export function openCreateFromLibraryDialog(deps, preferredSymbolId) {
+import { getApp } from "../core/appRuntime.js";
+import { trim } from "../utils/base.js";
+import { showStatus } from "../core/runtimeHelpers.js";
+import { commandApi } from "../application/commands.js";
+import { specDomainApi } from "../domain/spec.js";
+import { libraryStoreApi } from "../services/libraryStore.js";
+import { createPluginButton } from "./shared/buttonFactory.js";
+
+function getCreateInstanceDeps() {
+  return {
+    trim,
+    library: libraryStoreApi,
+    getLibraryEntrySpec: libraryStoreApi.getLibraryEntrySpec,
+    showStatus,
+    flattenSchemaFields: specDomainApi.flattenSchemaFields,
+    normalizeSchemaType: specDomainApi.normalizeSchemaType,
+    setValueByPath: specDomainApi.setValueByPath,
+    buildInstanceSpec: specDomainApi.buildInstanceSpec,
+    createButton: createPluginButton,
+    insertIntoGraph: commandApi.insertIntoGraph,
+  };
+}
+
+export function openCreateFromLibraryDialog() {
+  var deps = arguments.length > 0 && arguments[0] != null && typeof arguments[0] == "object" && !Array.isArray(arguments[0]) && arguments[0].library != null
+    ? arguments[0]
+    : getCreateInstanceDeps();
+  var preferredSymbolId =
+    arguments.length > 1 ||
+    (arguments.length > 0 &&
+      (arguments[0] == null || typeof arguments[0] != "object" || Array.isArray(arguments[0]) || arguments[0].library == null))
+      ? arguments[arguments.length > 1 ? 1 : 0]
+      : arguments[1];
   var trim = deps.trim;
 
   deps.library.loadStoredLibrary(function (images) {

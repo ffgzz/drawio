@@ -4,6 +4,8 @@
  */
 import { getApp } from "../core/appRuntime.js";
 import { isElectricalRoot, showStatus } from "../core/runtimeHelpers.js";
+import { specDomainApi } from "../domain/spec.js";
+import { symbolDomainApi } from "../domain/symbol.js";
 import { trim } from "../utils/base.js";
 import {
   createLibraryEntry,
@@ -14,18 +16,17 @@ import { loadStoredLibrary, saveLibraryImages } from "./libraryStorage.js";
 
 function buildLibraryStoreDeps() {
   var app = getApp();
-  var graphApi = app.graphApi;
-  var appContext = app.appContext;
+  var ctx = app.ctx;
 
   return {
-    ui: graphApi.ui,
-    graph: graphApi.graph,
-    state: appContext.getState(),
-    libraryTitle: app.constants.LIBRARY_TITLE,
-    normalizeSpec: app.domains.spec.normalizeSpec,
+    ui: ctx.ui,
+    graph: ctx.graph,
+    state: ctx.state,
+    libraryTitle: ctx.constants.LIBRARY_TITLE,
+    normalizeSpec: specDomainApi.normalizeSpec,
     isElectricalRoot,
-    extractSpec: app.domains.symbol.extractSpec,
-    buildSymbolCell: app.domains.symbol.buildSymbolCell,
+    extractSpec: symbolDomainApi.extractSpec,
+    buildSymbolCell: symbolDomainApi.buildSymbolCell,
     showStatus,
   };
 }

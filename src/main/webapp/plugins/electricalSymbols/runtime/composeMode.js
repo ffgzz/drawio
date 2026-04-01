@@ -5,6 +5,9 @@
 // 组合模式本质上是一个短生命周期的画布交互会话。
 import { getApp } from "../core/appRuntime.js";
 import { clamp, trim } from "../utils/base.js";
+import { cabinetDialogsApi } from "../ui/cabinetDialog.js";
+import { portSwapModeApi } from "./portSwapMode.js";
+import { snapshotDomainApi } from "../domain/snapshot.js";
 import {
   findElectricalRoot,
   isCabinetGap,
@@ -17,34 +20,29 @@ import {
 
 function getComposeDeps() {
   var app = getApp();
+  var ctx = app.ctx;
 
   return {
-    ctx: app.ctx,
+    ctx,
     trim,
     clamp,
-    padding: app.constants.INSTANCE_COMPOSE_ZONE_PADDING,
-    minWidth: app.constants.INSTANCE_COMPOSE_ZONE_MIN_WIDTH,
-    minHeight: app.constants.INSTANCE_COMPOSE_ZONE_MIN_HEIGHT,
+    padding: ctx.constants.INSTANCE_COMPOSE_ZONE_PADDING,
+    minWidth: ctx.constants.INSTANCE_COMPOSE_ZONE_MIN_WIDTH,
+    minHeight: ctx.constants.INSTANCE_COMPOSE_ZONE_MIN_HEIGHT,
     showStatus,
     setCanvasStatus,
     closeGapDialogWindow: function () {
-      return app.ui != null &&
-        typeof app.ui.closeGapDialogWindow === "function"
-        ? app.ui.closeGapDialogWindow()
-        : null;
+      return cabinetDialogsApi.closeGapDialogWindow();
     },
     exitPortSwapMode: function (clearStatus) {
-      return app.runtime != null &&
-        typeof app.runtime.exitPortSwapMode === "function"
-        ? app.runtime.exitPortSwapMode(clearStatus)
-        : null;
+      return portSwapModeApi.exitPortSwapMode(clearStatus);
     },
     isDrawingFrame,
     isCabinetSegment,
     isCabinetGap,
-    isPluginInternalCell: app.domains.snapshot.isPluginInternalCell,
+    isPluginInternalCell: snapshotDomainApi.isPluginInternalCell,
     isElectricalRoot,
-    shouldExportGenericObject: app.domains.snapshot.shouldExportGenericObject,
+    shouldExportGenericObject: snapshotDomainApi.shouldExportGenericObject,
     findElectricalRoot,
   };
 }

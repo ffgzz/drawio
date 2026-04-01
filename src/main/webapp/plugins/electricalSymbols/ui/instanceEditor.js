@@ -11,30 +11,33 @@ import { getApp } from "../core/appRuntime.js";
 import { trim } from "../utils/base.js";
 import { findElectricalRoot, showStatus } from "../core/runtimeHelpers.js";
 import { commandApi } from "../application/commands.js";
+import { specDomainApi } from "../domain/spec.js";
+import { symbolDomainApi } from "../domain/symbol.js";
 import { createPluginButton } from "./shared/buttonFactory.js";
 
 // 实例编辑器只作用于当前选中的电气图元实例。
 function buildInstanceEditorDeps() {
   var app = getApp();
+  var ctx = app.ctx;
 
   return {
-    ctx: app.ctx,
+    ctx,
     findElectricalRoot,
     showStatus,
-    extractSpec: app.domains.symbol.extractSpec,
-    normalizePortLayout: app.domains.spec.normalizePortLayout,
-    normalizeLabels: app.domains.spec.normalizeLabels,
+    extractSpec: symbolDomainApi.extractSpec,
+    normalizePortLayout: specDomainApi.normalizePortLayout,
+    normalizeLabels: specDomainApi.normalizeLabels,
     trim,
-    getValueByPath: app.domains.spec.getValueByPath,
+    getValueByPath: specDomainApi.getValueByPath,
     createButton: createPluginButton,
-    normalizePortMarker: app.domains.spec.normalizePortMarker,
-    normalizePortDirection: app.domains.spec.normalizePortDirection,
-    normalizePortIoMode: app.domains.spec.normalizePortIoMode,
-    normalizeLabelAlign: app.domains.spec.normalizeLabelAlign,
-    toSvgDataUri: app.domains.spec.toSvgDataUri,
-    portEdgeSnapThresholdPx: app.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
-    normalizePortPoint: app.domains.spec.normalizePortPoint,
-    normalizeLabelItem: app.domains.spec.normalizeLabelItem,
+    normalizePortMarker: specDomainApi.normalizePortMarker,
+    normalizePortDirection: specDomainApi.normalizePortDirection,
+    normalizePortIoMode: specDomainApi.normalizePortIoMode,
+    normalizeLabelAlign: specDomainApi.normalizeLabelAlign,
+    toSvgDataUri: specDomainApi.toSvgDataUri,
+    portEdgeSnapThresholdPx: ctx.constants.PORT_EDGE_SNAP_THRESHOLD_PX,
+    normalizePortPoint: specDomainApi.normalizePortPoint,
+    normalizeLabelItem: specDomainApi.normalizeLabelItem,
     applyInstanceSpec: commandApi.applyInstanceSpec,
   };
 }

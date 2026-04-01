@@ -10,8 +10,8 @@ function buildDraftStoreDeps() {
   var app = getApp();
 
   return {
-    state: app.appContext.getState(),
-    storageKey: app.constants.TEMPLATE_DRAFT_STORAGE_KEY,
+    state: app.ctx.state,
+    storageKey: app.ctx.constants.TEMPLATE_DRAFT_STORAGE_KEY,
     trim,
     cloneJson,
   };

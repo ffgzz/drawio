@@ -7,6 +7,9 @@ import { getApp } from "../core/appRuntime.js";
 import { trim } from "../utils/base.js";
 import { showStatus } from "../core/runtimeHelpers.js";
 import { libraryStoreApi } from "../services/libraryStore.js";
+import { specDomainApi } from "../domain/spec.js";
+import { openCreateFromLibraryDialog } from "./createInstanceDialog.js";
+import { templateEditorApi } from "./templateEditor.js";
 import { createPluginButton } from "./shared/buttonFactory.js";
 
 function buildTemplateBrowserDeps() {
@@ -17,20 +20,15 @@ function buildTemplateBrowserDeps() {
     library: libraryStoreApi,
     getLibraryEntrySpec: libraryStoreApi.getLibraryEntrySpec,
     showStatus,
-    normalizePortLayout: app.domains.spec.normalizePortLayout,
-    normalizeLabels: app.domains.spec.normalizeLabels,
+    normalizePortLayout: specDomainApi.normalizePortLayout,
+    normalizeLabels: specDomainApi.normalizeLabels,
     trim,
     createButton: createPluginButton,
     openEditorWithTemplate: function (template) {
-      return app.ui != null && typeof app.ui.openEditorWithTemplate === "function"
-        ? app.ui.openEditorWithTemplate(template)
-        : null;
+      return templateEditorApi.openEditorWithTemplate(template);
     },
     openCreateFromLibraryDialog: function (preferredSymbolId) {
-      return app.ui != null &&
-        typeof app.ui.openCreateFromLibraryDialog === "function"
-        ? app.ui.openCreateFromLibraryDialog(preferredSymbolId)
-        : null;
+      return openCreateFromLibraryDialog(preferredSymbolId);
     },
   };
 }

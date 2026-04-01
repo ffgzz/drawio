@@ -10,18 +10,30 @@ import {
   normalizeCabinetModel,
 } from "./cabinetCore.js";
 import { getApp } from "../core/appRuntime.js";
+import {
+  clamp,
+  cloneJson,
+  isObject,
+  toFloat,
+  toInt,
+  trim,
+} from "../utils/base.js";
+import { createMetaCell, createNode, getAttr } from "../utils/xml.js";
+import { generateLogicalCabinetId, isCabinetGap, isCabinetSegment } from "../core/runtimeHelpers.js";
+import { connectionConstraintsApi } from "../runtime/connectionConstraints.js";
+import { frameDomainApi } from "./frame.js";
+import { snapshotDomainApi } from "./snapshot.js";
+import { specDomainApi } from "./spec.js";
 
 function buildCabinetDeps() {
   var app = getApp();
-  var constants = app.constants;
-  var utils = app.utils;
-  var domains = app.domains;
-  var helpers = app.helpers;
-  var graphApi = app.graphApi;
+  var ctx = app.ctx;
+  var constants = ctx.constants;
 
   return {
-    model: graphApi.model,
-    state: graphApi.state,
+    graph: ctx.graph,
+    model: ctx.model,
+    state: ctx.state,
     cabinetTag: constants.CABINET_TAG,
     cabinetType: constants.CABINET_TYPE,
     cabinetBodyTag: constants.CABINET_BODY_TAG,
@@ -38,43 +50,40 @@ function buildCabinetDeps() {
     defaultPortCount: constants.CABINET_DEFAULT_PORT_COUNT,
     defaultX: constants.CABINET_DEFAULT_X,
     tailPadding: constants.CABINET_TAIL_PADDING,
-    trim: utils.trim,
-    toInt: utils.toInt,
-    toFloat: utils.toFloat,
-    clamp: utils.clamp,
-    isObject: utils.isObject,
-    cloneJson: utils.cloneJson,
-    normalizePortPoint: domains.spec.normalizePortPoint,
-    generateLogicalCabinetId: helpers.generateLogicalCabinetId,
-    createNode: utils.createNode,
-    createMetaCell: utils.createMetaCell,
-    serializePortLayout: domains.spec.serializePortLayout,
-    getAttr: utils.getAttr,
-    isCabinetSegment: helpers.isCabinetSegment,
-    isCabinetGap: helpers.isCabinetGap,
-    getNormalizedFrameConfig: domains.frame.normalizeFrameConfig,
-    getAllDrawingFrames: domains.frame.getAllDrawingFrames,
-    getFrameConfig: domains.frame.getFrameConfig,
-    getFrameGroupId: domains.frame.getFrameGroupId,
-    getFramePageNumber: domains.frame.getFramePageNumber,
-    getMaxFramePageNumberInGroup:
-      domains.frame.getMaxFramePageNumberInGroup,
-    getRightmostFrameInGroup: domains.frame.getRightmostFrameInGroup,
-    findFrameById: domains.frame.findFrameById,
-    findDrawingFrame: domains.frame.findDrawingFrame,
-    createDrawingFrameCell: domains.frame.createDrawingFrameCell,
-    addTopLevelCell: domains.frame.addTopLevelCell,
+    trim,
+    toInt,
+    toFloat,
+    clamp,
+    isObject,
+    cloneJson,
+    normalizePortPoint: specDomainApi.normalizePortPoint,
+    generateLogicalCabinetId,
+    createNode,
+    createMetaCell,
+    serializePortLayout: specDomainApi.serializePortLayout,
+    getAttr,
+    isCabinetSegment,
+    isCabinetGap,
+    getNormalizedFrameConfig: frameDomainApi.normalizeFrameConfig,
+    getAllDrawingFrames: frameDomainApi.getAllDrawingFrames,
+    getFrameConfig: frameDomainApi.getFrameConfig,
+    getFrameGroupId: frameDomainApi.getFrameGroupId,
+    getFramePageNumber: frameDomainApi.getFramePageNumber,
+    getMaxFramePageNumberInGroup: frameDomainApi.getMaxFramePageNumberInGroup,
+    getRightmostFrameInGroup: frameDomainApi.getRightmostFrameInGroup,
+    findFrameById: frameDomainApi.findFrameById,
+    findDrawingFrame: frameDomainApi.findDrawingFrame,
+    createDrawingFrameCell: frameDomainApi.createDrawingFrameCell,
+    addTopLevelCell: frameDomainApi.addTopLevelCell,
     getEdgePortId: function (edge, root, source) {
-      return domains.snapshot.getEdgePortId(edge, root, source);
+      return snapshotDomainApi.getEdgePortId(edge, root, source);
     },
-    getPortMetaById: domains.connectionConstraints.getPortMetaById,
-    parsePortLayout: domains.spec.parsePortLayout,
-    isMovableConnectedTerminal:
-      domains.connectionConstraints.isMovableConnectedTerminal,
-    moveCellToFrameByDelta:
-      domains.connectionConstraints.moveCellToFrameByDelta,
+    getPortMetaById: connectionConstraintsApi.getPortMetaById,
+    parsePortLayout: specDomainApi.parsePortLayout,
+    isMovableConnectedTerminal: connectionConstraintsApi.isMovableConnectedTerminal,
+    moveCellToFrameByDelta: connectionConstraintsApi.moveCellToFrameByDelta,
     setConnectionConstraint: function (edge, root, source, constraint) {
-      graphApi.graph.setConnectionConstraint(edge, root, source, constraint);
+      ctx.graph.setConnectionConstraint(edge, root, source, constraint);
     },
   };
 }

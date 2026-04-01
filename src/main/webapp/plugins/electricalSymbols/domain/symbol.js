@@ -1,5 +1,32 @@
 /**
  * 电气图元域入口。
- * 当前文件只作为稳定导出层，真正的 graph 适配实现位于 symbolGraph.js。
+ * 对外暴露稳定的 symbol API，内部仍复用 symbolGraph.js 的实现。
  */
-export { createSymbolDomain } from "./symbolGraph.js";
+import { createSymbolDomain } from "./symbolGraph.js";
+
+function getSymbolDomain() {
+  return createSymbolDomain();
+}
+
+export function buildSymbolCell() {
+  return getSymbolDomain().buildSymbolCell.apply(null, arguments);
+}
+
+export function extractSpec() {
+  return getSymbolDomain().extractSpec.apply(null, arguments);
+}
+
+export function refreshRoot() {
+  return getSymbolDomain().refreshRoot.apply(null, arguments);
+}
+
+export function syncRoot() {
+  return getSymbolDomain().syncRoot.apply(null, arguments);
+}
+
+export var symbolDomainApi = {
+  buildSymbolCell,
+  extractSpec,
+  refreshRoot,
+  syncRoot,
+};

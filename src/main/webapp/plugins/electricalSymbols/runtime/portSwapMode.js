@@ -6,6 +6,10 @@
 import { getApp } from "../core/appRuntime.js";
 import { cloneJson, trim } from "../utils/base.js";
 import { getAttr } from "../utils/xml.js";
+import { cabinetDomainApi } from "../domain/cabinet.js";
+import { cabinetDialogsApi } from "../ui/cabinetDialog.js";
+import { connectionConstraintsApi } from "./connectionConstraints.js";
+import { specDomainApi } from "../domain/spec.js";
 import {
   findPortHostRoot,
   isCabinetSegment,
@@ -21,32 +25,25 @@ function getPortSwapDeps() {
     ctx,
     trim,
     cloneJson,
-    parsePortLayout: app.domains.spec.parsePortLayout,
+    parsePortLayout: specDomainApi.parsePortLayout,
     getAttr,
-    findCabinetSegments: app.domains.cabinet.findCabinetSegments,
+    findCabinetSegments: cabinetDomainApi.findCabinetSegments,
     findPortHostRoot,
     isCabinetSegment,
-    isMovableConnectedTerminal:
-      app.domains.connectionConstraints.isMovableConnectedTerminal,
+    isMovableConnectedTerminal: connectionConstraintsApi.isMovableConnectedTerminal,
     closeGapDialogWindow: function () {
-      return app.ui != null &&
-        typeof app.ui.closeGapDialogWindow === "function"
-        ? app.ui.closeGapDialogWindow()
-        : null;
+      return cabinetDialogsApi.closeGapDialogWindow();
     },
-    setSelectedCabinetGap: app.domains.cabinet.setSelectedCabinetGap,
+    setSelectedCabinetGap: cabinetDomainApi.setSelectedCabinetGap,
     showStatus,
     setCanvasStatus,
-    getPortAbsolutePosition: app.domains.cabinet.getPortAbsolutePosition,
-    getPortMetaByConstraint:
-      app.domains.connectionConstraints.getPortMetaByConstraint,
-    mapPortDirectionToConstraint:
-      app.domains.connectionConstraints.mapPortDirectionToConstraint,
-    clearEdgePoints: app.domains.connectionConstraints.clearEdgePoints,
-    moveConnectedGroupToCabinetPort:
-      app.domains.connectionConstraints.moveConnectedGroupToCabinetPort,
+    getPortAbsolutePosition: cabinetDomainApi.getPortAbsolutePosition,
+    getPortMetaByConstraint: connectionConstraintsApi.getPortMetaByConstraint,
+    mapPortDirectionToConstraint: connectionConstraintsApi.mapPortDirectionToConstraint,
+    clearEdgePoints: connectionConstraintsApi.clearEdgePoints,
+    moveConnectedGroupToCabinetPort: connectionConstraintsApi.moveConnectedGroupToCabinetPort,
     setConnectionConstraint: function (edge, root, source, constraint) {
-      app.domains.connectionConstraints.applyNativeConnectionConstraint(
+      connectionConstraintsApi.applyNativeConnectionConstraint(
         edge,
         root,
         source,

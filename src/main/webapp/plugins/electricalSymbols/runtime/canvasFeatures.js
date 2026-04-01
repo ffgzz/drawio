@@ -3,6 +3,12 @@
  * 负责 action 注册、菜单注入、画布保护逻辑以及与组合模式相关的鼠标监听。
  */
 // 顶部动作栏按钮顺序在这里集中维护。
+import { actionApi } from "../application/actions.js";
+import { isDrawingFrame } from "../core/runtimeHelpers.js";
+import { composeModeApi } from "./composeMode.js";
+import { modelSyncApi } from "./modelSync.js";
+import { portSwapModeApi } from "./portSwapMode.js";
+import { snapshotDomainApi } from "../domain/snapshot.js";
 export var ACTION_ITEMS = [
   { resourceKey: "electricalSymbols", actionKey: "electricalSymbols" },
   { resourceKey: "electricalBrowse", actionKey: "electricalBrowse" },
@@ -68,15 +74,12 @@ var EXTRA_MENU_ACTIONS = [
 ];
 
 // installCanvasFeatures 负责把所有 action 和 hook 真正挂到 draw.io 上。
-export function installCanvasFeatures(app) {
-  var ctx = app.ctx;
+export function installCanvasFeatures(ctx) {
   var graph = ctx.graph;
   var model = ctx.model;
   var state = ctx.state;
   var ui = ctx.ui;
-  var actions = app.actions;
-  var helpers = app.helpers;
-  var runtimeApi = app.runtime;
+  var actions = actionApi;
   var graphIsCellDeletable = graph.isCellDeletable;
   var graphIsCellMovable = graph.isCellMovable;
   var graphIsCellSelectable = graph.isCellSelectable;
@@ -86,7 +89,7 @@ export function installCanvasFeatures(app) {
   var oldExtrasMenu = menu.funct;
 
   graph.isCellDeletable = function (cell) {
-    if (helpers.isDrawingFrame(cell)) {
+    if (isDrawingFrame(cell)) {
       return !!state.allowProtectedDelete;
     }
 
@@ -95,8 +98,8 @@ export function installCanvasFeatures(app) {
 
   graph.isCellMovable = function (cell) {
     if (
-      runtimeApi.isBlockedComposeTarget(cell) ||
-      runtimeApi.isLockedComposedChild(cell)
+      composeModeApi.isBlockedComposeTarget(cell) ||
+      composeModeApi.isLockedComposedChild(cell)
     ) {
       return false;
     }
@@ -105,7 +108,7 @@ export function installCanvasFeatures(app) {
   };
 
   graph.isCellSelectable = function (cell) {
-    if (runtimeApi.isBlockedComposeTarget(cell)) {
+    if (composeModeApi.isBlockedComposeTarget(cell)) {
       return false;
     }
 
@@ -113,7 +116,7 @@ export function installCanvasFeatures(app) {
   };
 
   graph.selectCellForEvent = function (cell) {
-    if (runtimeApi.isBlockedComposeTarget(cell)) {
+    if (composeModeApi.isBlockedComposeTarget(cell)) {
       return;
     }
 
@@ -126,7 +129,7 @@ export function installCanvasFeatures(app) {
     var i;
 
     for (i = 0; i < result.length; i++) {
-      if (!runtimeApi.isBlockedComposeTarget(result[i])) {
+      if (!composeModeApi.isBlockedComposeTarget(result[i])) {
         filtered.push(result[i]);
       }
     }
@@ -179,18 +182,18 @@ export function installCanvasFeatures(app) {
       session.startPoint = null;
       session.dragCandidates = [];
 
-      if (runtimeApi.isBlockedComposeTarget(eventCell)) {
-        runtimeApi.refreshInstanceComposeOverlay();
+      if (composeModeApi.isBlockedComposeTarget(eventCell)) {
+        composeModeApi.refreshInstanceComposeOverlay();
         return;
       }
 
-      session.dragCandidates = runtimeApi.collectComposeDragCandidates(
+      session.dragCandidates = composeModeApi.collectComposeDragCandidates(
         session.root,
         eventCell,
       );
 
       if (session.dragCandidates.length == 0) {
-        runtimeApi.refreshInstanceComposeOverlay();
+        composeModeApi.refreshInstanceComposeOverlay();
         return;
       }
 
@@ -219,7 +222,7 @@ export function installCanvasFeatures(app) {
 
       if (dx > 2 || dy > 2) {
         session.dragging = true;
-        runtimeApi.refreshInstanceComposeOverlay();
+        composeModeApi.refreshInstanceComposeOverlay();
       }
     },
     mouseUp: function () {
@@ -233,25 +236,25 @@ export function installCanvasFeatures(app) {
       session.dragging = false;
       session.startPoint = null;
       session.dragCandidates = [];
-      runtimeApi.refreshInstanceComposeOverlay();
+      composeModeApi.refreshInstanceComposeOverlay();
     },
   });
   mxEvent.addListener(
     graph.container,
     "scroll",
-    runtimeApi.refreshInstanceComposeOverlay,
+    composeModeApi.refreshInstanceComposeOverlay,
   );
-  graph.view.addListener(mxEvent.SCALE, runtimeApi.refreshInstanceComposeOverlay);
+  graph.view.addListener(mxEvent.SCALE, composeModeApi.refreshInstanceComposeOverlay);
   graph.view.addListener(
     mxEvent.SCALE_AND_TRANSLATE,
-    runtimeApi.refreshInstanceComposeOverlay,
+    composeModeApi.refreshInstanceComposeOverlay,
   );
   graph.view.addListener(
     mxEvent.TRANSLATE,
-    runtimeApi.refreshInstanceComposeOverlay,
+    composeModeApi.refreshInstanceComposeOverlay,
   );
 
-  state.lastOperationSnapshot = app.domains.snapshot.exportDiagramSnapshot();
-  model.addListener(mxEvent.CHANGE, runtimeApi.recordCanvasOperation);
-  model.addListener(mxEvent.CHANGE, runtimeApi.handleModelChange);
+  state.lastOperationSnapshot = snapshotDomainApi.exportDiagramSnapshot();
+  model.addListener(mxEvent.CHANGE, modelSyncApi.recordCanvasOperation);
+  model.addListener(mxEvent.CHANGE, modelSyncApi.handleModelChange);
 }

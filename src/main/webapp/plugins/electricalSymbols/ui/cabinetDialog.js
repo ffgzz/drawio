@@ -11,6 +11,8 @@ import {
   setCanvasStatus,
   showStatus,
 } from "../core/runtimeHelpers.js";
+import { cabinetDomainApi } from "../domain/cabinet.js";
+import { frameDomainApi } from "../domain/frame.js";
 import { commandApi } from "../application/commands.js";
 import { createPluginButton } from "./shared/buttonFactory.js";
 
@@ -24,16 +26,16 @@ function buildCabinetDialogDeps() {
     toInt,
     toFloat,
     createButton: createPluginButton,
-    getActiveFrame: app.domains.frame.getActiveFrame,
+    getActiveFrame: frameDomainApi.getActiveFrame,
     getAttr,
-    normalizeCabinetModel: app.domains.cabinet.normalizeCabinetModel,
+    normalizeCabinetModel: cabinetDomainApi.normalizeCabinetModel,
     generateLogicalCabinetId,
     insertCabinet: commandApi.insertCabinet,
     updateCabinetGap: commandApi.updateCabinetGap,
     showStatus,
     setCanvasStatus,
-    findCabinetSegment: app.domains.cabinet.findCabinetSegment,
-    extractCabinetModel: app.domains.cabinet.extractCabinetModel,
+    findCabinetSegment: cabinetDomainApi.findCabinetSegment,
+    extractCabinetModel: cabinetDomainApi.extractCabinetModel,
   };
 }
 

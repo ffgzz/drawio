@@ -27,6 +27,14 @@ import {
   isElectricalRoot,
   resetPendingChangeRecords,
 } from "../core/runtimeHelpers.js";
+import { cabinetDialogsApi } from "../ui/cabinetDialog.js";
+import { cabinetDomainApi } from "./cabinet.js";
+import { composeModeApi } from "../runtime/composeMode.js";
+import { connectionConstraintsApi } from "../runtime/connectionConstraints.js";
+import { frameDomainApi } from "./frame.js";
+import { portSwapModeApi } from "../runtime/portSwapMode.js";
+import { specDomainApi } from "./spec.js";
+import { symbolDomainApi } from "./symbol.js";
 
 /**
  * 快照域模型。
@@ -35,19 +43,19 @@ import {
 // 这个模块支撑后端保存、加载、回滚和本地操作记录。
 function buildSnapshotDeps() {
   var app = getApp();
-  var graphApi = app.graphApi;
+  var ctx = app.ctx;
 
   return {
-    graph: graphApi.graph,
-    model: graphApi.model,
-    state: graphApi.state,
-    ui: graphApi.ui,
-    BODY_KIND: app.constants.BODY_KIND,
-    LABEL_KIND: app.constants.LABEL_KIND,
-    FRAME_LABEL_KIND: app.constants.FRAME_LABEL_KIND,
-    CABINET_BODY_KIND: app.constants.CABINET_BODY_KIND,
-    CABINET_GAP_KIND: app.constants.CABINET_GAP_KIND,
-    FRAME_MARGIN_RATIO: app.constants.FRAME_MARGIN_RATIO,
+    graph: ctx.graph,
+    model: ctx.model,
+    state: ctx.state,
+    ui: ctx.ui,
+    BODY_KIND: ctx.constants.BODY_KIND,
+    LABEL_KIND: ctx.constants.LABEL_KIND,
+    FRAME_LABEL_KIND: ctx.constants.FRAME_LABEL_KIND,
+    CABINET_BODY_KIND: ctx.constants.CABINET_BODY_KIND,
+    CABINET_GAP_KIND: ctx.constants.CABINET_GAP_KIND,
+    FRAME_MARGIN_RATIO: ctx.constants.FRAME_MARGIN_RATIO,
     trim,
     toInt,
     isObject,
@@ -59,43 +67,35 @@ function buildSnapshotDeps() {
     isDrawingFrame,
     isCabinetSegment,
     isElectricalRoot,
-    extractSpec: app.domains.symbol.extractSpec,
-    getFrameConfig: app.domains.frame.getFrameConfig,
-    getFramePageNumber: app.domains.frame.getFramePageNumber,
-    getFrameGroupId: app.domains.frame.getFrameGroupId,
-    findFrameById: app.domains.frame.findFrameById,
-    extractCabinetModel: app.domains.cabinet.extractCabinetModel,
-    findCabinetSegments: app.domains.cabinet.findCabinetSegments,
-    getPortMetaById: app.domains.connectionConstraints.getPortMetaById,
-    findDrawingFrame: app.domains.frame.findDrawingFrame,
+    extractSpec: symbolDomainApi.extractSpec,
+    getFrameConfig: frameDomainApi.getFrameConfig,
+    getFramePageNumber: frameDomainApi.getFramePageNumber,
+    getFrameGroupId: frameDomainApi.getFrameGroupId,
+    findFrameById: frameDomainApi.findFrameById,
+    extractCabinetModel: cabinetDomainApi.extractCabinetModel,
+    findCabinetSegments: cabinetDomainApi.findCabinetSegments,
+    getPortMetaById: connectionConstraintsApi.getPortMetaById,
+    findDrawingFrame: frameDomainApi.findDrawingFrame,
     findPortHostRoot,
-    parsePortLayout: app.domains.spec.parsePortLayout,
-    getAllDrawingFrames: app.domains.frame.getAllDrawingFrames,
+    parsePortLayout: specDomainApi.parsePortLayout,
+    getAllDrawingFrames: frameDomainApi.getAllDrawingFrames,
     exitInstanceComposeMode: function (clearStatus) {
-      return app.runtime != null &&
-        typeof app.runtime.exitInstanceComposeMode === "function"
-        ? app.runtime.exitInstanceComposeMode(clearStatus)
-        : null;
+      return composeModeApi.exitInstanceComposeMode(clearStatus);
     },
     closeGapDialogWindow: function () {
-      return app.ui != null && typeof app.ui.closeGapDialogWindow === "function"
-        ? app.ui.closeGapDialogWindow()
-        : null;
+      return cabinetDialogsApi.closeGapDialogWindow();
     },
     setSelectedCabinetGap: function (logicalCabinetId, gapIndex) {
-      return app.domains.cabinet.setSelectedCabinetGap(logicalCabinetId, gapIndex);
+      return cabinetDomainApi.setSelectedCabinetGap(logicalCabinetId, gapIndex);
     },
     exitPortSwapMode: function (clearStatus) {
-      return app.runtime != null &&
-        typeof app.runtime.exitPortSwapMode === "function"
-        ? app.runtime.exitPortSwapMode(clearStatus)
-        : null;
+      return portSwapModeApi.exitPortSwapMode(clearStatus);
     },
-    createDrawingFrameCell: app.domains.frame.createDrawingFrameCell,
-    addTopLevelCell: app.domains.frame.addTopLevelCell,
-    relayoutCabinetByModel: app.domains.cabinet.relayoutCabinetByModel,
-    normalizeSpec: app.domains.spec.normalizeSpec,
-    buildSymbolCell: app.domains.symbol.buildSymbolCell,
+    createDrawingFrameCell: frameDomainApi.createDrawingFrameCell,
+    addTopLevelCell: frameDomainApi.addTopLevelCell,
+    relayoutCabinetByModel: cabinetDomainApi.relayoutCabinetByModel,
+    normalizeSpec: specDomainApi.normalizeSpec,
+    buildSymbolCell: symbolDomainApi.buildSymbolCell,
     resetPendingChangeRecords,
   };
 }

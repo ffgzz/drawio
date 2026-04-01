@@ -6,6 +6,9 @@
 import { getApp } from "../core/appRuntime.js";
 import { clamp, trim } from "../utils/base.js";
 import { getAttr } from "../utils/xml.js";
+import { cabinetDomainApi } from "../domain/cabinet.js";
+import { frameDomainApi } from "../domain/frame.js";
+import { specDomainApi } from "../domain/spec.js";
 import {
   findPortHostRoot,
   isCabinetGap,
@@ -21,21 +24,21 @@ function getConstraintDeps() {
     ctx,
     trim,
     clamp,
-    parsePortLayout: app.domains.spec.parsePortLayout,
+    parsePortLayout: specDomainApi.parsePortLayout,
     getAttr,
-    buildPortLayout: app.domains.spec.buildPortLayout,
+    buildPortLayout: specDomainApi.buildPortLayout,
     findPortHostRoot,
-    normalizePortDirection: app.domains.spec.normalizePortDirection,
-    normalizePortIoMode: app.domains.spec.normalizePortIoMode,
+    normalizePortDirection: specDomainApi.normalizePortDirection,
+    normalizePortIoMode: specDomainApi.normalizePortIoMode,
     isDrawingFrame,
     isCabinetSegment,
     isCabinetGap,
-    findDrawingFrame: app.domains.frame.findDrawingFrame,
+    findDrawingFrame: frameDomainApi.findDrawingFrame,
     getCellAbsoluteGeometry: function (cell) {
-      return app.domains.cabinet.getCellAbsoluteGeometry(cell);
+      return cabinetDomainApi.getCellAbsoluteGeometry(cell);
     },
     getPortAbsolutePosition: function (root, port) {
-      return app.domains.cabinet.getPortAbsolutePosition(root, port);
+      return cabinetDomainApi.getPortAbsolutePosition(root, port);
     },
   };
 }
