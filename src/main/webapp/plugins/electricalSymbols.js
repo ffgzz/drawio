@@ -10118,6 +10118,20 @@
     var validSource = window.opener || window.parent;
     var graph = ctx.graph;
     var model = ctx.model;
+    function resetEdgeAutoStyle(edge) {
+      var style = model.getStyle(edge) || "";
+      style = mxUtils.setStyle(style, "noEdgeStyle", null);
+      style = mxUtils.setStyle(style, "edgeStyle", "orthogonalEdgeStyle");
+      style = mxUtils.setStyle(style, "entryX", null);
+      style = mxUtils.setStyle(style, "entryY", null);
+      style = mxUtils.setStyle(style, "exitX", null);
+      style = mxUtils.setStyle(style, "exitY", null);
+      style = mxUtils.setStyle(style, "jettySize", "auto");
+      style = mxUtils.setStyle(style, "sourceJettySize", "auto");
+      style = mxUtils.setStyle(style, "targetJettySize", "auto");
+      style = mxUtils.setStyle(style, "rounded", "0");
+      model.setStyle(edge, style);
+    }
     function clearConnectedEdgesForCells(cells) {
       var edgeMap = {};
       var i;
@@ -10140,6 +10154,7 @@
       for (var edgeId in edgeMap) {
         if (edgeMap.hasOwnProperty(edgeId)) {
           clearEdgePoints(edgeMap[edgeId]);
+          resetEdgeAutoStyle(edgeMap[edgeId]);
         }
       }
     }
@@ -10315,7 +10330,7 @@
                   continue;
                 }
                 cell = model2.getCell(cellId);
-                if (cell == null || model2.getParent(cell) !== frame) {
+                if (cell == null) {
                   continue;
                 }
                 geometry = model2.getGeometry(cell);
@@ -10323,8 +10338,13 @@
                   continue;
                 }
                 nextGeometry = geometry.clone();
-                nextGeometry.x = x;
-                nextGeometry.y = y;
+                if (model2.getParent(cell) === frame) {
+                  nextGeometry.x = x;
+                  nextGeometry.y = y;
+                } else {
+                  nextGeometry.x = x + frameOrigin.x;
+                  nextGeometry.y = y + frameOrigin.y;
+                }
                 model2.setGeometry(cell, nextGeometry);
                 movedCells.push(cell);
                 edges = graph2.getConnections(cell) || [];
@@ -10381,30 +10401,60 @@
                   edgeGeometry = edgeGeometry.clone();
                   edgeGeometry.points = nextPoints.length > 0 ? nextPoints : null;
                   model2.setGeometry(edge, edgeGeometry);
-                  model2.setStyle(
-                    edge,
-                    mxUtils.setStyle(
-                      mxUtils.setStyle(
-                        mxUtils.setStyle(
-                          mxUtils.setStyle(
-                            mxUtils.setStyle(
-                              mxUtils.setStyle(model2.getStyle(edge) || "", "jettySize", "auto"),
-                              "sourceJettySize",
-                              "auto"
-                            ),
-                            "targetJettySize",
-                            "auto"
-                          ),
-                          "noEdgeStyle",
-                          null
-                        ),
-                        "edgeStyle",
-                        "orthogonalEdgeStyle"
-                      ),
-                      "rounded",
+                  var nextStyle = model2.getStyle(edge) || "";
+                  if (route.sourcePortId != null && String(route.sourcePortId).length > 0) {
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "sourcePortId",
+                      String(route.sourcePortId)
+                    );
+                  }
+                  if (route.targetPortId != null && String(route.targetPortId).length > 0) {
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "targetPortId",
+                      String(route.targetPortId)
+                    );
+                  }
+                  nextStyle = mxUtils.setStyle(nextStyle, "entryX", null);
+                  nextStyle = mxUtils.setStyle(nextStyle, "entryY", null);
+                  nextStyle = mxUtils.setStyle(nextStyle, "exitX", null);
+                  nextStyle = mxUtils.setStyle(nextStyle, "exitY", null);
+                  if (route.manual) {
+                    nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "0");
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "sourceJettySize",
                       "0"
-                    )
-                  );
+                    );
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "targetJettySize",
+                      "0"
+                    );
+                    nextStyle = mxUtils.setStyle(nextStyle, "noEdgeStyle", "1");
+                    nextStyle = mxUtils.setStyle(nextStyle, "edgeStyle", null);
+                  } else {
+                    nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "auto");
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "sourceJettySize",
+                      "auto"
+                    );
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "targetJettySize",
+                      "auto"
+                    );
+                    nextStyle = mxUtils.setStyle(nextStyle, "noEdgeStyle", null);
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "edgeStyle",
+                      "orthogonalEdgeStyle"
+                    );
+                  }
+                  nextStyle = mxUtils.setStyle(nextStyle, "rounded", "0");
+                  model2.setStyle(edge, nextStyle);
                   if (window.console != null) {
                     console.log(
                       "[electricalSymbols host bridge][edge-applied][json]",
@@ -10412,6 +10462,9 @@
                         {
                           edgeId,
                           routePoints: route.points,
+                          sourcePortId: route.sourcePortId != null ? String(route.sourcePortId) : "",
+                          targetPortId: route.targetPortId != null ? String(route.targetPortId) : "",
+                          manual: !!route.manual,
                           geometryPoints: nextPoints.map(function(point2) {
                             return { x: point2.x, y: point2.y };
                           }),
