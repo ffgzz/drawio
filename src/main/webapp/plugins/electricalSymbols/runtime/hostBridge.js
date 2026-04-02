@@ -58,6 +58,40 @@ export function installHostBridge(ctx) {
   }
 
   var validSource = window.opener || window.parent;
+  var graph = ctx.graph;
+  var model = ctx.model;
+
+  function clearConnectedEdgesForCells(cells) {
+    var edgeMap = {};
+    var i;
+    var j;
+
+    if (!Array.isArray(cells) || cells.length == 0) {
+      return;
+    }
+
+    for (i = 0; i < cells.length; i++) {
+      var cell = cells[i];
+
+      if (cell == null || !model.isVertex(cell)) {
+        continue;
+      }
+
+      var edges = graph.getConnections(cell) || [];
+
+      for (j = 0; j < edges.length; j++) {
+        if (edges[j] != null && edges[j].id != null) {
+          edgeMap[String(edges[j].id)] = edges[j];
+        }
+      }
+    }
+
+    for (var edgeId in edgeMap) {
+      if (edgeMap.hasOwnProperty(edgeId)) {
+        clearEdgePoints(edgeMap[edgeId]);
+      }
+    }
+  }
 
   function postReply(targetWindow, payload) {
     if (targetWindow != null && typeof targetWindow.postMessage === "function") {
@@ -243,6 +277,33 @@ export function installHostBridge(ctx) {
             y: frameGeometry != null ? frameGeometry.y : 0,
           };
 
+          if (window.console != null) {
+            console.log(
+              "[electricalSymbols host bridge][request][json]",
+              JSON.stringify(
+                {
+                  frameCellId: payload.frameCellId || "",
+                  frameId: getAttr(frame, "frameId"),
+                  positions: payload.positions,
+                  edgeRoutes: payload.edgeRoutes,
+                  frameOrigin: frameOrigin,
+                  frameGeometry:
+                    frameGeometry != null
+                      ? {
+                          x: frameGeometry.x,
+                          y: frameGeometry.y,
+                          width: frameGeometry.width,
+                          height: frameGeometry.height,
+                          relative: !!frameGeometry.relative,
+                        }
+                      : null,
+                },
+                null,
+                2,
+              ),
+            );
+          }
+
           state.updatingModel = true;
           model.beginUpdate();
 
@@ -349,14 +410,44 @@ export function installHostBridge(ctx) {
                   edge,
                   mxUtils.setStyle(
                     mxUtils.setStyle(
-                      mxUtils.setStyle(model.getStyle(edge) || "", "jettySize", "0"),
-                      "sourceJettySize",
-                      "0",
+                      mxUtils.setStyle(
+                        mxUtils.setStyle(
+                          mxUtils.setStyle(
+                            mxUtils.setStyle(model.getStyle(edge) || "", "jettySize", "auto"),
+                            "sourceJettySize",
+                            "auto",
+                          ),
+                          "targetJettySize",
+                          "auto",
+                        ),
+                        "noEdgeStyle",
+                        null,
+                      ),
+                      "edgeStyle",
+                      "orthogonalEdgeStyle",
                     ),
-                    "targetJettySize",
+                    "rounded",
                     "0",
                   ),
                 );
+
+                if (window.console != null) {
+                  console.log(
+                    "[electricalSymbols host bridge][edge-applied][json]",
+                    JSON.stringify(
+                      {
+                        edgeId: edgeId,
+                        routePoints: route.points,
+                        geometryPoints: nextPoints.map(function (point) {
+                          return { x: point.x, y: point.y };
+                        }),
+                        style: model.getStyle(edge) || "",
+                      },
+                      null,
+                      2,
+                    ),
+                  );
+                }
               }
             }
           } finally {
@@ -372,6 +463,22 @@ export function installHostBridge(ctx) {
           postResult(evt.source, payload, {
             movedCount: movedCells.length,
           });
+
+          if (window.console != null) {
+            console.log(
+              "[electricalSymbols host bridge][result][json]",
+              JSON.stringify(
+                {
+                  movedCount: movedCells.length,
+                  movedCellIds: movedCells.map(function (cell) {
+                    return cell != null && cell.id != null ? String(cell.id) : "";
+                  }),
+                },
+                null,
+                2,
+              ),
+            );
+          }
         }
       } catch (e) {
         postError(evt.source, payload, e);
@@ -382,6 +489,14 @@ export function installHostBridge(ctx) {
     },
     true,
   );
+
+  graph.addListener(mxEvent.CELLS_MOVED, function (_sender, evt) {
+    if (ctx.state != null && ctx.state.updatingModel) {
+      return;
+    }
+
+    clearConnectedEdgesForCells(evt != null ? evt.getProperty("cells") : null);
+  });
 
   window.__eidElectricalHostBridgeInstalled = true;
 }

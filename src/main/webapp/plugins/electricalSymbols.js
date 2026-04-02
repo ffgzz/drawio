@@ -10116,6 +10116,33 @@
       return;
     }
     var validSource = window.opener || window.parent;
+    var graph = ctx.graph;
+    var model = ctx.model;
+    function clearConnectedEdgesForCells(cells) {
+      var edgeMap = {};
+      var i;
+      var j;
+      if (!Array.isArray(cells) || cells.length == 0) {
+        return;
+      }
+      for (i = 0; i < cells.length; i++) {
+        var cell = cells[i];
+        if (cell == null || !model.isVertex(cell)) {
+          continue;
+        }
+        var edges = graph.getConnections(cell) || [];
+        for (j = 0; j < edges.length; j++) {
+          if (edges[j] != null && edges[j].id != null) {
+            edgeMap[String(edges[j].id)] = edges[j];
+          }
+        }
+      }
+      for (var edgeId in edgeMap) {
+        if (edgeMap.hasOwnProperty(edgeId)) {
+          clearEdgePoints(edgeMap[edgeId]);
+        }
+      }
+    }
     function postReply(targetWindow, payload) {
       if (targetWindow != null && typeof targetWindow.postMessage === "function") {
         targetWindow.postMessage(JSON.stringify(payload), "*");
@@ -10232,8 +10259,8 @@
           if (payload.action === "applyLayoutPositions" && Array.isArray(payload.positions)) {
             evt.stopImmediatePropagation();
             var frame = resolveFrameCell(payload);
-            var graph = ctx.graph;
-            var model = ctx.model;
+            var graph2 = ctx.graph;
+            var model2 = ctx.model;
             var state = ctx.state;
             var movedCells = [];
             var edgeMap = {};
@@ -10243,13 +10270,36 @@
             if (frame == null) {
               throw new Error("\u672A\u627E\u5230\u8981\u5E03\u5C40\u7684\u56FE\u6846");
             }
-            frameGeometry = model.getGeometry(frame);
+            frameGeometry = model2.getGeometry(frame);
             frameOrigin = {
               x: frameGeometry != null ? frameGeometry.x : 0,
               y: frameGeometry != null ? frameGeometry.y : 0
             };
+            if (window.console != null) {
+              console.log(
+                "[electricalSymbols host bridge][request][json]",
+                JSON.stringify(
+                  {
+                    frameCellId: payload.frameCellId || "",
+                    frameId: getAttr(frame, "frameId"),
+                    positions: payload.positions,
+                    edgeRoutes: payload.edgeRoutes,
+                    frameOrigin,
+                    frameGeometry: frameGeometry != null ? {
+                      x: frameGeometry.x,
+                      y: frameGeometry.y,
+                      width: frameGeometry.width,
+                      height: frameGeometry.height,
+                      relative: !!frameGeometry.relative
+                    } : null
+                  },
+                  null,
+                  2
+                )
+              );
+            }
             state.updatingModel = true;
-            model.beginUpdate();
+            model2.beginUpdate();
             try {
               for (i = 0; i < payload.positions.length; i++) {
                 var item = payload.positions[i] || {};
@@ -10264,20 +10314,20 @@
                 if (cellId.length == 0 || !isFinite(x) || !isFinite(y)) {
                   continue;
                 }
-                cell = model.getCell(cellId);
-                if (cell == null || model.getParent(cell) !== frame) {
+                cell = model2.getCell(cellId);
+                if (cell == null || model2.getParent(cell) !== frame) {
                   continue;
                 }
-                geometry = model.getGeometry(cell);
+                geometry = model2.getGeometry(cell);
                 if (geometry == null) {
                   continue;
                 }
                 nextGeometry = geometry.clone();
                 nextGeometry.x = x;
                 nextGeometry.y = y;
-                model.setGeometry(cell, nextGeometry);
+                model2.setGeometry(cell, nextGeometry);
                 movedCells.push(cell);
-                edges = graph.getConnections(cell) || [];
+                edges = graph2.getConnections(cell) || [];
                 for (j = 0; j < edges.length; j++) {
                   if (edges[j] != null && edges[j].id != null) {
                     edgeMap[String(edges[j].id)] = edges[j];
@@ -10293,7 +10343,7 @@
                 for (i = 0; i < payload.edgeRoutes.length; i++) {
                   var route = payload.edgeRoutes[i] || {};
                   var edgeId = route.edgeId != null ? String(route.edgeId) : "";
-                  var edge = edgeId.length > 0 ? model.getCell(edgeId) : null;
+                  var edge = edgeId.length > 0 ? model2.getCell(edgeId) : null;
                   var edgeGeometry;
                   var nextPoints = [];
                   var edgeParent;
@@ -10305,12 +10355,12 @@
                   if (edge == null || !Array.isArray(route.points)) {
                     continue;
                   }
-                  edgeGeometry = model.getGeometry(edge);
+                  edgeGeometry = model2.getGeometry(edge);
                   if (edgeGeometry == null) {
                     continue;
                   }
-                  edgeParent = model.getParent(edge);
-                  parentGeometry = edgeParent != null ? model.getGeometry(edgeParent) : null;
+                  edgeParent = model2.getParent(edge);
+                  parentGeometry = edgeParent != null ? model2.getGeometry(edgeParent) : null;
                   parentOriginX = parentGeometry != null ? parentGeometry.x : 0;
                   parentOriginY = parentGeometry != null ? parentGeometry.y : 0;
                   points = route.points;
@@ -10330,32 +10380,76 @@
                   }
                   edgeGeometry = edgeGeometry.clone();
                   edgeGeometry.points = nextPoints.length > 0 ? nextPoints : null;
-                  model.setGeometry(edge, edgeGeometry);
-                  model.setStyle(
+                  model2.setGeometry(edge, edgeGeometry);
+                  model2.setStyle(
                     edge,
                     mxUtils.setStyle(
                       mxUtils.setStyle(
-                        mxUtils.setStyle(model.getStyle(edge) || "", "jettySize", "0"),
-                        "sourceJettySize",
-                        "0"
+                        mxUtils.setStyle(
+                          mxUtils.setStyle(
+                            mxUtils.setStyle(
+                              mxUtils.setStyle(model2.getStyle(edge) || "", "jettySize", "auto"),
+                              "sourceJettySize",
+                              "auto"
+                            ),
+                            "targetJettySize",
+                            "auto"
+                          ),
+                          "noEdgeStyle",
+                          null
+                        ),
+                        "edgeStyle",
+                        "orthogonalEdgeStyle"
                       ),
-                      "targetJettySize",
+                      "rounded",
                       "0"
                     )
                   );
+                  if (window.console != null) {
+                    console.log(
+                      "[electricalSymbols host bridge][edge-applied][json]",
+                      JSON.stringify(
+                        {
+                          edgeId,
+                          routePoints: route.points,
+                          geometryPoints: nextPoints.map(function(point2) {
+                            return { x: point2.x, y: point2.y };
+                          }),
+                          style: model2.getStyle(edge) || ""
+                        },
+                        null,
+                        2
+                      )
+                    );
+                  }
                 }
               }
             } finally {
-              model.endUpdate();
+              model2.endUpdate();
               state.updatingModel = false;
             }
             if (movedCells.length > 0) {
-              graph.setSelectionCells(movedCells);
-              graph.scrollCellToVisible(movedCells[0]);
+              graph2.setSelectionCells(movedCells);
+              graph2.scrollCellToVisible(movedCells[0]);
             }
             postResult(evt.source, payload, {
               movedCount: movedCells.length
             });
+            if (window.console != null) {
+              console.log(
+                "[electricalSymbols host bridge][result][json]",
+                JSON.stringify(
+                  {
+                    movedCount: movedCells.length,
+                    movedCellIds: movedCells.map(function(cell2) {
+                      return cell2 != null && cell2.id != null ? String(cell2.id) : "";
+                    })
+                  },
+                  null,
+                  2
+                )
+              );
+            }
           }
         } catch (e) {
           postError(evt.source, payload, e);
@@ -10366,6 +10460,12 @@
       },
       true
     );
+    graph.addListener(mxEvent.CELLS_MOVED, function(_sender, evt) {
+      if (ctx.state != null && ctx.state.updatingModel) {
+        return;
+      }
+      clearConnectedEdgesForCells(evt != null ? evt.getProperty("cells") : null);
+    });
     window.__eidElectricalHostBridgeInstalled = true;
   }
 
