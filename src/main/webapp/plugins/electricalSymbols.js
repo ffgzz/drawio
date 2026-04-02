@@ -10331,6 +10331,18 @@
                   edgeGeometry = edgeGeometry.clone();
                   edgeGeometry.points = nextPoints.length > 0 ? nextPoints : null;
                   model.setGeometry(edge, edgeGeometry);
+                  model.setStyle(
+                    edge,
+                    mxUtils.setStyle(
+                      mxUtils.setStyle(
+                        mxUtils.setStyle(model.getStyle(edge) || "", "jettySize", "0"),
+                        "sourceJettySize",
+                        "0"
+                      ),
+                      "targetJettySize",
+                      "0"
+                    )
+                  );
                 }
               }
             } finally {
