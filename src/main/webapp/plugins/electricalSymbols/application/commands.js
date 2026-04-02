@@ -44,6 +44,14 @@ function insertCellIntoFrame(cell, frame) {
   graph.scrollCellToVisible(graph.getSelectionCell());
 }
 
+function insertCellAtPoint(cell, point) {
+  var app = getApp();
+  var graph = app.ctx.graph;
+
+  graph.setSelectionCells(graph.importCells([cell], point.x, point.y));
+  graph.scrollCellToVisible(graph.getSelectionCell());
+}
+
 export function insertIntoGraph(spec) {
   var app = getApp();
   var graph = app.ctx.graph;
@@ -58,6 +66,22 @@ export function insertIntoGraph(spec) {
   }
 
   graph.scrollCellToVisible(graph.getSelectionCell());
+  showStatus("已插入图元", false);
+  setCanvasStatus("已插入图元");
+}
+
+export function insertIntoGraphAt(spec, point) {
+  var app = getApp();
+  var graph = app.ctx.graph;
+  var root = symbolDomainApi.buildSymbolCell(spec);
+
+  if (point != null && isFinite(point.x) && isFinite(point.y)) {
+    insertCellAtPoint(root, point);
+  } else {
+    var fallbackPoint = graph.getFreeInsertPoint();
+    insertCellAtPoint(root, fallbackPoint);
+  }
+
   showStatus("已插入图元", false);
   setCanvasStatus("已插入图元");
 }
@@ -283,6 +307,7 @@ export var commandApi = {
     insertCabinet,
     insertFrame,
     insertIntoGraph,
+    insertIntoGraphAt,
     refreshSelection,
     updateCabinetGap,
 };

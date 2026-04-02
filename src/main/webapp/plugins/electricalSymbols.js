@@ -3793,6 +3793,12 @@
     graph.setSelectionCells(graph.importCells([cell], insertPoint.x, insertPoint.y, frame));
     graph.scrollCellToVisible(graph.getSelectionCell());
   }
+  function insertCellAtPoint(cell, point) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    graph.setSelectionCells(graph.importCells([cell], point.x, point.y));
+    graph.scrollCellToVisible(graph.getSelectionCell());
+  }
   function insertIntoGraph(spec) {
     var app = getApp();
     var graph = app.ctx.graph;
@@ -3805,6 +3811,19 @@
       graph.setSelectionCells(graph.importCells([root], pt.x, pt.y));
     }
     graph.scrollCellToVisible(graph.getSelectionCell());
+    showStatus("\u5DF2\u63D2\u5165\u56FE\u5143", false);
+    setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u5143");
+  }
+  function insertIntoGraphAt(spec, point) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var root = symbolDomainApi.buildSymbolCell(spec);
+    if (point != null && isFinite(point.x) && isFinite(point.y)) {
+      insertCellAtPoint(root, point);
+    } else {
+      var fallbackPoint = graph.getFreeInsertPoint();
+      insertCellAtPoint(root, fallbackPoint);
+    }
     showStatus("\u5DF2\u63D2\u5165\u56FE\u5143", false);
     setCanvasStatus("\u5DF2\u63D2\u5165\u56FE\u5143");
   }
@@ -3978,6 +3997,7 @@
     insertCabinet,
     insertFrame,
     insertIntoGraph,
+    insertIntoGraphAt,
     refreshSelection,
     updateCabinetGap
   };
@@ -10059,6 +10079,284 @@
     model.addListener(mxEvent.CHANGE, modelSyncApi.handleModelChange);
   }
 
+  // runtime/hostBridge.js
+  function parseHostMessage(data) {
+    if (data == null) {
+      return null;
+    }
+    if (typeof data === "string") {
+      try {
+        return JSON.parse(data);
+      } catch (e) {
+        return null;
+      }
+    }
+    if (typeof data === "object") {
+      return data;
+    }
+    return null;
+  }
+  function resolveGraphInsertPoint(ctx, payload) {
+    var graph = ctx.graph;
+    var diagramContainer = ctx.ui != null ? ctx.ui.diagramContainer : null;
+    var scale = graph.view != null ? graph.view.scale || 1 : 1;
+    var translate = graph.view != null ? graph.view.translate : null;
+    var viewportX = Number(payload.viewportX);
+    var viewportY = Number(payload.viewportY);
+    if (diagramContainer == null || !isFinite(viewportX) || !isFinite(viewportY) || translate == null) {
+      return graph.getFreeInsertPoint();
+    }
+    return new mxPoint(
+      viewportX / scale + diagramContainer.scrollLeft / scale - translate.x,
+      viewportY / scale + diagramContainer.scrollTop / scale - translate.y
+    );
+  }
+  function installHostBridge(ctx) {
+    if (window.__eidElectricalHostBridgeInstalled) {
+      return;
+    }
+    var validSource = window.opener || window.parent;
+    function postReply(targetWindow, payload) {
+      if (targetWindow != null && typeof targetWindow.postMessage === "function") {
+        targetWindow.postMessage(JSON.stringify(payload), "*");
+      }
+    }
+    function postResult(targetWindow, payload, extra) {
+      postReply(
+        targetWindow,
+        Object.assign(
+          {
+            event: "eid-host-result",
+            action: payload != null ? payload.action : "",
+            actionId: payload != null ? payload.actionId : ""
+          },
+          extra || {}
+        )
+      );
+    }
+    function postError(targetWindow, payload, error) {
+      postReply(targetWindow, {
+        event: "eid-host-error",
+        action: payload != null ? payload.action : "",
+        actionId: payload != null ? payload.actionId : "",
+        error: error != null && error.message != null ? error.message : String(error)
+      });
+    }
+    function resolveSelectedFrame(payload) {
+      var targetFrameId = payload != null && payload.selectedFrameId != null ? String(payload.selectedFrameId) : "";
+      var targetGroupId = payload != null && payload.selectedGroupId != null ? String(payload.selectedGroupId) : "";
+      var frames;
+      var i;
+      if (targetFrameId.length > 0) {
+        return frameDomainApi.findFrameById(targetFrameId);
+      }
+      if (targetGroupId.length == 0) {
+        return null;
+      }
+      frames = frameDomainApi.getAllDrawingFrames();
+      for (i = 0; i < frames.length; i++) {
+        if (frameDomainApi.getFrameGroupId(frames[i]) == targetGroupId) {
+          return frames[i];
+        }
+      }
+      return null;
+    }
+    function resolveFrameCell(payload) {
+      var explicitFrameCellId = payload != null && payload.frameCellId != null ? String(payload.frameCellId) : "";
+      var explicitFrame = null;
+      if (explicitFrameCellId.length > 0) {
+        explicitFrame = ctx.model.getCell(explicitFrameCellId);
+        if (explicitFrame != null && frameDomainApi.findDrawingFrame(explicitFrame) === explicitFrame) {
+          return explicitFrame;
+        }
+      }
+      return resolveSelectedFrame(payload);
+    }
+    window.addEventListener(
+      "message",
+      function(evt) {
+        if (validSource != null && evt.source !== validSource) {
+          return;
+        }
+        var payload = parseHostMessage(evt.data);
+        if (payload == null || payload.action == null) {
+          return;
+        }
+        try {
+          if (payload.action === "createSymbol" && payload.spec != null) {
+            evt.stopImmediatePropagation();
+            var point = resolveGraphInsertPoint(ctx, payload);
+            commandApi.insertIntoGraphAt(payload.spec, point);
+            postResult(evt.source, payload, {
+              cellId: getAttr(ctx.graph.getSelectionCell(), "id")
+            });
+            return;
+          }
+          if (payload.action === "insertFrame" && payload.config != null) {
+            evt.stopImmediatePropagation();
+            var selectedFrame = resolveSelectedFrame(payload);
+            commandApi.insertFrame(
+              payload.config,
+              selectedFrame,
+              frameDomainApi.getAllDrawingFrames()
+            );
+            var insertedFrame = frameDomainApi.findDrawingFrame(
+              ctx.graph.getSelectionCell()
+            );
+            postResult(evt.source, payload, {
+              frameId: insertedFrame != null ? getAttr(insertedFrame, "frameId") : "",
+              groupId: insertedFrame != null ? frameDomainApi.getFrameGroupId(insertedFrame) : ""
+            });
+            return;
+          }
+          if (payload.action === "insertCabinet" && payload.cabinetModel != null) {
+            evt.stopImmediatePropagation();
+            commandApi.insertCabinet(payload.cabinetModel);
+            postResult(evt.source, payload, {
+              logicalCabinetId: payload.cabinetModel.logicalCabinetId != null ? String(payload.cabinetModel.logicalCabinetId) : ""
+            });
+            return;
+          }
+          if (payload.action === "getSelectionInfo") {
+            evt.stopImmediatePropagation();
+            var selectedCell = selectionApi.getSelectedCell();
+            var selectedFrame = selectionApi.getSelectedFrame();
+            postResult(evt.source, payload, {
+              selectedCellId: selectedCell != null && selectedCell.id != null ? String(selectedCell.id) : "",
+              selectedFrameCellId: selectedFrame != null && selectedFrame.id != null ? String(selectedFrame.id) : "",
+              selectedFrameId: selectedFrame != null ? getAttr(selectedFrame, "frameId") : "",
+              selectedGroupId: selectedFrame != null ? frameDomainApi.getFrameGroupId(selectedFrame) : ""
+            });
+            return;
+          }
+          if (payload.action === "applyLayoutPositions" && Array.isArray(payload.positions)) {
+            evt.stopImmediatePropagation();
+            var frame = resolveFrameCell(payload);
+            var graph = ctx.graph;
+            var model = ctx.model;
+            var state = ctx.state;
+            var movedCells = [];
+            var edgeMap = {};
+            var frameGeometry;
+            var frameOrigin;
+            var i;
+            if (frame == null) {
+              throw new Error("\u672A\u627E\u5230\u8981\u5E03\u5C40\u7684\u56FE\u6846");
+            }
+            frameGeometry = model.getGeometry(frame);
+            frameOrigin = {
+              x: frameGeometry != null ? frameGeometry.x : 0,
+              y: frameGeometry != null ? frameGeometry.y : 0
+            };
+            state.updatingModel = true;
+            model.beginUpdate();
+            try {
+              for (i = 0; i < payload.positions.length; i++) {
+                var item = payload.positions[i] || {};
+                var cellId = item.cellId != null ? String(item.cellId) : "";
+                var x = Number(item.x);
+                var y = Number(item.y);
+                var cell;
+                var geometry;
+                var nextGeometry;
+                var edges;
+                var j;
+                if (cellId.length == 0 || !isFinite(x) || !isFinite(y)) {
+                  continue;
+                }
+                cell = model.getCell(cellId);
+                if (cell == null || model.getParent(cell) !== frame) {
+                  continue;
+                }
+                geometry = model.getGeometry(cell);
+                if (geometry == null) {
+                  continue;
+                }
+                nextGeometry = geometry.clone();
+                nextGeometry.x = x;
+                nextGeometry.y = y;
+                model.setGeometry(cell, nextGeometry);
+                movedCells.push(cell);
+                edges = graph.getConnections(cell) || [];
+                for (j = 0; j < edges.length; j++) {
+                  if (edges[j] != null && edges[j].id != null) {
+                    edgeMap[String(edges[j].id)] = edges[j];
+                  }
+                }
+              }
+              for (var edgeId in edgeMap) {
+                if (edgeMap.hasOwnProperty(edgeId)) {
+                  clearEdgePoints(edgeMap[edgeId]);
+                }
+              }
+              if (Array.isArray(payload.edgeRoutes)) {
+                for (i = 0; i < payload.edgeRoutes.length; i++) {
+                  var route = payload.edgeRoutes[i] || {};
+                  var edgeId = route.edgeId != null ? String(route.edgeId) : "";
+                  var edge = edgeId.length > 0 ? model.getCell(edgeId) : null;
+                  var edgeGeometry;
+                  var nextPoints = [];
+                  var edgeParent;
+                  var parentGeometry;
+                  var parentOriginX;
+                  var parentOriginY;
+                  var points;
+                  var j;
+                  if (edge == null || !Array.isArray(route.points)) {
+                    continue;
+                  }
+                  edgeGeometry = model.getGeometry(edge);
+                  if (edgeGeometry == null) {
+                    continue;
+                  }
+                  edgeParent = model.getParent(edge);
+                  parentGeometry = edgeParent != null ? model.getGeometry(edgeParent) : null;
+                  parentOriginX = parentGeometry != null ? parentGeometry.x : 0;
+                  parentOriginY = parentGeometry != null ? parentGeometry.y : 0;
+                  points = route.points;
+                  for (j = 0; j < points.length; j++) {
+                    var point = points[j] || {};
+                    var px = Number(point.x);
+                    var py = Number(point.y);
+                    if (!isFinite(px) || !isFinite(py)) {
+                      continue;
+                    }
+                    nextPoints.push(
+                      new mxPoint(
+                        px + frameOrigin.x - parentOriginX,
+                        py + frameOrigin.y - parentOriginY
+                      )
+                    );
+                  }
+                  edgeGeometry = edgeGeometry.clone();
+                  edgeGeometry.points = nextPoints.length > 0 ? nextPoints : null;
+                  model.setGeometry(edge, edgeGeometry);
+                }
+              }
+            } finally {
+              model.endUpdate();
+              state.updatingModel = false;
+            }
+            if (movedCells.length > 0) {
+              graph.setSelectionCells(movedCells);
+              graph.scrollCellToVisible(movedCells[0]);
+            }
+            postResult(evt.source, payload, {
+              movedCount: movedCells.length
+            });
+          }
+        } catch (e) {
+          postError(evt.source, payload, e);
+          if (window.console != null) {
+            console.error("[electricalSymbols] host bridge failed", e);
+          }
+        }
+      },
+      true
+    );
+    window.__eidElectricalHostBridgeInstalled = true;
+  }
+
   // ui/topActionBar.js
   function installTopActionBar(options) {
     var ui = options.ui;
@@ -10090,6 +10388,47 @@
   }
 
   // bootstrap/createApp.js
+  function applyEmbeddedEditorLayout(ui) {
+    if (ui == null) {
+      return;
+    }
+    if (typeof ui.toggleShapesPanel == "function" && ui.isShapesPanelVisible()) {
+      ui.toggleShapesPanel(false);
+    } else if (ui.sidebarContainer != null) {
+      ui.hsplitPosition = 0;
+      ui.sidebarContainer.style.display = "none";
+    }
+    if (typeof ui.toggleFormatPanel == "function" && ui.isFormatPanelVisible()) {
+      ui.toggleFormatPanel(false);
+    } else if (ui.formatContainer != null) {
+      ui.formatWidth = 0;
+      ui.formatContainer.style.display = "none";
+    }
+    if (typeof ui.setTabContainerVisible == "function") {
+      ui.setTabContainerVisible(false, false);
+    } else if (ui.tabContainer != null) {
+      ui.tabContainer.style.display = "none";
+    }
+    if (ui.hsplit != null) {
+      ui.hsplit.style.display = "none";
+    }
+    if (ui.sidebarContainer != null) {
+      ui.sidebarContainer.style.width = "0px";
+      ui.sidebarContainer.style.display = "none";
+    }
+    if (ui.formatContainer != null) {
+      ui.formatContainer.style.width = "0px";
+      ui.formatContainer.style.display = "none";
+    }
+    if (ui.tabContainer != null) {
+      ui.tabContainer.style.display = "none";
+    }
+    if (typeof ui.refresh == "function") {
+      ui.refresh(true);
+    } else if (ui.editor != null && ui.editor.graph != null) {
+      ui.editor.graph.sizeDidChange();
+    }
+  }
   function installTopBar(ui) {
     installTopActionBar({
       ui,
@@ -10104,6 +10443,8 @@
   }
   function activateAppRuntime(app) {
     var ui = app.ctx.ui;
+    applyEmbeddedEditorLayout(ui);
+    installHostBridge(app.ctx);
     portSwapModeApi.installGraphClickBehavior({
       isCabinetGap,
       openCabinetGapDialog: cabinetDialogsApi.openCabinetGapDialog,
