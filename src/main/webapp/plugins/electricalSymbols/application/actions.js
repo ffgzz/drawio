@@ -9,6 +9,7 @@ import { backendServiceApi } from "../services/backend.js";
 import { backendDialogsApi } from "../ui/backendDialogs.js";
 import { cabinetDialogsApi } from "../ui/cabinetDialog.js";
 import { openCreateFromLibraryDialog } from "../ui/createInstanceDialog.js";
+import { openExportDialog } from "../ui/exportDialog.js";
 import { openSvgExportDialog } from "../ui/exportSvgDialog.js";
 import { openInsertFrameDialog } from "../ui/frameDialog.js";
 import { openEditInstanceDialog } from "../ui/instanceEditor.js";
@@ -45,6 +46,9 @@ export var actionApi = {
   },
   electricalEditInstance: function () {
     return execute(openEditInstanceDialog);
+  },
+  electricalExport: function () {
+    return execute(openExportDialog);
   },
   electricalExportSvg: function () {
     return execute(openSvgExportDialog);

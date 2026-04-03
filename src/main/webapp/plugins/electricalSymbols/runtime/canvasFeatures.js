@@ -10,42 +10,18 @@ import { modelSyncApi } from "./modelSync.js";
 import { portSwapModeApi } from "./portSwapMode.js";
 import { snapshotDomainApi } from "../domain/snapshot.js";
 export var ACTION_ITEMS = [
-  { resourceKey: "electricalSymbols", actionKey: "electricalSymbols" },
-  { resourceKey: "electricalBrowse", actionKey: "electricalBrowse" },
-  { resourceKey: "electricalCreate", actionKey: "electricalCreate" },
-  {
-    resourceKey: "electricalEditInstance",
-    actionKey: "electricalEditInstance",
-  },
   {
     resourceKey: "electricalComposeInstance",
     actionKey: "electricalComposeInstance",
   },
   {
-    resourceKey: "electricalInsertFrame",
-    actionKey: "electricalInsertFrame",
-  },
-  {
-    resourceKey: "electricalInsertCabinet",
-    actionKey: "electricalInsertCabinet",
-  },
-  { resourceKey: "electricalClearScreen", actionKey: "electricalClearScreen" },
-  {
     resourceKey: "electricalReassignPort",
     actionKey: "electricalReassignPort",
   },
-  { resourceKey: "electricalExportSvg", actionKey: "electricalExportSvg" },
+  { resourceKey: "electricalExport", actionKey: "electricalExport" },
   {
     resourceKey: "electricalSaveBackend",
     actionKey: "electricalSaveBackend",
-  },
-  {
-    resourceKey: "electricalNewBackend",
-    actionKey: "electricalNewBackend",
-  },
-  {
-    resourceKey: "electricalLoadBackend",
-    actionKey: "electricalLoadBackend",
   },
   {
     resourceKey: "electricalRollbackBackend",
@@ -66,7 +42,7 @@ var EXTRA_MENU_ACTIONS = [
   "electricalClearScreen",
   "electricalReassignPort",
   "electricalRefresh",
-  "electricalExportSvg",
+  "electricalExport",
   "electricalSaveBackend",
   "electricalNewBackend",
   "electricalLoadBackend",
@@ -145,6 +121,7 @@ export function installCanvasFeatures(ctx) {
     "electricalComposeInstance",
     actions.electricalComposeInstance,
   );
+  ui.actions.addAction("electricalExport", actions.electricalExport);
   ui.actions.addAction("electricalInsertFrame", actions.electricalInsertFrame);
   ui.actions.addAction(
     "electricalInsertCabinet",

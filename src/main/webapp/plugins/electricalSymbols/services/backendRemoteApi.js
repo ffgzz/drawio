@@ -4,6 +4,14 @@
  */
 import { cloneJson, toInt, trim, uniqueStrings } from "../utils/base.js";
 
+function emitBackendSavePayload(deps, payload) {
+  if (deps == null || typeof deps.emitBackendSavePayload !== "function") {
+    return;
+  }
+
+  deps.emitBackendSavePayload(cloneJson(payload));
+}
+
 export function requestBackendJson(method, url, body) {
   var options = {
     method,
@@ -40,6 +48,7 @@ export async function saveDiagramToBackend(state, deps, title) {
   var diagramId = trim(state.backendDiagramId);
   var pendingChanges = cloneJson(state.pendingChangeRecords || []);
   var response;
+  var baseVersion = Math.max(0, state.backendDiagramVersion);
 
   if (diagramId.length == 0) {
     response = await requestBackendJson("POST", backendUrl + "/diagrams", {
@@ -69,11 +78,27 @@ export async function saveDiagramToBackend(state, deps, title) {
   }
 
   var snapshot = deps.exportDiagramSnapshot();
+  var emittedTitle;
 
   snapshot.diagramId = diagramId;
   var snapshotDiff = deps.computeSnapshotChanges(state.backendLastSnapshot, snapshot);
+  emittedTitle = trim(title) || state.backendDiagramTitle || "未命名图纸";
 
   if (snapshotDiff.changes.length == 0) {
+    emitBackendSavePayload(deps, {
+      diagramId,
+      title: emittedTitle,
+      actorId,
+      baseVersion,
+      resultVersion: baseVersion,
+      savedAt: new Date().toISOString(),
+      hasChanges: false,
+      snapshot,
+      diff: {
+        touchedObjectIds: [],
+        changes: [],
+      },
+    });
     state.backendLastSnapshot =
       latestSnapshot != null ? cloneJson(state.backendLastSnapshot) : snapshot;
     deps.resetPendingChangeRecords(
@@ -124,7 +149,7 @@ export async function saveDiagramToBackend(state, deps, title) {
     "POST",
     backendUrl + "/diagrams/" + encodeURIComponent(diagramId) + "/commits",
     {
-      baseVersion: Math.max(0, state.backendDiagramVersion),
+      baseVersion,
       actorId,
       touchedObjectIds: diff.touchedObjectIds,
       changes: diff.changes,
@@ -138,6 +163,17 @@ export async function saveDiagramToBackend(state, deps, title) {
     response.snapshot,
     trim(title) || state.backendDiagramTitle,
   );
+  emitBackendSavePayload(deps, {
+    diagramId,
+    title: emittedTitle,
+    actorId,
+    baseVersion,
+    resultVersion: Math.max(0, toInt(response.version, baseVersion)),
+    savedAt: new Date().toISOString(),
+    hasChanges: diff.changes.length > 0,
+    snapshot,
+    diff,
+  });
   deps.showStatus(
     "已保存到后端：" +
       (state.backendDiagramTitle || diagramId) +

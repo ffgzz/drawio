@@ -10,6 +10,7 @@ export const ELECTRICAL_RESOURCE_ENTRIES = [
   "electricalEditInstance=编辑图元实例",
   "electricalComposeInstance=组合图元实例",
   "electricalRefresh=刷新电气图元",
+  "electricalExport=导出",
   "electricalExportSvg=导出SVG",
   "electricalInsertFrame=插入图框",
   "electricalInsertCabinet=插入配电柜",

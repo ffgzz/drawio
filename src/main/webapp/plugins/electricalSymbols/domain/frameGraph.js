@@ -4,7 +4,6 @@
  */
 import {
   applyFrameValueMetadata,
-  createFramePageLabelCell,
   makeFrameStyle,
   normalizeFrameConfig,
 } from "./frameCore.js";
@@ -309,7 +308,6 @@ export function createFrameDomain() {
     );
     root.vertex = true;
     root.setConnectable(false);
-    root.insert(createFramePageLabelCell(pageNumber, config));
     return root;
   }
 

@@ -209,6 +209,7 @@
     "electricalEditInstance=\u7F16\u8F91\u56FE\u5143\u5B9E\u4F8B",
     "electricalComposeInstance=\u7EC4\u5408\u56FE\u5143\u5B9E\u4F8B",
     "electricalRefresh=\u5237\u65B0\u7535\u6C14\u56FE\u5143",
+    "electricalExport=\u5BFC\u51FA",
     "electricalExportSvg=\u5BFC\u51FASVG",
     "electricalInsertFrame=\u63D2\u5165\u56FE\u6846",
     "electricalInsertCabinet=\u63D2\u5165\u914D\u7535\u67DC",
@@ -657,22 +658,6 @@
     }
     return node;
   }
-  function createFramePageLabelCell(pageNumber, frameConfig) {
-    var config = normalizeFrameConfig(frameConfig);
-    var width = 140;
-    var height = 24;
-    var geometry = new mxGeometry(config.width - width - 16, 10, width, height);
-    var value = createMetaCell(
-      ELECTRICAL_CONSTANTS.FRAME_LABEL_TAG,
-      ELECTRICAL_CONSTANTS.FRAME_LABEL_KIND,
-      "page",
-      "PAGE " + pageNumber
-    );
-    var cell = new mxCell(value, geometry, makeFrameLabelStyle());
-    cell.vertex = true;
-    cell.setConnectable(false);
-    return cell;
-  }
 
   // domain/cabinetCore.js
   function makeCabinetRootStyle() {
@@ -1103,7 +1088,6 @@
       );
       root.vertex = true;
       root.setConnectable(false);
-      root.insert(createFramePageLabelCell(pageNumber, config));
       return root;
     }
     function addTopLevelCell2(cell) {
@@ -5642,6 +5626,547 @@
     setSelectedCabinetGap
   };
 
+  // runtime/hostBridge.js
+  function parseHostMessage(data) {
+    if (data == null) {
+      return null;
+    }
+    if (typeof data === "string") {
+      try {
+        return JSON.parse(data);
+      } catch (e) {
+        return null;
+      }
+    }
+    if (typeof data === "object") {
+      return data;
+    }
+    return null;
+  }
+  function resolveGraphInsertPoint(ctx, payload) {
+    var graph = ctx.graph;
+    var diagramContainer = ctx.ui != null ? ctx.ui.diagramContainer : null;
+    var scale = graph.view != null ? graph.view.scale || 1 : 1;
+    var translate = graph.view != null ? graph.view.translate : null;
+    var viewportX = Number(payload.viewportX);
+    var viewportY = Number(payload.viewportY);
+    if (diagramContainer == null || !isFinite(viewportX) || !isFinite(viewportY) || translate == null) {
+      return graph.getFreeInsertPoint();
+    }
+    return new mxPoint(
+      viewportX / scale + diagramContainer.scrollLeft / scale - translate.x,
+      viewportY / scale + diagramContainer.scrollTop / scale - translate.y
+    );
+  }
+  function clamp2(value, min, max) {
+    if (!isFinite(value)) {
+      return min;
+    }
+    return Math.max(min, Math.min(max, value));
+  }
+  function emitHostEvent(eventName, payload) {
+    var targetWindow = window.opener || window.parent;
+    if (targetWindow == null || targetWindow === window || typeof targetWindow.postMessage !== "function") {
+      return;
+    }
+    targetWindow.postMessage(
+      JSON.stringify(
+        Object.assign(
+          {
+            event: eventName
+          },
+          payload || {}
+        )
+      ),
+      "*"
+    );
+  }
+  function installHostBridge(ctx) {
+    if (window.__eidElectricalHostBridgeInstalled) {
+      return;
+    }
+    var validSource = window.opener || window.parent;
+    var graph = ctx.graph;
+    var model = ctx.model != null ? ctx.model : graph != null && typeof graph.getModel === "function" ? graph.getModel() : null;
+    var runtimeState = ctx.state != null ? ctx.state : {};
+    var constants = ctx.constants;
+    function createFrameTemplateLabelCell(frame, label) {
+      var frameConfig = frameDomainApi.getFrameConfig(frame);
+      var width = Math.max(40, Math.round(Number(label.width) || 120));
+      var height = Math.max(20, Math.round(Number(label.height) || 26));
+      var maxX = Math.max(0, frameConfig.width - width);
+      var maxY = Math.max(0, frameConfig.height - height);
+      var geometry = new mxGeometry(
+        clamp2(Math.round(Number(label.x) || 0), 0, maxX),
+        clamp2(Math.round(Number(label.y) || 0), 0, maxY),
+        width,
+        height
+      );
+      var value = createMetaCell(
+        constants.FRAME_LABEL_TAG,
+        "frameTemplateLabel",
+        label.id != null ? String(label.id) : "",
+        label.text != null ? String(label.text) : ""
+      );
+      var style = mxUtils.setStyle(
+        makeFrameLabelStyle(),
+        "align",
+        label.align != null ? String(label.align) : "center"
+      );
+      var fieldPath = label.fieldPath != null ? String(label.fieldPath) : "";
+      var cell;
+      if (fieldPath.length > 0) {
+        value.setAttribute("fieldPath", fieldPath);
+      }
+      cell = new mxCell(value, geometry, style);
+      cell.vertex = true;
+      cell.setConnectable(false);
+      return cell;
+    }
+    function resetEdgeAutoStyle(edge) {
+      var style = model.getStyle(edge) || "";
+      style = mxUtils.setStyle(style, "noEdgeStyle", null);
+      style = mxUtils.setStyle(style, "edgeStyle", "orthogonalEdgeStyle");
+      style = mxUtils.setStyle(style, "entryX", null);
+      style = mxUtils.setStyle(style, "entryY", null);
+      style = mxUtils.setStyle(style, "exitX", null);
+      style = mxUtils.setStyle(style, "exitY", null);
+      style = mxUtils.setStyle(style, "jettySize", "auto");
+      style = mxUtils.setStyle(style, "sourceJettySize", "auto");
+      style = mxUtils.setStyle(style, "targetJettySize", "auto");
+      style = mxUtils.setStyle(style, "rounded", "0");
+      model.setStyle(edge, style);
+    }
+    function clearConnectedEdgesForCells(cells) {
+      var edgeMap = {};
+      var i;
+      var j;
+      if (!Array.isArray(cells) || cells.length == 0) {
+        return;
+      }
+      for (i = 0; i < cells.length; i++) {
+        var cell = cells[i];
+        if (cell == null || !model.isVertex(cell)) {
+          continue;
+        }
+        var edges = graph.getConnections(cell) || [];
+        for (j = 0; j < edges.length; j++) {
+          if (edges[j] != null && edges[j].id != null) {
+            edgeMap[String(edges[j].id)] = edges[j];
+          }
+        }
+      }
+      for (var edgeId in edgeMap) {
+        if (edgeMap.hasOwnProperty(edgeId)) {
+          clearEdgePoints(edgeMap[edgeId]);
+          resetEdgeAutoStyle(edgeMap[edgeId]);
+        }
+      }
+    }
+    function postReply(targetWindow, payload) {
+      if (targetWindow != null && typeof targetWindow.postMessage === "function") {
+        targetWindow.postMessage(JSON.stringify(payload), "*");
+      }
+    }
+    function postResult(targetWindow, payload, extra) {
+      postReply(
+        targetWindow,
+        Object.assign(
+          {
+            event: "eid-host-result",
+            action: payload != null ? payload.action : "",
+            actionId: payload != null ? payload.actionId : ""
+          },
+          extra || {}
+        )
+      );
+    }
+    function postError(targetWindow, payload, error) {
+      postReply(targetWindow, {
+        event: "eid-host-error",
+        action: payload != null ? payload.action : "",
+        actionId: payload != null ? payload.actionId : "",
+        error: error != null && error.message != null ? error.message : String(error)
+      });
+    }
+    function resolveSelectedFrame(payload) {
+      var targetFrameId = payload != null && payload.selectedFrameId != null ? String(payload.selectedFrameId) : "";
+      var targetGroupId = payload != null && payload.selectedGroupId != null ? String(payload.selectedGroupId) : "";
+      var frames;
+      var i;
+      if (targetFrameId.length > 0) {
+        return frameDomainApi.findFrameById(targetFrameId);
+      }
+      if (targetGroupId.length == 0) {
+        return null;
+      }
+      frames = frameDomainApi.getAllDrawingFrames();
+      for (i = 0; i < frames.length; i++) {
+        if (frameDomainApi.getFrameGroupId(frames[i]) == targetGroupId) {
+          return frames[i];
+        }
+      }
+      return null;
+    }
+    function resolveFrameCell(payload) {
+      var explicitFrameCellId = payload != null && payload.frameCellId != null ? String(payload.frameCellId) : "";
+      var explicitFrame = null;
+      if (explicitFrameCellId.length > 0) {
+        explicitFrame = ctx.model.getCell(explicitFrameCellId);
+        if (explicitFrame != null && frameDomainApi.findDrawingFrame(explicitFrame) === explicitFrame) {
+          return explicitFrame;
+        }
+      }
+      return resolveSelectedFrame(payload);
+    }
+    window.addEventListener(
+      "message",
+      function(evt) {
+        if (validSource != null && evt.source !== validSource) {
+          return;
+        }
+        var payload = parseHostMessage(evt.data);
+        if (payload == null || payload.action == null) {
+          return;
+        }
+        try {
+          if (payload.action === "createSymbol" && payload.spec != null) {
+            evt.stopImmediatePropagation();
+            var point = resolveGraphInsertPoint(ctx, payload);
+            commandApi.insertIntoGraphAt(payload.spec, point);
+            postResult(evt.source, payload, {
+              cellId: getAttr(ctx.graph.getSelectionCell(), "id")
+            });
+            return;
+          }
+          if (payload.action === "insertFrame" && payload.config != null) {
+            evt.stopImmediatePropagation();
+            var selectedFrame = resolveSelectedFrame(payload);
+            commandApi.insertFrame(
+              payload.config,
+              selectedFrame,
+              frameDomainApi.getAllDrawingFrames()
+            );
+            var insertedFrame = frameDomainApi.findDrawingFrame(
+              ctx.graph.getSelectionCell()
+            );
+            if (insertedFrame != null && Array.isArray(payload.frameLabels) && payload.frameLabels.length > 0) {
+              var frameLabels = payload.frameLabels;
+              var insertedCells = [];
+              var labelIndex;
+              runtimeState.updatingModel = true;
+              if (model2 != null) {
+                model2.beginUpdate();
+              }
+              try {
+                for (labelIndex = 0; labelIndex < frameLabels.length; labelIndex++) {
+                  var frameLabel = frameLabels[labelIndex];
+                  if (frameLabel == null) {
+                    continue;
+                  }
+                  insertedCells.push(
+                    createFrameTemplateLabelCell(insertedFrame, frameLabel)
+                  );
+                }
+                for (labelIndex = 0; labelIndex < insertedCells.length; labelIndex++) {
+                  if (model2 != null) {
+                    model2.add(insertedFrame, insertedCells[labelIndex]);
+                  } else {
+                    insertedFrame.insert(insertedCells[labelIndex]);
+                  }
+                }
+              } finally {
+                if (model2 != null) {
+                  model2.endUpdate();
+                }
+                runtimeState.updatingModel = false;
+              }
+            }
+            postResult(evt.source, payload, {
+              frameId: insertedFrame != null ? getAttr(insertedFrame, "frameId") : "",
+              groupId: insertedFrame != null ? frameDomainApi.getFrameGroupId(insertedFrame) : "",
+              frameCellId: insertedFrame != null && insertedFrame.id != null ? String(insertedFrame.id) : ""
+            });
+            return;
+          }
+          if (payload.action === "insertCabinet" && payload.cabinetModel != null) {
+            evt.stopImmediatePropagation();
+            commandApi.insertCabinet(payload.cabinetModel);
+            postResult(evt.source, payload, {
+              logicalCabinetId: payload.cabinetModel.logicalCabinetId != null ? String(payload.cabinetModel.logicalCabinetId) : ""
+            });
+            return;
+          }
+          if (payload.action === "getSelectionInfo") {
+            evt.stopImmediatePropagation();
+            var selectedCell = selectionApi.getSelectedCell();
+            var selectedFrame = selectionApi.getSelectedFrame();
+            postResult(evt.source, payload, {
+              selectedCellId: selectedCell != null && selectedCell.id != null ? String(selectedCell.id) : "",
+              selectedFrameCellId: selectedFrame != null && selectedFrame.id != null ? String(selectedFrame.id) : "",
+              selectedFrameId: selectedFrame != null ? getAttr(selectedFrame, "frameId") : "",
+              selectedGroupId: selectedFrame != null ? frameDomainApi.getFrameGroupId(selectedFrame) : ""
+            });
+            return;
+          }
+          if (payload.action === "getDiagramSnapshot") {
+            evt.stopImmediatePropagation();
+            postResult(evt.source, payload, {
+              snapshot: snapshotDomainApi.exportDiagramSnapshot()
+            });
+            return;
+          }
+          if (payload.action === "applyLayoutPositions" && Array.isArray(payload.positions)) {
+            evt.stopImmediatePropagation();
+            var frame = resolveFrameCell(payload);
+            var graph2 = ctx.graph;
+            var model2 = ctx.model != null ? ctx.model : graph2 != null && typeof graph2.getModel === "function" ? graph2.getModel() : null;
+            var state = ctx.state != null ? ctx.state : runtimeState;
+            var movedCells = [];
+            var edgeMap = {};
+            var frameGeometry;
+            var frameOrigin;
+            var i;
+            if (frame == null) {
+              throw new Error("\u672A\u627E\u5230\u8981\u5E03\u5C40\u7684\u56FE\u6846");
+            }
+            frameGeometry = model2.getGeometry(frame);
+            frameOrigin = {
+              x: frameGeometry != null ? frameGeometry.x : 0,
+              y: frameGeometry != null ? frameGeometry.y : 0
+            };
+            if (window.console != null) {
+              console.log(
+                "[electricalSymbols host bridge][request][json]",
+                JSON.stringify(
+                  {
+                    frameCellId: payload.frameCellId || "",
+                    frameId: getAttr(frame, "frameId"),
+                    positions: payload.positions,
+                    edgeRoutes: payload.edgeRoutes,
+                    frameOrigin,
+                    frameGeometry: frameGeometry != null ? {
+                      x: frameGeometry.x,
+                      y: frameGeometry.y,
+                      width: frameGeometry.width,
+                      height: frameGeometry.height,
+                      relative: !!frameGeometry.relative
+                    } : null
+                  },
+                  null,
+                  2
+                )
+              );
+            }
+            runtimeState.updatingModel = true;
+            model2.beginUpdate();
+            try {
+              for (i = 0; i < payload.positions.length; i++) {
+                var item = payload.positions[i] || {};
+                var cellId = item.cellId != null ? String(item.cellId) : "";
+                var x = Number(item.x);
+                var y = Number(item.y);
+                var cell;
+                var geometry;
+                var nextGeometry;
+                var edges;
+                var j;
+                if (cellId.length == 0 || !isFinite(x) || !isFinite(y)) {
+                  continue;
+                }
+                cell = model2.getCell(cellId);
+                if (cell == null) {
+                  continue;
+                }
+                geometry = model2.getGeometry(cell);
+                if (geometry == null) {
+                  continue;
+                }
+                nextGeometry = geometry.clone();
+                if (model2.getParent(cell) === frame) {
+                  nextGeometry.x = x;
+                  nextGeometry.y = y;
+                } else {
+                  nextGeometry.x = x + frameOrigin.x;
+                  nextGeometry.y = y + frameOrigin.y;
+                }
+                model2.setGeometry(cell, nextGeometry);
+                movedCells.push(cell);
+                edges = graph2.getConnections(cell) || [];
+                for (j = 0; j < edges.length; j++) {
+                  if (edges[j] != null && edges[j].id != null) {
+                    edgeMap[String(edges[j].id)] = edges[j];
+                  }
+                }
+              }
+              for (var edgeId in edgeMap) {
+                if (edgeMap.hasOwnProperty(edgeId)) {
+                  clearEdgePoints(edgeMap[edgeId]);
+                }
+              }
+              if (Array.isArray(payload.edgeRoutes)) {
+                for (i = 0; i < payload.edgeRoutes.length; i++) {
+                  var route = payload.edgeRoutes[i] || {};
+                  var edgeId = route.edgeId != null ? String(route.edgeId) : "";
+                  var edge = edgeId.length > 0 ? model2.getCell(edgeId) : null;
+                  var edgeGeometry;
+                  var nextPoints = [];
+                  var edgeParent;
+                  var parentGeometry;
+                  var parentOriginX;
+                  var parentOriginY;
+                  var points;
+                  var j;
+                  if (edge == null || !Array.isArray(route.points)) {
+                    continue;
+                  }
+                  edgeGeometry = model2.getGeometry(edge);
+                  if (edgeGeometry == null) {
+                    continue;
+                  }
+                  edgeParent = model2.getParent(edge);
+                  parentGeometry = edgeParent != null ? model2.getGeometry(edgeParent) : null;
+                  parentOriginX = parentGeometry != null ? parentGeometry.x : 0;
+                  parentOriginY = parentGeometry != null ? parentGeometry.y : 0;
+                  points = route.points;
+                  for (j = 0; j < points.length; j++) {
+                    var point = points[j] || {};
+                    var px = Number(point.x);
+                    var py = Number(point.y);
+                    if (!isFinite(px) || !isFinite(py)) {
+                      continue;
+                    }
+                    nextPoints.push(
+                      new mxPoint(
+                        px + frameOrigin.x - parentOriginX,
+                        py + frameOrigin.y - parentOriginY
+                      )
+                    );
+                  }
+                  edgeGeometry = edgeGeometry.clone();
+                  edgeGeometry.points = nextPoints.length > 0 ? nextPoints : null;
+                  model2.setGeometry(edge, edgeGeometry);
+                  var nextStyle = model2.getStyle(edge) || "";
+                  if (route.sourcePortId != null && String(route.sourcePortId).length > 0) {
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "sourcePortId",
+                      String(route.sourcePortId)
+                    );
+                  }
+                  if (route.targetPortId != null && String(route.targetPortId).length > 0) {
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "targetPortId",
+                      String(route.targetPortId)
+                    );
+                  }
+                  nextStyle = mxUtils.setStyle(nextStyle, "entryX", null);
+                  nextStyle = mxUtils.setStyle(nextStyle, "entryY", null);
+                  nextStyle = mxUtils.setStyle(nextStyle, "exitX", null);
+                  nextStyle = mxUtils.setStyle(nextStyle, "exitY", null);
+                  if (route.manual) {
+                    nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "0");
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "sourceJettySize",
+                      "0"
+                    );
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "targetJettySize",
+                      "0"
+                    );
+                    nextStyle = mxUtils.setStyle(nextStyle, "noEdgeStyle", "1");
+                    nextStyle = mxUtils.setStyle(nextStyle, "edgeStyle", null);
+                  } else {
+                    nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "auto");
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "sourceJettySize",
+                      "auto"
+                    );
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "targetJettySize",
+                      "auto"
+                    );
+                    nextStyle = mxUtils.setStyle(nextStyle, "noEdgeStyle", null);
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "edgeStyle",
+                      "orthogonalEdgeStyle"
+                    );
+                  }
+                  nextStyle = mxUtils.setStyle(nextStyle, "rounded", "0");
+                  model2.setStyle(edge, nextStyle);
+                  if (window.console != null) {
+                    console.log(
+                      "[electricalSymbols host bridge][edge-applied][json]",
+                      JSON.stringify(
+                        {
+                          edgeId,
+                          routePoints: route.points,
+                          sourcePortId: route.sourcePortId != null ? String(route.sourcePortId) : "",
+                          targetPortId: route.targetPortId != null ? String(route.targetPortId) : "",
+                          manual: !!route.manual,
+                          geometryPoints: nextPoints.map(function(point2) {
+                            return { x: point2.x, y: point2.y };
+                          }),
+                          style: model2.getStyle(edge) || ""
+                        },
+                        null,
+                        2
+                      )
+                    );
+                  }
+                }
+              }
+            } finally {
+              model2.endUpdate();
+              runtimeState.updatingModel = false;
+            }
+            if (movedCells.length > 0) {
+              graph2.setSelectionCells(movedCells);
+              graph2.scrollCellToVisible(movedCells[0]);
+            }
+            postResult(evt.source, payload, {
+              movedCount: movedCells.length
+            });
+            if (window.console != null) {
+              console.log(
+                "[electricalSymbols host bridge][result][json]",
+                JSON.stringify(
+                  {
+                    movedCount: movedCells.length,
+                    movedCellIds: movedCells.map(function(cell2) {
+                      return cell2 != null && cell2.id != null ? String(cell2.id) : "";
+                    })
+                  },
+                  null,
+                  2
+                )
+              );
+            }
+          }
+        } catch (e) {
+          postError(evt.source, payload, e);
+          if (window.console != null) {
+            console.error("[electricalSymbols] host bridge failed", e);
+          }
+        }
+      },
+      true
+    );
+    graph.addListener(mxEvent.CELLS_MOVED, function(_sender, evt) {
+      if (runtimeState.updatingModel) {
+        return;
+      }
+      clearConnectedEdgesForCells(evt != null ? evt.getProperty("cells") : null);
+    });
+    window.__eidElectricalHostBridgeInstalled = true;
+  }
+
   // services/backendSession.js
   function normalizeBackendBaseUrl(url, constants) {
     var normalized = trim(url).replace(/\/+$/, "");
@@ -5717,6 +6242,12 @@
   }
 
   // services/backendRemoteApi.js
+  function emitBackendSavePayload(deps, payload) {
+    if (deps == null || typeof deps.emitBackendSavePayload !== "function") {
+      return;
+    }
+    deps.emitBackendSavePayload(cloneJson(payload));
+  }
   function requestBackendJson(method, url, body) {
     var options = {
       method,
@@ -5748,6 +6279,7 @@
     var diagramId = trim(state.backendDiagramId);
     var pendingChanges = cloneJson(state.pendingChangeRecords || []);
     var response;
+    var baseVersion = Math.max(0, state.backendDiagramVersion);
     if (diagramId.length == 0) {
       response = await requestBackendJson("POST", backendUrl + "/diagrams", {
         title: trim(title) || "\u672A\u547D\u540D\u56FE\u7EB8"
@@ -5772,9 +6304,25 @@
       state.backendLastSnapshot = deps.normalizeSnapshotGenericIds(latestSnapshot);
     }
     var snapshot = deps.exportDiagramSnapshot();
+    var emittedTitle;
     snapshot.diagramId = diagramId;
     var snapshotDiff = deps.computeSnapshotChanges(state.backendLastSnapshot, snapshot);
+    emittedTitle = trim(title) || state.backendDiagramTitle || "\u672A\u547D\u540D\u56FE\u7EB8";
     if (snapshotDiff.changes.length == 0) {
+      emitBackendSavePayload(deps, {
+        diagramId,
+        title: emittedTitle,
+        actorId,
+        baseVersion,
+        resultVersion: baseVersion,
+        savedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        hasChanges: false,
+        snapshot,
+        diff: {
+          touchedObjectIds: [],
+          changes: []
+        }
+      });
       state.backendLastSnapshot = latestSnapshot != null ? cloneJson(state.backendLastSnapshot) : snapshot;
       deps.resetPendingChangeRecords(
         latestSnapshot != null ? state.backendLastSnapshot : snapshot
@@ -5818,7 +6366,7 @@
       "POST",
       backendUrl + "/diagrams/" + encodeURIComponent(diagramId) + "/commits",
       {
-        baseVersion: Math.max(0, state.backendDiagramVersion),
+        baseVersion,
         actorId,
         touchedObjectIds: diff.touchedObjectIds,
         changes: diff.changes,
@@ -5831,6 +6379,17 @@
       response.snapshot,
       trim(title) || state.backendDiagramTitle
     );
+    emitBackendSavePayload(deps, {
+      diagramId,
+      title: emittedTitle,
+      actorId,
+      baseVersion,
+      resultVersion: Math.max(0, toInt(response.version, baseVersion)),
+      savedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      hasChanges: diff.changes.length > 0,
+      snapshot,
+      diff
+    });
     deps.showStatus(
       "\u5DF2\u4FDD\u5B58\u5230\u540E\u7AEF\uFF1A" + (state.backendDiagramTitle || diagramId) + "\uFF0C\u7248\u672C\uFF1A" + String(response.version),
       false
@@ -6029,6 +6588,9 @@
         collectChangeObjectIds: deps.collectChangeObjectIds,
         showStatus: deps.showStatus,
         restoreDiagramSnapshot: deps.restoreDiagramSnapshot,
+        emitBackendSavePayload: function(payload) {
+          emitHostEvent("eid-backend-save", payload);
+        },
         saveBackendSession: function() {
           return saveBackendSession(
             deps.state,
@@ -7065,6 +7627,108 @@
     wnd.setVisible(true);
   }
 
+  // ui/exportDialog.js
+  function buildExportDialogDeps2() {
+    var app = getApp();
+    return {
+      ctx: app.ctx,
+      createButton: createPluginButton,
+      showStatus,
+      openSvgExportDialog
+    };
+  }
+  function createOptionCard(title, description) {
+    var card = document.createElement("div");
+    card.style.display = "flex";
+    card.style.flexDirection = "column";
+    card.style.gap = "6px";
+    card.style.padding = "12px";
+    card.style.border = "1px solid #d0d7de";
+    card.style.borderRadius = "8px";
+    card.style.background = Editor.isDarkMode() ? "#2b2b2b" : "#ffffff";
+    var heading = document.createElement("div");
+    heading.style.fontWeight = "bold";
+    heading.innerText = title;
+    card.appendChild(heading);
+    var text = document.createElement("div");
+    text.style.fontSize = "12px";
+    text.style.lineHeight = "1.5";
+    text.style.color = Editor.isDarkMode() ? "#c9d1d9" : "#57606a";
+    text.innerText = description;
+    card.appendChild(text);
+    return card;
+  }
+  function openExportDialog() {
+    var deps = arguments.length > 0 ? arguments[0] : buildExportDialogDeps2();
+    var ui = deps.ctx.ui;
+    var div = document.createElement("div");
+    var buttons = document.createElement("div");
+    var wnd = null;
+    div.style.padding = "12px";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.boxSizing = "border-box";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.gap = "12px";
+    div.appendChild(
+      createOptionCard(
+        "SVG",
+        "\u6253\u5F00 SVG \u5BFC\u51FA\u7A97\u53E3\uFF0C\u53EF\u8C03\u6574\u5C3A\u5BF8\u3001\u590D\u5236\u4EE3\u7801\u6216\u4E0B\u8F7D\u6587\u4EF6\u3002"
+      )
+    );
+    div.appendChild(
+      createOptionCard(
+        "PDF",
+        "\u590D\u7528 draw.io \u539F\u751F PDF \u5BFC\u51FA\u80FD\u529B\uFF0C\u652F\u6301\u6253\u5370\u5BFC\u51FA\u53C2\u6570\u914D\u7F6E\u3002"
+      )
+    );
+    div.appendChild(
+      createOptionCard(
+        "DXF",
+        "\u672C\u5730 draw.io \u5185\u6838\u6682\u4E0D\u652F\u6301\u76F4\u63A5\u5BFC\u51FA DXF\uFF0C\u6B64\u5165\u53E3\u4F1A\u7ED9\u51FA\u660E\u786E\u8BF4\u660E\u3002"
+      )
+    );
+    buttons.style.display = "flex";
+    buttons.style.alignItems = "center";
+    buttons.style.flexWrap = "wrap";
+    buttons.style.gap = "8px";
+    div.appendChild(buttons);
+    function closeDialog() {
+      if (wnd != null) {
+        wnd.destroy();
+      }
+    }
+    var svgButton = deps.createButton("\u5BFC\u51FA SVG", function() {
+      closeDialog();
+      deps.openSvgExportDialog();
+    });
+    svgButton.style.marginTop = "0";
+    buttons.appendChild(svgButton);
+    var pdfButton = deps.createButton("\u5BFC\u51FA PDF", function() {
+      closeDialog();
+      if (ui.actions.get("exportPdf") == null) {
+        deps.showStatus("\u5F53\u524D\u73AF\u5883\u7F3A\u5C11 PDF \u5BFC\u51FA\u52A8\u4F5C", true);
+        return;
+      }
+      ui.actions.get("exportPdf").funct();
+    });
+    pdfButton.style.marginTop = "0";
+    buttons.appendChild(pdfButton);
+    var dxfButton = deps.createButton("\u5BFC\u51FA DXF", function() {
+      ui.alert("\u5F53\u524D draw.io \u5185\u6838\u4E0D\u652F\u6301 DXF \u76F4\u63A5\u5BFC\u51FA\uFF0C\u8BF7\u5148\u5BFC\u51FA SVG \u518D\u8F6C\u6362\u4E3A DXF\u3002");
+    });
+    dxfButton.style.marginTop = "0";
+    buttons.appendChild(dxfButton);
+    wnd = new mxWindow("\u5BFC\u51FA", div, 220, 140, 480, 320, true, true);
+    wnd.destroyOnClose = true;
+    wnd.setClosable(true);
+    wnd.setMaximizable(false);
+    wnd.setResizable(true);
+    wnd.setScrollable(true);
+    wnd.setVisible(true);
+  }
+
   // ui/frameDialog.js
   function buildFrameDialogDeps() {
     var app = getApp();
@@ -7154,7 +7818,7 @@
   }
 
   // ui/shared/previewSurface.js
-  function clamp2(value, min, max) {
+  function clamp3(value, min, max) {
     return Math.max(min, Math.min(max, value));
   }
   function findPreviewItemById(list, id) {
@@ -7176,7 +7840,7 @@
     );
     var width;
     var height;
-    scale = clamp2(scale, 0.35, 2.5);
+    scale = clamp3(scale, 0.35, 2.5);
     width = spec.size.width * scale;
     height = spec.size.height * scale;
     return {
@@ -7192,8 +7856,8 @@
     var x = (evt.clientX - rect.left - metrics.left) / metrics.width;
     var y = (evt.clientY - rect.top - metrics.top) / metrics.height;
     return {
-      x: clampToBody ? clamp2(x, 0, 1) : clamp2(x, -1.5, 2.5),
-      y: clampToBody ? clamp2(y, 0, 1) : clamp2(y, -1.5, 2.5)
+      x: clampToBody ? clamp3(x, 0, 1) : clamp3(x, -1.5, 2.5),
+      y: clampToBody ? clamp3(y, 0, 1) : clamp3(y, -1.5, 2.5)
     };
   }
   function snapPortPointToEdge(point, metrics, thresholdPx) {
@@ -9730,6 +10394,9 @@
     electricalEditInstance: function() {
       return execute(openEditInstanceDialog);
     },
+    electricalExport: function() {
+      return execute(openExportDialog);
+    },
     electricalExportSvg: function() {
       return execute(openSvgExportDialog);
     },
@@ -9868,42 +10535,18 @@
 
   // runtime/canvasFeatures.js
   var ACTION_ITEMS = [
-    { resourceKey: "electricalSymbols", actionKey: "electricalSymbols" },
-    { resourceKey: "electricalBrowse", actionKey: "electricalBrowse" },
-    { resourceKey: "electricalCreate", actionKey: "electricalCreate" },
-    {
-      resourceKey: "electricalEditInstance",
-      actionKey: "electricalEditInstance"
-    },
     {
       resourceKey: "electricalComposeInstance",
       actionKey: "electricalComposeInstance"
     },
     {
-      resourceKey: "electricalInsertFrame",
-      actionKey: "electricalInsertFrame"
-    },
-    {
-      resourceKey: "electricalInsertCabinet",
-      actionKey: "electricalInsertCabinet"
-    },
-    { resourceKey: "electricalClearScreen", actionKey: "electricalClearScreen" },
-    {
       resourceKey: "electricalReassignPort",
       actionKey: "electricalReassignPort"
     },
-    { resourceKey: "electricalExportSvg", actionKey: "electricalExportSvg" },
+    { resourceKey: "electricalExport", actionKey: "electricalExport" },
     {
       resourceKey: "electricalSaveBackend",
       actionKey: "electricalSaveBackend"
-    },
-    {
-      resourceKey: "electricalNewBackend",
-      actionKey: "electricalNewBackend"
-    },
-    {
-      resourceKey: "electricalLoadBackend",
-      actionKey: "electricalLoadBackend"
     },
     {
       resourceKey: "electricalRollbackBackend",
@@ -9922,7 +10565,7 @@
     "electricalClearScreen",
     "electricalReassignPort",
     "electricalRefresh",
-    "electricalExportSvg",
+    "electricalExport",
     "electricalSaveBackend",
     "electricalNewBackend",
     "electricalLoadBackend",
@@ -9984,6 +10627,7 @@
       "electricalComposeInstance",
       actions.electricalComposeInstance
     );
+    ui.actions.addAction("electricalExport", actions.electricalExport);
     ui.actions.addAction("electricalInsertFrame", actions.electricalInsertFrame);
     ui.actions.addAction(
       "electricalInsertCabinet",
@@ -10079,450 +10723,118 @@
     model.addListener(mxEvent.CHANGE, modelSyncApi.handleModelChange);
   }
 
-  // runtime/hostBridge.js
-  function parseHostMessage(data) {
-    if (data == null) {
-      return null;
-    }
-    if (typeof data === "string") {
-      try {
-        return JSON.parse(data);
-      } catch (e) {
-        return null;
-      }
-    }
-    if (typeof data === "object") {
-      return data;
-    }
-    return null;
-  }
-  function resolveGraphInsertPoint(ctx, payload) {
-    var graph = ctx.graph;
-    var diagramContainer = ctx.ui != null ? ctx.ui.diagramContainer : null;
-    var scale = graph.view != null ? graph.view.scale || 1 : 1;
-    var translate = graph.view != null ? graph.view.translate : null;
-    var viewportX = Number(payload.viewportX);
-    var viewportY = Number(payload.viewportY);
-    if (diagramContainer == null || !isFinite(viewportX) || !isFinite(viewportY) || translate == null) {
-      return graph.getFreeInsertPoint();
-    }
-    return new mxPoint(
-      viewportX / scale + diagramContainer.scrollLeft / scale - translate.x,
-      viewportY / scale + diagramContainer.scrollTop / scale - translate.y
-    );
-  }
-  function installHostBridge(ctx) {
-    if (window.__eidElectricalHostBridgeInstalled) {
-      return;
-    }
-    var validSource = window.opener || window.parent;
-    var graph = ctx.graph;
-    var model = ctx.model;
-    function resetEdgeAutoStyle(edge) {
-      var style = model.getStyle(edge) || "";
-      style = mxUtils.setStyle(style, "noEdgeStyle", null);
-      style = mxUtils.setStyle(style, "edgeStyle", "orthogonalEdgeStyle");
-      style = mxUtils.setStyle(style, "entryX", null);
-      style = mxUtils.setStyle(style, "entryY", null);
-      style = mxUtils.setStyle(style, "exitX", null);
-      style = mxUtils.setStyle(style, "exitY", null);
-      style = mxUtils.setStyle(style, "jettySize", "auto");
-      style = mxUtils.setStyle(style, "sourceJettySize", "auto");
-      style = mxUtils.setStyle(style, "targetJettySize", "auto");
-      style = mxUtils.setStyle(style, "rounded", "0");
-      model.setStyle(edge, style);
-    }
-    function clearConnectedEdgesForCells(cells) {
-      var edgeMap = {};
-      var i;
-      var j;
-      if (!Array.isArray(cells) || cells.length == 0) {
-        return;
-      }
-      for (i = 0; i < cells.length; i++) {
-        var cell = cells[i];
-        if (cell == null || !model.isVertex(cell)) {
-          continue;
-        }
-        var edges = graph.getConnections(cell) || [];
-        for (j = 0; j < edges.length; j++) {
-          if (edges[j] != null && edges[j].id != null) {
-            edgeMap[String(edges[j].id)] = edges[j];
-          }
-        }
-      }
-      for (var edgeId in edgeMap) {
-        if (edgeMap.hasOwnProperty(edgeId)) {
-          clearEdgePoints(edgeMap[edgeId]);
-          resetEdgeAutoStyle(edgeMap[edgeId]);
-        }
-      }
-    }
-    function postReply(targetWindow, payload) {
-      if (targetWindow != null && typeof targetWindow.postMessage === "function") {
-        targetWindow.postMessage(JSON.stringify(payload), "*");
-      }
-    }
-    function postResult(targetWindow, payload, extra) {
-      postReply(
-        targetWindow,
-        Object.assign(
-          {
-            event: "eid-host-result",
-            action: payload != null ? payload.action : "",
-            actionId: payload != null ? payload.actionId : ""
-          },
-          extra || {}
-        )
-      );
-    }
-    function postError(targetWindow, payload, error) {
-      postReply(targetWindow, {
-        event: "eid-host-error",
-        action: payload != null ? payload.action : "",
-        actionId: payload != null ? payload.actionId : "",
-        error: error != null && error.message != null ? error.message : String(error)
-      });
-    }
-    function resolveSelectedFrame(payload) {
-      var targetFrameId = payload != null && payload.selectedFrameId != null ? String(payload.selectedFrameId) : "";
-      var targetGroupId = payload != null && payload.selectedGroupId != null ? String(payload.selectedGroupId) : "";
-      var frames;
-      var i;
-      if (targetFrameId.length > 0) {
-        return frameDomainApi.findFrameById(targetFrameId);
-      }
-      if (targetGroupId.length == 0) {
-        return null;
-      }
-      frames = frameDomainApi.getAllDrawingFrames();
-      for (i = 0; i < frames.length; i++) {
-        if (frameDomainApi.getFrameGroupId(frames[i]) == targetGroupId) {
-          return frames[i];
-        }
-      }
-      return null;
-    }
-    function resolveFrameCell(payload) {
-      var explicitFrameCellId = payload != null && payload.frameCellId != null ? String(payload.frameCellId) : "";
-      var explicitFrame = null;
-      if (explicitFrameCellId.length > 0) {
-        explicitFrame = ctx.model.getCell(explicitFrameCellId);
-        if (explicitFrame != null && frameDomainApi.findDrawingFrame(explicitFrame) === explicitFrame) {
-          return explicitFrame;
-        }
-      }
-      return resolveSelectedFrame(payload);
-    }
-    window.addEventListener(
-      "message",
-      function(evt) {
-        if (validSource != null && evt.source !== validSource) {
-          return;
-        }
-        var payload = parseHostMessage(evt.data);
-        if (payload == null || payload.action == null) {
-          return;
-        }
-        try {
-          if (payload.action === "createSymbol" && payload.spec != null) {
-            evt.stopImmediatePropagation();
-            var point = resolveGraphInsertPoint(ctx, payload);
-            commandApi.insertIntoGraphAt(payload.spec, point);
-            postResult(evt.source, payload, {
-              cellId: getAttr(ctx.graph.getSelectionCell(), "id")
-            });
-            return;
-          }
-          if (payload.action === "insertFrame" && payload.config != null) {
-            evt.stopImmediatePropagation();
-            var selectedFrame = resolveSelectedFrame(payload);
-            commandApi.insertFrame(
-              payload.config,
-              selectedFrame,
-              frameDomainApi.getAllDrawingFrames()
-            );
-            var insertedFrame = frameDomainApi.findDrawingFrame(
-              ctx.graph.getSelectionCell()
-            );
-            postResult(evt.source, payload, {
-              frameId: insertedFrame != null ? getAttr(insertedFrame, "frameId") : "",
-              groupId: insertedFrame != null ? frameDomainApi.getFrameGroupId(insertedFrame) : ""
-            });
-            return;
-          }
-          if (payload.action === "insertCabinet" && payload.cabinetModel != null) {
-            evt.stopImmediatePropagation();
-            commandApi.insertCabinet(payload.cabinetModel);
-            postResult(evt.source, payload, {
-              logicalCabinetId: payload.cabinetModel.logicalCabinetId != null ? String(payload.cabinetModel.logicalCabinetId) : ""
-            });
-            return;
-          }
-          if (payload.action === "getSelectionInfo") {
-            evt.stopImmediatePropagation();
-            var selectedCell = selectionApi.getSelectedCell();
-            var selectedFrame = selectionApi.getSelectedFrame();
-            postResult(evt.source, payload, {
-              selectedCellId: selectedCell != null && selectedCell.id != null ? String(selectedCell.id) : "",
-              selectedFrameCellId: selectedFrame != null && selectedFrame.id != null ? String(selectedFrame.id) : "",
-              selectedFrameId: selectedFrame != null ? getAttr(selectedFrame, "frameId") : "",
-              selectedGroupId: selectedFrame != null ? frameDomainApi.getFrameGroupId(selectedFrame) : ""
-            });
-            return;
-          }
-          if (payload.action === "applyLayoutPositions" && Array.isArray(payload.positions)) {
-            evt.stopImmediatePropagation();
-            var frame = resolveFrameCell(payload);
-            var graph2 = ctx.graph;
-            var model2 = ctx.model;
-            var state = ctx.state;
-            var movedCells = [];
-            var edgeMap = {};
-            var frameGeometry;
-            var frameOrigin;
-            var i;
-            if (frame == null) {
-              throw new Error("\u672A\u627E\u5230\u8981\u5E03\u5C40\u7684\u56FE\u6846");
-            }
-            frameGeometry = model2.getGeometry(frame);
-            frameOrigin = {
-              x: frameGeometry != null ? frameGeometry.x : 0,
-              y: frameGeometry != null ? frameGeometry.y : 0
-            };
-            if (window.console != null) {
-              console.log(
-                "[electricalSymbols host bridge][request][json]",
-                JSON.stringify(
-                  {
-                    frameCellId: payload.frameCellId || "",
-                    frameId: getAttr(frame, "frameId"),
-                    positions: payload.positions,
-                    edgeRoutes: payload.edgeRoutes,
-                    frameOrigin,
-                    frameGeometry: frameGeometry != null ? {
-                      x: frameGeometry.x,
-                      y: frameGeometry.y,
-                      width: frameGeometry.width,
-                      height: frameGeometry.height,
-                      relative: !!frameGeometry.relative
-                    } : null
-                  },
-                  null,
-                  2
-                )
-              );
-            }
-            state.updatingModel = true;
-            model2.beginUpdate();
-            try {
-              for (i = 0; i < payload.positions.length; i++) {
-                var item = payload.positions[i] || {};
-                var cellId = item.cellId != null ? String(item.cellId) : "";
-                var x = Number(item.x);
-                var y = Number(item.y);
-                var cell;
-                var geometry;
-                var nextGeometry;
-                var edges;
-                var j;
-                if (cellId.length == 0 || !isFinite(x) || !isFinite(y)) {
-                  continue;
-                }
-                cell = model2.getCell(cellId);
-                if (cell == null) {
-                  continue;
-                }
-                geometry = model2.getGeometry(cell);
-                if (geometry == null) {
-                  continue;
-                }
-                nextGeometry = geometry.clone();
-                if (model2.getParent(cell) === frame) {
-                  nextGeometry.x = x;
-                  nextGeometry.y = y;
-                } else {
-                  nextGeometry.x = x + frameOrigin.x;
-                  nextGeometry.y = y + frameOrigin.y;
-                }
-                model2.setGeometry(cell, nextGeometry);
-                movedCells.push(cell);
-                edges = graph2.getConnections(cell) || [];
-                for (j = 0; j < edges.length; j++) {
-                  if (edges[j] != null && edges[j].id != null) {
-                    edgeMap[String(edges[j].id)] = edges[j];
-                  }
-                }
-              }
-              for (var edgeId in edgeMap) {
-                if (edgeMap.hasOwnProperty(edgeId)) {
-                  clearEdgePoints(edgeMap[edgeId]);
-                }
-              }
-              if (Array.isArray(payload.edgeRoutes)) {
-                for (i = 0; i < payload.edgeRoutes.length; i++) {
-                  var route = payload.edgeRoutes[i] || {};
-                  var edgeId = route.edgeId != null ? String(route.edgeId) : "";
-                  var edge = edgeId.length > 0 ? model2.getCell(edgeId) : null;
-                  var edgeGeometry;
-                  var nextPoints = [];
-                  var edgeParent;
-                  var parentGeometry;
-                  var parentOriginX;
-                  var parentOriginY;
-                  var points;
-                  var j;
-                  if (edge == null || !Array.isArray(route.points)) {
-                    continue;
-                  }
-                  edgeGeometry = model2.getGeometry(edge);
-                  if (edgeGeometry == null) {
-                    continue;
-                  }
-                  edgeParent = model2.getParent(edge);
-                  parentGeometry = edgeParent != null ? model2.getGeometry(edgeParent) : null;
-                  parentOriginX = parentGeometry != null ? parentGeometry.x : 0;
-                  parentOriginY = parentGeometry != null ? parentGeometry.y : 0;
-                  points = route.points;
-                  for (j = 0; j < points.length; j++) {
-                    var point = points[j] || {};
-                    var px = Number(point.x);
-                    var py = Number(point.y);
-                    if (!isFinite(px) || !isFinite(py)) {
-                      continue;
-                    }
-                    nextPoints.push(
-                      new mxPoint(
-                        px + frameOrigin.x - parentOriginX,
-                        py + frameOrigin.y - parentOriginY
-                      )
-                    );
-                  }
-                  edgeGeometry = edgeGeometry.clone();
-                  edgeGeometry.points = nextPoints.length > 0 ? nextPoints : null;
-                  model2.setGeometry(edge, edgeGeometry);
-                  var nextStyle = model2.getStyle(edge) || "";
-                  if (route.sourcePortId != null && String(route.sourcePortId).length > 0) {
-                    nextStyle = mxUtils.setStyle(
-                      nextStyle,
-                      "sourcePortId",
-                      String(route.sourcePortId)
-                    );
-                  }
-                  if (route.targetPortId != null && String(route.targetPortId).length > 0) {
-                    nextStyle = mxUtils.setStyle(
-                      nextStyle,
-                      "targetPortId",
-                      String(route.targetPortId)
-                    );
-                  }
-                  nextStyle = mxUtils.setStyle(nextStyle, "entryX", null);
-                  nextStyle = mxUtils.setStyle(nextStyle, "entryY", null);
-                  nextStyle = mxUtils.setStyle(nextStyle, "exitX", null);
-                  nextStyle = mxUtils.setStyle(nextStyle, "exitY", null);
-                  if (route.manual) {
-                    nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "0");
-                    nextStyle = mxUtils.setStyle(
-                      nextStyle,
-                      "sourceJettySize",
-                      "0"
-                    );
-                    nextStyle = mxUtils.setStyle(
-                      nextStyle,
-                      "targetJettySize",
-                      "0"
-                    );
-                    nextStyle = mxUtils.setStyle(nextStyle, "noEdgeStyle", "1");
-                    nextStyle = mxUtils.setStyle(nextStyle, "edgeStyle", null);
-                  } else {
-                    nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "auto");
-                    nextStyle = mxUtils.setStyle(
-                      nextStyle,
-                      "sourceJettySize",
-                      "auto"
-                    );
-                    nextStyle = mxUtils.setStyle(
-                      nextStyle,
-                      "targetJettySize",
-                      "auto"
-                    );
-                    nextStyle = mxUtils.setStyle(nextStyle, "noEdgeStyle", null);
-                    nextStyle = mxUtils.setStyle(
-                      nextStyle,
-                      "edgeStyle",
-                      "orthogonalEdgeStyle"
-                    );
-                  }
-                  nextStyle = mxUtils.setStyle(nextStyle, "rounded", "0");
-                  model2.setStyle(edge, nextStyle);
-                  if (window.console != null) {
-                    console.log(
-                      "[electricalSymbols host bridge][edge-applied][json]",
-                      JSON.stringify(
-                        {
-                          edgeId,
-                          routePoints: route.points,
-                          sourcePortId: route.sourcePortId != null ? String(route.sourcePortId) : "",
-                          targetPortId: route.targetPortId != null ? String(route.targetPortId) : "",
-                          manual: !!route.manual,
-                          geometryPoints: nextPoints.map(function(point2) {
-                            return { x: point2.x, y: point2.y };
-                          }),
-                          style: model2.getStyle(edge) || ""
-                        },
-                        null,
-                        2
-                      )
-                    );
-                  }
-                }
-              }
-            } finally {
-              model2.endUpdate();
-              state.updatingModel = false;
-            }
-            if (movedCells.length > 0) {
-              graph2.setSelectionCells(movedCells);
-              graph2.scrollCellToVisible(movedCells[0]);
-            }
-            postResult(evt.source, payload, {
-              movedCount: movedCells.length
-            });
-            if (window.console != null) {
-              console.log(
-                "[electricalSymbols host bridge][result][json]",
-                JSON.stringify(
-                  {
-                    movedCount: movedCells.length,
-                    movedCellIds: movedCells.map(function(cell2) {
-                      return cell2 != null && cell2.id != null ? String(cell2.id) : "";
-                    })
-                  },
-                  null,
-                  2
-                )
-              );
-            }
-          }
-        } catch (e) {
-          postError(evt.source, payload, e);
-          if (window.console != null) {
-            console.error("[electricalSymbols] host bridge failed", e);
-          }
-        }
-      },
-      true
-    );
-    graph.addListener(mxEvent.CELLS_MOVED, function(_sender, evt) {
-      if (ctx.state != null && ctx.state.updatingModel) {
-        return;
-      }
-      clearConnectedEdgesForCells(evt != null ? evt.getProperty("cells") : null);
-    });
-    window.__eidElectricalHostBridgeInstalled = true;
-  }
-
   // ui/topActionBar.js
+  function destroyMenu(menu, onClose) {
+    if (typeof onClose === "function") {
+      onClose();
+    }
+    if (menu != null && menu.parentNode != null) {
+      menu.parentNode.removeChild(menu);
+    }
+  }
+  function createMenuItem(label, handler) {
+    var item = document.createElement("button");
+    item.setAttribute("type", "button");
+    item.innerText = label;
+    item.style.display = "block";
+    item.style.width = "100%";
+    item.style.padding = "8px 12px";
+    item.style.border = "0";
+    item.style.background = "transparent";
+    item.style.textAlign = "left";
+    item.style.cursor = "pointer";
+    item.style.fontSize = "13px";
+    item.onmouseenter = function() {
+      item.style.background = Editor.isDarkMode() ? "#3a3a3a" : "#f5f7fa";
+    };
+    item.onmouseleave = function() {
+      item.style.background = "transparent";
+    };
+    item.onclick = handler;
+    return item;
+  }
+  function createExportDropdownButton(ui, createButton, label) {
+    var button = createButton(label, function() {
+    });
+    var menu = null;
+    var closeHandler = null;
+    var escapeHandler = null;
+    function closeMenu() {
+      destroyMenu(menu, function() {
+        if (closeHandler != null) {
+          document.removeEventListener("mousedown", closeHandler, true);
+          closeHandler = null;
+        }
+        if (escapeHandler != null) {
+          document.removeEventListener("keydown", escapeHandler, true);
+          escapeHandler = null;
+        }
+      });
+      menu = null;
+      button.setAttribute("aria-expanded", "false");
+    }
+    function openMenu() {
+      var rect = button.getBoundingClientRect();
+      menu = document.createElement("div");
+      menu.style.position = "fixed";
+      menu.style.left = rect.left + "px";
+      menu.style.top = rect.bottom + 6 + "px";
+      menu.style.minWidth = Math.max(140, rect.width) + "px";
+      menu.style.padding = "6px 0";
+      menu.style.border = "1px solid " + (Editor.isDarkMode() ? "#4b5563" : "#d0d7de");
+      menu.style.borderRadius = "8px";
+      menu.style.background = Editor.isDarkMode() ? "#2b2b2b" : "#ffffff";
+      menu.style.boxShadow = "0 8px 24px rgba(0, 0, 0, 0.16)";
+      menu.style.zIndex = "10000";
+      menu.appendChild(
+        createMenuItem("SVG", function() {
+          closeMenu();
+          ui.actions.get("electricalExportSvg").funct();
+        })
+      );
+      menu.appendChild(
+        createMenuItem("PDF", function() {
+          closeMenu();
+          if (ui.actions.get("exportPdf") == null) {
+            ui.alert("\u5F53\u524D\u73AF\u5883\u7F3A\u5C11 PDF \u5BFC\u51FA\u52A8\u4F5C\u3002");
+            return;
+          }
+          ui.actions.get("exportPdf").funct();
+        })
+      );
+      menu.appendChild(
+        createMenuItem("DXF", function() {
+          closeMenu();
+          ui.alert("\u5F53\u524D draw.io \u5185\u6838\u4E0D\u652F\u6301 DXF \u76F4\u63A5\u5BFC\u51FA\uFF0C\u8BF7\u5148\u5BFC\u51FA SVG \u518D\u8F6C\u6362\u4E3A DXF\u3002");
+        })
+      );
+      document.body.appendChild(menu);
+      button.setAttribute("aria-expanded", "true");
+      closeHandler = function(evt) {
+        if (evt.target !== button && !button.contains(evt.target) && !menu.contains(evt.target)) {
+          closeMenu();
+        }
+      };
+      escapeHandler = function(evt) {
+        if (evt.key === "Escape") {
+          closeMenu();
+        }
+      };
+      document.addEventListener("mousedown", closeHandler, true);
+      document.addEventListener("keydown", escapeHandler, true);
+    }
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", "false");
+    button.onclick = function(evt) {
+      mxEvent.consume(evt);
+      if (menu != null) {
+        closeMenu();
+      } else {
+        openMenu();
+      }
+    };
+    return button;
+  }
   function installTopActionBar(options) {
     var ui = options.ui;
     var createButton = options.createButton;
@@ -10541,9 +10853,18 @@
     bar.style.width = "100%";
     bar.style.height = "100%";
     items.forEach(function(item) {
-      var button = createButton(mxResources.get(item.resourceKey), function() {
-        ui.actions.get(item.actionKey).funct();
-      });
+      var button = null;
+      if (item.actionKey === "electricalExport") {
+        button = createExportDropdownButton(
+          ui,
+          createButton,
+          mxResources.get(item.resourceKey)
+        );
+      } else {
+        button = createButton(mxResources.get(item.resourceKey), function() {
+          ui.actions.get(item.actionKey).funct();
+        });
+      }
       button.style.marginTop = "0";
       button.style.marginRight = "0";
       button.style.padding = "6px 16px";
@@ -10633,9 +10954,14 @@
   // bootstrap/installElectricalSymbols.js
   function installElectricalSymbols(ctx) {
     var app = createApp(ctx);
+    var initialSnapshot;
     setApp(app);
     backendServiceApi.loadBackendSession();
     activateAppRuntime(app);
+    initialSnapshot = snapshotDomainApi.exportDiagramSnapshot();
+    if (ctx.state.backendDiagramId && ctx.state.backendLastSnapshot != null && Array.isArray(initialSnapshot.objects) && Array.isArray(initialSnapshot.edges) && initialSnapshot.objects.length == 0 && initialSnapshot.edges.length == 0) {
+      backendServiceApi.resetBackendBinding();
+    }
   }
 
   // index.js

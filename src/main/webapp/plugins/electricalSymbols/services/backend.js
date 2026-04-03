@@ -5,6 +5,7 @@
 import { getApp } from "../core/appRuntime.js";
 import { resetPendingChangeRecords, showStatus } from "../core/runtimeHelpers.js";
 import { snapshotDomainApi } from "../domain/snapshot.js";
+import { emitHostEvent } from "../runtime/hostBridge.js";
 import {
   loadBackendSession,
   normalizeBackendBaseUrl,
@@ -180,6 +181,9 @@ function saveDiagramToBackendCompat(title) {
       collectChangeObjectIds: deps.collectChangeObjectIds,
       showStatus: deps.showStatus,
       restoreDiagramSnapshot: deps.restoreDiagramSnapshot,
+      emitBackendSavePayload: function (payload) {
+        emitHostEvent("eid-backend-save", payload);
+      },
       saveBackendSession: function () {
         return saveBackendSession(
           deps.state,

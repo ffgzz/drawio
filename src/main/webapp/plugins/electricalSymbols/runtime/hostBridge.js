@@ -6,7 +6,10 @@
 import { commandApi } from "../application/commands.js";
 import { selectionApi } from "../application/selection.js";
 import { frameDomainApi } from "../domain/frame.js";
+import { snapshotDomainApi } from "../domain/snapshot.js";
+import { makeFrameLabelStyle } from "../domain/frameCore.js";
 import { clearEdgePoints } from "./connectionConstraints.js";
+import { createMetaCell } from "../utils/xml.js";
 import { getAttr } from "../utils/xml.js";
 
 function parseHostMessage(data) {
@@ -52,6 +55,38 @@ function resolveGraphInsertPoint(ctx, payload) {
   );
 }
 
+function clamp(value, min, max) {
+  if (!isFinite(value)) {
+    return min;
+  }
+
+  return Math.max(min, Math.min(max, value));
+}
+
+export function emitHostEvent(eventName, payload) {
+  var targetWindow = window.opener || window.parent;
+
+  if (
+    targetWindow == null ||
+    targetWindow === window ||
+    typeof targetWindow.postMessage !== "function"
+  ) {
+    return;
+  }
+
+  targetWindow.postMessage(
+    JSON.stringify(
+      Object.assign(
+        {
+          event: eventName,
+        },
+        payload || {},
+      ),
+    ),
+    "*",
+  );
+}
+
 export function installHostBridge(ctx) {
   if (window.__eidElectricalHostBridgeInstalled) {
     return;
@@ -59,7 +94,51 @@ export function installHostBridge(ctx) {
 
   var validSource = window.opener || window.parent;
   var graph = ctx.graph;
-  var model = ctx.model;
+  var model =
+    ctx.model != null
+      ? ctx.model
+      : graph != null && typeof graph.getModel === "function"
+        ? graph.getModel()
+        : null;
+  var runtimeState = ctx.state != null ? ctx.state : {};
+  var constants = ctx.constants;
+
+  function createFrameTemplateLabelCell(frame, label) {
+    var frameConfig = frameDomainApi.getFrameConfig(frame);
+    var width = Math.max(40, Math.round(Number(label.width) || 120));
+    var height = Math.max(20, Math.round(Number(label.height) || 26));
+    var maxX = Math.max(0, frameConfig.width - width);
+    var maxY = Math.max(0, frameConfig.height - height);
+    var geometry = new mxGeometry(
+      clamp(Math.round(Number(label.x) || 0), 0, maxX),
+      clamp(Math.round(Number(label.y) || 0), 0, maxY),
+      width,
+      height,
+    );
+    var value = createMetaCell(
+      constants.FRAME_LABEL_TAG,
+      "frameTemplateLabel",
+      label.id != null ? String(label.id) : "",
+      label.text != null ? String(label.text) : "",
+    );
+    var style = mxUtils.setStyle(
+      makeFrameLabelStyle(),
+      "align",
+      label.align != null ? String(label.align) : "center",
+    );
+    var fieldPath =
+      label.fieldPath != null ? String(label.fieldPath) : "";
+    var cell;
+
+    if (fieldPath.length > 0) {
+      value.setAttribute("fieldPath", fieldPath);
+    }
+
+    cell = new mxCell(value, geometry, style);
+    cell.vertex = true;
+    cell.setConnectable(false);
+    return cell;
+  }
 
   function resetEdgeAutoStyle(edge) {
     var style = model.getStyle(edge) || "";
@@ -223,11 +302,58 @@ export function installHostBridge(ctx) {
           var insertedFrame = frameDomainApi.findDrawingFrame(
             ctx.graph.getSelectionCell(),
           );
+
+          if (
+            insertedFrame != null &&
+            Array.isArray(payload.frameLabels) &&
+            payload.frameLabels.length > 0
+          ) {
+            var frameLabels = payload.frameLabels;
+            var insertedCells = [];
+            var labelIndex;
+
+            runtimeState.updatingModel = true;
+
+            if (model != null) {
+              model.beginUpdate();
+            }
+            try {
+              for (labelIndex = 0; labelIndex < frameLabels.length; labelIndex++) {
+                var frameLabel = frameLabels[labelIndex];
+
+                if (frameLabel == null) {
+                  continue;
+                }
+
+                insertedCells.push(
+                  createFrameTemplateLabelCell(insertedFrame, frameLabel),
+                );
+              }
+
+              for (labelIndex = 0; labelIndex < insertedCells.length; labelIndex++) {
+                if (model != null) {
+                  model.add(insertedFrame, insertedCells[labelIndex]);
+                } else {
+                  insertedFrame.insert(insertedCells[labelIndex]);
+                }
+              }
+            } finally {
+              if (model != null) {
+                model.endUpdate();
+              }
+              runtimeState.updatingModel = false;
+            }
+          }
+
           postResult(evt.source, payload, {
             frameId: insertedFrame != null ? getAttr(insertedFrame, "frameId") : "",
             groupId:
               insertedFrame != null
                 ? frameDomainApi.getFrameGroupId(insertedFrame)
+                : "",
+            frameCellId:
+              insertedFrame != null && insertedFrame.id != null
+                ? String(insertedFrame.id)
                 : "",
           });
           return;
@@ -269,6 +395,14 @@ export function installHostBridge(ctx) {
           return;
         }
 
+        if (payload.action === "getDiagramSnapshot") {
+          evt.stopImmediatePropagation();
+          postResult(evt.source, payload, {
+            snapshot: snapshotDomainApi.exportDiagramSnapshot(),
+          });
+          return;
+        }
+
         if (
           payload.action === "applyLayoutPositions" &&
           Array.isArray(payload.positions)
@@ -276,8 +410,13 @@ export function installHostBridge(ctx) {
           evt.stopImmediatePropagation();
           var frame = resolveFrameCell(payload);
           var graph = ctx.graph;
-          var model = ctx.model;
-          var state = ctx.state;
+          var model =
+            ctx.model != null
+              ? ctx.model
+              : graph != null && typeof graph.getModel === "function"
+                ? graph.getModel()
+                : null;
+          var state = ctx.state != null ? ctx.state : runtimeState;
           var movedCells = [];
           var edgeMap = {};
           var frameGeometry;
@@ -321,7 +460,7 @@ export function installHostBridge(ctx) {
             );
           }
 
-          state.updatingModel = true;
+          runtimeState.updatingModel = true;
           model.beginUpdate();
 
           try {
@@ -514,7 +653,7 @@ export function installHostBridge(ctx) {
             }
           } finally {
             model.endUpdate();
-            state.updatingModel = false;
+            runtimeState.updatingModel = false;
           }
 
           if (movedCells.length > 0) {
@@ -553,7 +692,7 @@ export function installHostBridge(ctx) {
   );
 
   graph.addListener(mxEvent.CELLS_MOVED, function (_sender, evt) {
-    if (ctx.state != null && ctx.state.updatingModel) {
+    if (runtimeState.updatingModel) {
       return;
     }
 
