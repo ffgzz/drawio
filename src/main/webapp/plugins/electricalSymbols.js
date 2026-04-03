@@ -5664,6 +5664,49 @@
     }
     return Math.max(min, Math.min(max, value));
   }
+  function buildSvgExportPayload(ctx, format) {
+    var graph = ctx.graph;
+    var bounds = graph.getGraphBounds();
+    var viewScale = graph.view != null ? graph.view.scale || 1 : 1;
+    var width;
+    var height;
+    var svgRoot;
+    var data;
+    if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
+      throw new Error("\u753B\u5E03\u4E0A\u6CA1\u6709\u53EF\u5BFC\u51FA\u7684\u56FE\u5F62");
+    }
+    width = Math.max(1, Math.ceil(bounds.width / viewScale));
+    height = Math.max(1, Math.ceil(bounds.height / viewScale));
+    svgRoot = graph.getSvg(
+      null,
+      1,
+      0,
+      false,
+      null,
+      true,
+      null,
+      null,
+      null,
+      null,
+      true,
+      null
+    );
+    if (graph.shadowVisible) {
+      graph.addSvgShadow(svgRoot);
+    }
+    if (graph.mathEnabled) {
+      Editor.prototype.addMathCss(svgRoot);
+    }
+    svgRoot.setAttribute("width", String(width));
+    svgRoot.setAttribute("height", String(height));
+    svgRoot.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    data = mxUtils.getXml(svgRoot);
+    return {
+      data,
+      format,
+      xml: ""
+    };
+  }
   function emitHostEvent(eventName, payload) {
     var targetWindow = window.opener || window.parent;
     if (targetWindow == null || targetWindow === window || typeof targetWindow.postMessage !== "function") {
@@ -5819,6 +5862,50 @@
       }
       return resolveSelectedFrame(payload);
     }
+    function collectDescendants(parent, result) {
+      var childCount;
+      var i;
+      if (parent == null || model == null) {
+        return;
+      }
+      result.push(parent);
+      childCount = model.getChildCount(parent);
+      for (i = 0; i < childCount; i++) {
+        collectDescendants(model.getChildAt(parent, i), result);
+      }
+    }
+    function resolveLayoutCell(cellId) {
+      var target = cellId != null ? String(cellId) : "";
+      var defaultParent;
+      var cells = [];
+      var i;
+      var cell;
+      if (target.length == 0 || model == null) {
+        return null;
+      }
+      cell = model.getCell(target);
+      if (cell != null) {
+        return cell;
+      }
+      defaultParent = graph != null ? graph.getDefaultParent() : null;
+      collectDescendants(defaultParent, cells);
+      for (i = 0; i < cells.length; i++) {
+        cell = cells[i];
+        if (cell == null) {
+          continue;
+        }
+        if (getAttr(cell, "pluginType") == constants.FRAME_TYPE && getAttr(cell, "frameId") == target) {
+          return cell;
+        }
+        if (getAttr(cell, "pluginType") == constants.ROOT_TYPE && (getAttr(cell, "instanceId") == target || cell.id != null && String(cell.id) == target)) {
+          return cell;
+        }
+        if (getAttr(cell, "pluginType") == constants.CABINET_TYPE && getAttr(cell, "logicalCabinetId") == target) {
+          return cell;
+        }
+      }
+      return null;
+    }
     window.addEventListener(
       "message",
       function(evt) {
@@ -5838,6 +5925,17 @@
               cellId: getAttr(ctx.graph.getSelectionCell(), "id")
             });
             return;
+          }
+          if (payload.action === "exportDiagram") {
+            evt.stopImmediatePropagation();
+            if (payload.format === "svg" || payload.format === "xmlsvg") {
+              postResult(evt.source, payload, buildSvgExportPayload(ctx, payload.format));
+              return;
+            }
+            if (payload.format === "png" || payload.format === "xmlpng") {
+              throw new Error("\u5F53\u524D\u5BBF\u4E3B\u6865\u4EC5\u652F\u6301 SVG \u5BFC\u51FA");
+            }
+            throw new Error("\u4E0D\u652F\u6301\u7684\u5BFC\u51FA\u683C\u5F0F");
           }
           if (payload.action === "insertFrame" && payload.config != null) {
             evt.stopImmediatePropagation();
@@ -5974,7 +6072,7 @@
                 if (cellId.length == 0 || !isFinite(x) || !isFinite(y)) {
                   continue;
                 }
-                cell = model2.getCell(cellId);
+                cell = resolveLayoutCell(cellId);
                 if (cell == null) {
                   continue;
                 }
@@ -6165,6 +6263,7 @@
       clearConnectedEdgesForCells(evt != null ? evt.getProperty("cells") : null);
     });
     window.__eidElectricalHostBridgeInstalled = true;
+    emitHostEvent("eid-ready");
   }
 
   // services/backendSession.js

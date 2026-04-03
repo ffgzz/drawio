@@ -63,6 +63,56 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function buildSvgExportPayload(ctx, format) {
+  var graph = ctx.graph;
+  var bounds = graph.getGraphBounds();
+  var viewScale = graph.view != null ? graph.view.scale || 1 : 1;
+  var width;
+  var height;
+  var svgRoot;
+  var data;
+
+  if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
+    throw new Error("画布上没有可导出的图形");
+  }
+
+  width = Math.max(1, Math.ceil(bounds.width / viewScale));
+  height = Math.max(1, Math.ceil(bounds.height / viewScale));
+  svgRoot = graph.getSvg(
+    null,
+    1,
+    0,
+    false,
+    null,
+    true,
+    null,
+    null,
+    null,
+    null,
+    true,
+    null,
+  );
+
+  if (graph.shadowVisible) {
+    graph.addSvgShadow(svgRoot);
+  }
+
+  if (graph.mathEnabled) {
+    Editor.prototype.addMathCss(svgRoot);
+  }
+
+  svgRoot.setAttribute("width", String(width));
+  svgRoot.setAttribute("height", String(height));
+  svgRoot.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  data = mxUtils.getXml(svgRoot);
+
+  return {
+    data: data,
+    format: format,
+    xml: "",
+  };
+}
+
 export function emitHostEvent(eventName, payload) {
   var targetWindow = window.opener || window.parent;
 
@@ -267,6 +317,74 @@ export function installHostBridge(ctx) {
     return resolveSelectedFrame(payload);
   }
 
+  function collectDescendants(parent, result) {
+    var childCount;
+    var i;
+
+    if (parent == null || model == null) {
+      return;
+    }
+
+    result.push(parent);
+    childCount = model.getChildCount(parent);
+
+    for (i = 0; i < childCount; i++) {
+      collectDescendants(model.getChildAt(parent, i), result);
+    }
+  }
+
+  function resolveLayoutCell(cellId) {
+    var target = cellId != null ? String(cellId) : "";
+    var defaultParent;
+    var cells = [];
+    var i;
+    var cell;
+
+    if (target.length == 0 || model == null) {
+      return null;
+    }
+
+    cell = model.getCell(target);
+
+    if (cell != null) {
+      return cell;
+    }
+
+    defaultParent = graph != null ? graph.getDefaultParent() : null;
+    collectDescendants(defaultParent, cells);
+
+    for (i = 0; i < cells.length; i++) {
+      cell = cells[i];
+
+      if (cell == null) {
+        continue;
+      }
+
+      if (
+        getAttr(cell, "pluginType") == constants.FRAME_TYPE &&
+        getAttr(cell, "frameId") == target
+      ) {
+        return cell;
+      }
+
+      if (
+        getAttr(cell, "pluginType") == constants.ROOT_TYPE &&
+        ((getAttr(cell, "instanceId") == target) || (cell.id != null && String(cell.id) == target))
+      ) {
+        return cell;
+      }
+
+      if (
+        getAttr(cell, "pluginType") == constants.CABINET_TYPE &&
+        getAttr(cell, "logicalCabinetId") == target
+      ) {
+        return cell;
+      }
+    }
+
+    return null;
+  }
+
   window.addEventListener(
     "message",
     function (evt) {
@@ -289,6 +407,21 @@ export function installHostBridge(ctx) {
             cellId: getAttr(ctx.graph.getSelectionCell(), "id"),
           });
           return;
+        }
+
+        if (payload.action === "exportDiagram") {
+          evt.stopImmediatePropagation();
+
+          if (payload.format === "svg" || payload.format === "xmlsvg") {
+            postResult(evt.source, payload, buildSvgExportPayload(ctx, payload.format));
+            return;
+          }
+
+          if (payload.format === "png" || payload.format === "xmlpng") {
+            throw new Error("当前宿主桥仅支持 SVG 导出");
+          }
+
+          throw new Error("不支持的导出格式");
         }
 
         if (payload.action === "insertFrame" && payload.config != null) {
@@ -479,7 +612,7 @@ export function installHostBridge(ctx) {
                 continue;
               }
 
-              cell = model.getCell(cellId);
+              cell = resolveLayoutCell(cellId);
 
               if (cell == null) {
                 continue;
@@ -589,7 +722,6 @@ export function installHostBridge(ctx) {
                 nextStyle = mxUtils.setStyle(nextStyle, "entryY", null);
                 nextStyle = mxUtils.setStyle(nextStyle, "exitX", null);
                 nextStyle = mxUtils.setStyle(nextStyle, "exitY", null);
-
                 if (route.manual) {
                   nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "0");
                   nextStyle = mxUtils.setStyle(
@@ -700,4 +832,5 @@ export function installHostBridge(ctx) {
   });
 
   window.__eidElectricalHostBridgeInstalled = true;
+  emitHostEvent("eid-ready");
 }
