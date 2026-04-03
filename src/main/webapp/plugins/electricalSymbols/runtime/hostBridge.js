@@ -109,7 +109,6 @@ function buildSvgExportPayload(ctx, format) {
   return {
     data: data,
     format: format,
-    xml: "",
   };
 }
 
@@ -481,13 +480,9 @@ export function installHostBridge(ctx) {
         if (payload.action === "exportDiagram") {
           evt.stopImmediatePropagation();
 
-          if (payload.format === "svg" || payload.format === "xmlsvg") {
+          if (payload.format === "svg") {
             postResult(evt.source, payload, buildSvgExportPayload(ctx, payload.format));
             return;
-          }
-
-          if (payload.format === "png" || payload.format === "xmlpng") {
-            throw new Error("当前宿主桥仅支持 SVG 导出");
           }
 
           throw new Error("不支持的导出格式");
@@ -618,7 +613,6 @@ export function installHostBridge(ctx) {
               : graph != null && typeof graph.getModel === "function"
                 ? graph.getModel()
                 : null;
-          var state = ctx.state != null ? ctx.state : runtimeState;
           var movedCells = [];
           var edgeMap = {};
           var frameGeometry;
@@ -635,33 +629,6 @@ export function installHostBridge(ctx) {
             x: frameGeometry != null ? frameGeometry.x : 0,
             y: frameGeometry != null ? frameGeometry.y : 0,
           };
-
-          if (window.console != null) {
-            console.log(
-              "[electricalSymbols host bridge][request][json]",
-              JSON.stringify(
-                {
-                  frameCellId: payload.frameCellId || "",
-                  frameId: getAttr(frame, "frameId"),
-                  positions: payload.positions,
-                  edgeRoutes: payload.edgeRoutes,
-                  frameOrigin: frameOrigin,
-                  frameGeometry:
-                    frameGeometry != null
-                      ? {
-                          x: frameGeometry.x,
-                          y: frameGeometry.y,
-                          width: frameGeometry.width,
-                          height: frameGeometry.height,
-                          relative: !!frameGeometry.relative,
-                        }
-                      : null,
-                },
-                null,
-                2,
-              ),
-            );
-          }
 
           runtimeState.updatingModel = true;
           model.beginUpdate();
@@ -850,29 +817,6 @@ export function installHostBridge(ctx) {
 
                 nextStyle = mxUtils.setStyle(nextStyle, "rounded", "0");
                 model.setStyle(edge, nextStyle);
-
-                if (window.console != null) {
-                  console.log(
-                    "[electricalSymbols host bridge][edge-applied][json]",
-                    JSON.stringify(
-                      {
-                        edgeId: edgeId,
-                        routePoints: route.points,
-                        sourcePortId:
-                          route.sourcePortId != null ? String(route.sourcePortId) : "",
-                        targetPortId:
-                          route.targetPortId != null ? String(route.targetPortId) : "",
-                        manual: !!route.manual,
-                        geometryPoints: nextPoints.map(function (point) {
-                          return { x: point.x, y: point.y };
-                        }),
-                        style: model.getStyle(edge) || "",
-                      },
-                      null,
-                      2,
-                    ),
-                  );
-                }
               }
             }
           } finally {
@@ -888,22 +832,6 @@ export function installHostBridge(ctx) {
           postResult(evt.source, payload, {
             movedCount: movedCells.length,
           });
-
-          if (window.console != null) {
-            console.log(
-              "[electricalSymbols host bridge][result][json]",
-              JSON.stringify(
-                {
-                  movedCount: movedCells.length,
-                  movedCellIds: movedCells.map(function (cell) {
-                    return cell != null && cell.id != null ? String(cell.id) : "";
-                  }),
-                },
-                null,
-                2,
-              ),
-            );
-          }
         }
       } catch (e) {
         postError(evt.source, payload, e);

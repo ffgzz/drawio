@@ -453,6 +453,8 @@ export function createSnapshotDomain() {
   function exportCabinetObject(segment) {
     var cabinetModel = deps.extractCabinetModel(segment);
     var originFrame = deps.findFrameById(cabinetModel.originFrameId);
+    var geometry = model.getGeometry(segment);
+    var segmentPorts = deps.parsePortLayout(deps.getAttr(segment, "portsJson"));
 
     return {
       id: deps.trim(cabinetModel.logicalCabinetId),
@@ -460,16 +462,21 @@ export function createSnapshotDomain() {
       parentId: deps.trim(cabinetModel.originFrameId) || null,
       groupId: originFrame != null ? deps.getFrameGroupId(originFrame) : null,
       geometry: {
-        x: cabinetModel.cabinetX,
+        x: geometry != null ? geometry.x : cabinetModel.cabinetX,
         y:
-          originFrame != null
-            ? Math.round(deps.getFrameConfig(originFrame).height * deps.FRAME_MARGIN_RATIO)
-            : 0,
-        width: cabinetModel.cabinetWidth,
-        height: 0,
+          geometry != null
+            ? geometry.y
+            : originFrame != null
+              ? Math.round(
+                  deps.getFrameConfig(originFrame).height * deps.FRAME_MARGIN_RATIO,
+                )
+              : 0,
+        width: geometry != null ? geometry.width : cabinetModel.cabinetWidth,
+        height: geometry != null ? geometry.height : 0,
       },
       props: {
         cabinetModel,
+        segmentPorts,
       },
     };
   }

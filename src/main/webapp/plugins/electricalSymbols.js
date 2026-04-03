@@ -4536,19 +4536,24 @@
     function exportCabinetObject(segment) {
       var cabinetModel = deps.extractCabinetModel(segment);
       var originFrame = deps.findFrameById(cabinetModel.originFrameId);
+      var geometry = model.getGeometry(segment);
+      var segmentPorts = deps.parsePortLayout(deps.getAttr(segment, "portsJson"));
       return {
         id: deps.trim(cabinetModel.logicalCabinetId),
         kind: "cabinet",
         parentId: deps.trim(cabinetModel.originFrameId) || null,
         groupId: originFrame != null ? deps.getFrameGroupId(originFrame) : null,
         geometry: {
-          x: cabinetModel.cabinetX,
-          y: originFrame != null ? Math.round(deps.getFrameConfig(originFrame).height * deps.FRAME_MARGIN_RATIO) : 0,
-          width: cabinetModel.cabinetWidth,
-          height: 0
+          x: geometry != null ? geometry.x : cabinetModel.cabinetX,
+          y: geometry != null ? geometry.y : originFrame != null ? Math.round(
+            deps.getFrameConfig(originFrame).height * deps.FRAME_MARGIN_RATIO
+          ) : 0,
+          width: geometry != null ? geometry.width : cabinetModel.cabinetWidth,
+          height: geometry != null ? geometry.height : 0
         },
         props: {
-          cabinetModel
+          cabinetModel,
+          segmentPorts
         }
       };
     }
@@ -5703,8 +5708,7 @@
     data = mxUtils.getXml(svgRoot);
     return {
       data,
-      format,
-      xml: ""
+      format
     };
   }
   function emitHostEvent(eventName, payload) {
@@ -5973,12 +5977,9 @@
           }
           if (payload.action === "exportDiagram") {
             evt.stopImmediatePropagation();
-            if (payload.format === "svg" || payload.format === "xmlsvg") {
+            if (payload.format === "svg") {
               postResult(evt.source, payload, buildSvgExportPayload(ctx, payload.format));
               return;
-            }
-            if (payload.format === "png" || payload.format === "xmlpng") {
-              throw new Error("\u5F53\u524D\u5BBF\u4E3B\u6865\u4EC5\u652F\u6301 SVG \u5BFC\u51FA");
             }
             throw new Error("\u4E0D\u652F\u6301\u7684\u5BFC\u51FA\u683C\u5F0F");
           }
@@ -6064,7 +6065,6 @@
             var frame = resolveFrameCell(payload);
             var graph2 = ctx.graph;
             var model2 = ctx.model != null ? ctx.model : graph2 != null && typeof graph2.getModel === "function" ? graph2.getModel() : null;
-            var state = ctx.state != null ? ctx.state : runtimeState;
             var movedCells = [];
             var edgeMap = {};
             var frameGeometry;
@@ -6079,29 +6079,6 @@
               x: frameGeometry != null ? frameGeometry.x : 0,
               y: frameGeometry != null ? frameGeometry.y : 0
             };
-            if (window.console != null) {
-              console.log(
-                "[electricalSymbols host bridge][request][json]",
-                JSON.stringify(
-                  {
-                    frameCellId: payload.frameCellId || "",
-                    frameId: getAttr(frame, "frameId"),
-                    positions: payload.positions,
-                    edgeRoutes: payload.edgeRoutes,
-                    frameOrigin,
-                    frameGeometry: frameGeometry != null ? {
-                      x: frameGeometry.x,
-                      y: frameGeometry.y,
-                      width: frameGeometry.width,
-                      height: frameGeometry.height,
-                      relative: !!frameGeometry.relative
-                    } : null
-                  },
-                  null,
-                  2
-                )
-              );
-            }
             runtimeState.updatingModel = true;
             model2.beginUpdate();
             try {
@@ -6256,26 +6233,6 @@
                   }
                   nextStyle = mxUtils.setStyle(nextStyle, "rounded", "0");
                   model2.setStyle(edge, nextStyle);
-                  if (window.console != null) {
-                    console.log(
-                      "[electricalSymbols host bridge][edge-applied][json]",
-                      JSON.stringify(
-                        {
-                          edgeId,
-                          routePoints: route.points,
-                          sourcePortId: route.sourcePortId != null ? String(route.sourcePortId) : "",
-                          targetPortId: route.targetPortId != null ? String(route.targetPortId) : "",
-                          manual: !!route.manual,
-                          geometryPoints: nextPoints.map(function(point2) {
-                            return { x: point2.x, y: point2.y };
-                          }),
-                          style: model2.getStyle(edge) || ""
-                        },
-                        null,
-                        2
-                      )
-                    );
-                  }
                 }
               }
             } finally {
@@ -6289,21 +6246,6 @@
             postResult(evt.source, payload, {
               movedCount: movedCells.length
             });
-            if (window.console != null) {
-              console.log(
-                "[electricalSymbols host bridge][result][json]",
-                JSON.stringify(
-                  {
-                    movedCount: movedCells.length,
-                    movedCellIds: movedCells.map(function(cell2) {
-                      return cell2 != null && cell2.id != null ? String(cell2.id) : "";
-                    })
-                  },
-                  null,
-                  2
-                )
-              );
-            }
           }
         } catch (e) {
           postError(evt.source, payload, e);
