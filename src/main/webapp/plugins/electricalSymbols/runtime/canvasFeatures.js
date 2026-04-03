@@ -18,15 +18,6 @@ export var ACTION_ITEMS = [
     resourceKey: "electricalReassignPort",
     actionKey: "electricalReassignPort",
   },
-  { resourceKey: "electricalExport", actionKey: "electricalExport" },
-  {
-    resourceKey: "electricalSaveBackend",
-    actionKey: "electricalSaveBackend",
-  },
-  {
-    resourceKey: "electricalRollbackBackend",
-    actionKey: "electricalRollbackBackend",
-  },
 ];
 
 // extras 菜单也复用同一批 action，只是多了刷新项。

@@ -11,6 +11,7 @@ import { makeFrameLabelStyle } from "../domain/frameCore.js";
 import { clearEdgePoints } from "./connectionConstraints.js";
 import { createMetaCell } from "../utils/xml.js";
 import { getAttr } from "../utils/xml.js";
+import { openBackendSaveDialog, openBackendRollbackDialog } from "../ui/backendDialogs.js";
 
 function parseHostMessage(data) {
   if (data == null) {
@@ -403,8 +404,9 @@ export function installHostBridge(ctx) {
           evt.stopImmediatePropagation();
           var point = resolveGraphInsertPoint(ctx, payload);
           commandApi.insertIntoGraphAt(payload.spec, point);
+          var createdCell = ctx.graph.getSelectionCell();
           postResult(evt.source, payload, {
-            cellId: getAttr(ctx.graph.getSelectionCell(), "id"),
+            cellId: createdCell != null && createdCell.id != null ? String(createdCell.id) : "",
           });
           return;
         }
@@ -422,6 +424,31 @@ export function installHostBridge(ctx) {
           }
 
           throw new Error("不支持的导出格式");
+        }
+
+        if (payload.action === "exportPdf") {
+          evt.stopImmediatePropagation();
+          var ui = ctx.ui;
+          var pdfAction = ui != null ? ui.actions.get("exportPdf") : null;
+
+          if (pdfAction == null) {
+            throw new Error("当前环境缺少 PDF 导出动作");
+          }
+
+          pdfAction.funct();
+          return;
+        }
+
+        if (payload.action === "saveToBackend") {
+          evt.stopImmediatePropagation();
+          openBackendSaveDialog();
+          return;
+        }
+
+        if (payload.action === "rollbackBackend") {
+          evt.stopImmediatePropagation();
+          openBackendRollbackDialog();
+          return;
         }
 
         if (payload.action === "insertFrame" && payload.config != null) {
@@ -829,6 +856,22 @@ export function installHostBridge(ctx) {
     }
 
     clearConnectedEdgesForCells(evt != null ? evt.getProperty("cells") : null);
+  });
+
+  // ─── Selection Change → push to host ─────────────────────────────────
+  var selectionDebounce = null;
+  var selModel = graph.getSelectionModel();
+
+  selModel.addListener(mxEvent.CHANGE, function () {
+    clearTimeout(selectionDebounce);
+    selectionDebounce = setTimeout(function () {
+      var cell = graph.getSelectionCell();
+      emitHostEvent("eid-selection-changed", {
+        cellId: cell != null && cell.id != null ? String(cell.id) : "",
+        cellType: cell != null ? (cell.edge ? "edge" : "vertex") : "",
+        isEdge: cell != null && !!cell.edge,
+      });
+    }, 50);
   });
 
   window.__eidElectricalHostBridgeInstalled = true;
