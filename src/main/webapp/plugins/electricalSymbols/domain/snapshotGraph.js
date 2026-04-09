@@ -106,6 +106,7 @@ export function createSnapshotDomain() {
   var model = deps.model;
   var state = deps.state;
   var ui = deps.ui;
+  var currentDuplicateSymbolInstanceIds = null;
 
   function belongsToCurrentDefaultParent(cell) {
     var parent = cell != null ? model.getParent(cell) : null;
@@ -141,6 +142,50 @@ export function createSnapshotDomain() {
     }
 
     return cells;
+  }
+
+  function getPreferredSymbolInstanceId(cell) {
+    var instanceId = deps.trim(deps.getAttr(cell, "instanceId"));
+
+    if (instanceId.length > 0) {
+      return instanceId;
+    }
+
+    var spec = deps.extractSpec(cell);
+    return deps.trim(spec != null ? spec.instanceId : "");
+  }
+
+  function collectDuplicateSymbolInstanceIds(cells) {
+    var counts = {};
+    var duplicates = {};
+    var i;
+
+    for (i = 0; i < cells.length; i++) {
+      var cell = cells[i];
+
+      if (!deps.isElectricalRoot(cell)) {
+        continue;
+      }
+
+      var instanceId = getPreferredSymbolInstanceId(cell);
+
+      if (instanceId.length == 0) {
+        continue;
+      }
+
+      counts[instanceId] = (counts[instanceId] || 0) + 1;
+    }
+
+    for (var key in counts) {
+      if (
+        Object.prototype.hasOwnProperty.call(counts, key) &&
+        counts[key] > 1
+      ) {
+        duplicates[key] = true;
+      }
+    }
+
+    return duplicates;
   }
 
   function getStyleConstraintFromEdge(edge, source) {
@@ -322,7 +367,7 @@ export function createSnapshotDomain() {
     }
 
     if (deps.isElectricalRoot(cell)) {
-      return getSymbolObjectId(cell);
+      return getSymbolObjectId(cell, currentDuplicateSymbolInstanceIds);
     }
 
     if (shouldExportGenericObject(cell)) {
@@ -417,15 +462,17 @@ export function createSnapshotDomain() {
     return null;
   }
 
-  function getSymbolObjectId(root) {
-    var instanceId = deps.trim(deps.getAttr(root, "instanceId"));
+  function getSymbolObjectId(root, duplicateInstanceIds) {
+    var instanceId = getPreferredSymbolInstanceId(root);
 
-    if (instanceId.length > 0) {
+    if (
+      instanceId.length > 0 &&
+      !(duplicateInstanceIds != null && duplicateInstanceIds[instanceId] === true)
+    ) {
       return instanceId;
     }
 
-    var spec = deps.extractSpec(root);
-    return deps.trim(spec.instanceId) || deps.trim(root != null ? root.id : "");
+    return deps.trim(root != null ? root.id : "");
   }
 
   function exportFrameObject(frame) {
@@ -498,7 +545,7 @@ export function createSnapshotDomain() {
     };
   }
 
-  function exportSymbolObject(root) {
+  function exportSymbolObject(root, duplicateInstanceIds) {
     var spec = deps.extractSpec(root);
     var geometry = model.getGeometry(root);
     var frame = deps.findDrawingFrame(root);
@@ -509,7 +556,7 @@ export function createSnapshotDomain() {
     }
 
     return {
-      id: getSymbolObjectId(root),
+      id: getSymbolObjectId(root, duplicateInstanceIds),
       kind: "symbol",
       parentId: resolveSnapshotObjectId(parent),
       groupId: frame != null ? deps.getFrameGroupId(frame) : null,
@@ -641,7 +688,10 @@ export function createSnapshotDomain() {
     var genericObjects = [];
     var edgeObjects = [];
     var allCells = getAllModelCells();
+    var duplicateSymbolInstanceIds = collectDuplicateSymbolInstanceIds(allCells);
     var i;
+
+    currentDuplicateSymbolInstanceIds = duplicateSymbolInstanceIds;
 
     for (i = 0; i < frames.length; i++) {
       frameObjects.push(exportFrameObject(frames[i]));
@@ -653,7 +703,9 @@ export function createSnapshotDomain() {
       if (deps.isCabinetSegment(cell)) {
         cabinetObjects.push(exportCabinetObject(cell));
       } else if (deps.isElectricalRoot(cell)) {
-        symbolObjects.push(exportSymbolObject(cell));
+        symbolObjects.push(
+          exportSymbolObject(cell, duplicateSymbolInstanceIds),
+        );
       } else if (shouldExportGenericObject(cell)) {
         genericObjects.push(exportGenericObject(cell));
       } else if (model.isEdge(cell)) {
@@ -661,16 +713,20 @@ export function createSnapshotDomain() {
       }
     }
 
-    return {
-      diagramId: deps.trim(state.backendDiagramId),
-      version: Math.max(0, state.backendDiagramVersion),
-      updatedAt: new Date().toISOString(),
-      objects: frameObjects
-        .concat(cabinetObjects)
-        .concat(symbolObjects)
-        .concat(genericObjects),
-      edges: edgeObjects,
-    };
+    try {
+      return {
+        diagramId: deps.trim(state.backendDiagramId),
+        version: Math.max(0, state.backendDiagramVersion),
+        updatedAt: new Date().toISOString(),
+        objects: frameObjects
+          .concat(cabinetObjects)
+          .concat(symbolObjects)
+          .concat(genericObjects),
+        edges: edgeObjects,
+      };
+    } finally {
+      currentDuplicateSymbolInstanceIds = null;
+    }
   }
 
 

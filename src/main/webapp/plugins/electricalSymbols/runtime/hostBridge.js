@@ -921,6 +921,9 @@ export function installHostBridge(ctx) {
                 var parentOriginX;
                 var parentOriginY;
                 var points;
+                var hasSourcePortBinding;
+                var hasTargetPortBinding;
+                var hasPortBinding;
                 var j;
 
                 if (
@@ -962,17 +965,23 @@ export function installHostBridge(ctx) {
                 }
 
                 edgeGeometry = edgeGeometry.clone();
-                edgeGeometry.points = nextPoints.length > 0 ? nextPoints : null;
+                edgeGeometry.points =
+                  isSnakeLayout && route.manual && nextPoints.length > 0
+                    ? nextPoints
+                    : null;
                 model.setGeometry(edge, edgeGeometry);
                 var nextStyle = model.getStyle(edge) || "";
-
-                if (
-                  isSnakeLayout &&
-                  route.manual &&
+                hasSourcePortBinding =
                   route.sourcePortId != null &&
-                  String(route.sourcePortId).length > 0
-                ) {
+                  String(route.sourcePortId).length > 0;
+                hasTargetPortBinding =
+                  route.targetPortId != null &&
+                  String(route.targetPortId).length > 0;
+                hasPortBinding = hasSourcePortBinding || hasTargetPortBinding;
+
+                if (hasSourcePortBinding) {
                   applyEdgeConstraintByPortId(edge, true, route.sourcePortId);
+                  nextStyle = model.getStyle(edge) || nextStyle;
                   nextStyle = mxUtils.setStyle(
                     nextStyle,
                     "sourcePortId",
@@ -980,13 +989,9 @@ export function installHostBridge(ctx) {
                   );
                 }
 
-                if (
-                  isSnakeLayout &&
-                  route.manual &&
-                  route.targetPortId != null &&
-                  String(route.targetPortId).length > 0
-                ) {
+                if (hasTargetPortBinding) {
                   applyEdgeConstraintByPortId(edge, false, route.targetPortId);
+                  nextStyle = model.getStyle(edge) || nextStyle;
                   nextStyle = mxUtils.setStyle(
                     nextStyle,
                     "targetPortId",
@@ -994,10 +999,12 @@ export function installHostBridge(ctx) {
                   );
                 }
 
-                nextStyle = mxUtils.setStyle(nextStyle, "entryX", null);
-                nextStyle = mxUtils.setStyle(nextStyle, "entryY", null);
-                nextStyle = mxUtils.setStyle(nextStyle, "exitX", null);
-                nextStyle = mxUtils.setStyle(nextStyle, "exitY", null);
+                if (!hasPortBinding) {
+                  nextStyle = mxUtils.setStyle(nextStyle, "entryX", null);
+                  nextStyle = mxUtils.setStyle(nextStyle, "entryY", null);
+                  nextStyle = mxUtils.setStyle(nextStyle, "exitX", null);
+                  nextStyle = mxUtils.setStyle(nextStyle, "exitY", null);
+                }
                 if (isSnakeLayout && route.manual) {
                   nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "0");
                   nextStyle = mxUtils.setStyle(
@@ -1023,18 +1030,18 @@ export function installHostBridge(ctx) {
                     "eidLayoutManaged",
                     null,
                   );
-                  nextStyle = mxUtils.setStyle(nextStyle, "sourcePortId", null);
-                  nextStyle = mxUtils.setStyle(nextStyle, "targetPortId", null);
-                  nextStyle = mxUtils.setStyle(
-                    nextStyle,
-                    "sourcePortConstraint",
-                    null,
-                  );
-                  nextStyle = mxUtils.setStyle(
-                    nextStyle,
-                    "targetPortConstraint",
-                    null,
-                  );
+                  if (!hasPortBinding) {
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "sourcePortConstraint",
+                      null,
+                    );
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "targetPortConstraint",
+                      null,
+                    );
+                  }
                   nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "auto");
                   nextStyle = mxUtils.setStyle(
                     nextStyle,

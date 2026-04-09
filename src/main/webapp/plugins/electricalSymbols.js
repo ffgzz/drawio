@@ -4296,6 +4296,7 @@
     var model = deps.model;
     var state = deps.state;
     var ui = deps.ui;
+    var currentDuplicateSymbolInstanceIds = null;
     function belongsToCurrentDefaultParent(cell) {
       var parent = cell != null ? model.getParent(cell) : null;
       var defaultParent = graph.getDefaultParent();
@@ -4318,6 +4319,36 @@
         }
       }
       return cells;
+    }
+    function getPreferredSymbolInstanceId(cell) {
+      var instanceId = deps.trim(deps.getAttr(cell, "instanceId"));
+      if (instanceId.length > 0) {
+        return instanceId;
+      }
+      var spec = deps.extractSpec(cell);
+      return deps.trim(spec != null ? spec.instanceId : "");
+    }
+    function collectDuplicateSymbolInstanceIds(cells) {
+      var counts = {};
+      var duplicates = {};
+      var i;
+      for (i = 0; i < cells.length; i++) {
+        var cell = cells[i];
+        if (!deps.isElectricalRoot(cell)) {
+          continue;
+        }
+        var instanceId = getPreferredSymbolInstanceId(cell);
+        if (instanceId.length == 0) {
+          continue;
+        }
+        counts[instanceId] = (counts[instanceId] || 0) + 1;
+      }
+      for (var key in counts) {
+        if (Object.prototype.hasOwnProperty.call(counts, key) && counts[key] > 1) {
+          duplicates[key] = true;
+        }
+      }
+      return duplicates;
     }
     function getStyleConstraintFromEdge(edge, source) {
       var style = graph.getCellStyle(edge) || {};
@@ -4424,7 +4455,7 @@
         return deps.trim(cell.id != null ? String(cell.id) : "") || deps.trim(deps.getAttr(cell, "logicalCabinetId")) || null;
       }
       if (deps.isElectricalRoot(cell)) {
-        return getSymbolObjectId(cell);
+        return getSymbolObjectId(cell, currentDuplicateSymbolInstanceIds);
       }
       if (shouldExportGenericObject3(cell)) {
         return getGenericObjectId(cell);
@@ -4501,13 +4532,12 @@
       }
       return null;
     }
-    function getSymbolObjectId(root) {
-      var instanceId = deps.trim(deps.getAttr(root, "instanceId"));
-      if (instanceId.length > 0) {
+    function getSymbolObjectId(root, duplicateInstanceIds) {
+      var instanceId = getPreferredSymbolInstanceId(root);
+      if (instanceId.length > 0 && !(duplicateInstanceIds != null && duplicateInstanceIds[instanceId] === true)) {
         return instanceId;
       }
-      var spec = deps.extractSpec(root);
-      return deps.trim(spec.instanceId) || deps.trim(root != null ? root.id : "");
+      return deps.trim(root != null ? root.id : "");
     }
     function exportFrameObject(frame) {
       var geometry = model.getGeometry(frame);
@@ -4565,7 +4595,7 @@
         }
       };
     }
-    function exportSymbolObject(root) {
+    function exportSymbolObject(root, duplicateInstanceIds) {
       var spec = deps.extractSpec(root);
       var geometry = model.getGeometry(root);
       var frame = deps.findDrawingFrame(root);
@@ -4574,7 +4604,7 @@
         parent = null;
       }
       return {
-        id: getSymbolObjectId(root),
+        id: getSymbolObjectId(root, duplicateInstanceIds),
         kind: "symbol",
         parentId: resolveSnapshotObjectId(parent),
         groupId: frame != null ? deps.getFrameGroupId(frame) : null,
@@ -4679,7 +4709,9 @@
       var genericObjects = [];
       var edgeObjects = [];
       var allCells = getAllModelCells();
+      var duplicateSymbolInstanceIds = collectDuplicateSymbolInstanceIds(allCells);
       var i;
+      currentDuplicateSymbolInstanceIds = duplicateSymbolInstanceIds;
       for (i = 0; i < frames.length; i++) {
         frameObjects.push(exportFrameObject(frames[i]));
       }
@@ -4688,20 +4720,26 @@
         if (deps.isCabinetSegment(cell)) {
           cabinetObjects.push(exportCabinetObject(cell));
         } else if (deps.isElectricalRoot(cell)) {
-          symbolObjects.push(exportSymbolObject(cell));
+          symbolObjects.push(
+            exportSymbolObject(cell, duplicateSymbolInstanceIds)
+          );
         } else if (shouldExportGenericObject3(cell)) {
           genericObjects.push(exportGenericObject(cell));
         } else if (model.isEdge(cell)) {
           edgeObjects.push(exportEdgeObject(cell));
         }
       }
-      return {
-        diagramId: deps.trim(state.backendDiagramId),
-        version: Math.max(0, state.backendDiagramVersion),
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        objects: frameObjects.concat(cabinetObjects).concat(symbolObjects).concat(genericObjects),
-        edges: edgeObjects
-      };
+      try {
+        return {
+          diagramId: deps.trim(state.backendDiagramId),
+          version: Math.max(0, state.backendDiagramVersion),
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          objects: frameObjects.concat(cabinetObjects).concat(symbolObjects).concat(genericObjects),
+          edges: edgeObjects
+        };
+      } finally {
+        currentDuplicateSymbolInstanceIds = null;
+      }
     }
     function findCabinetSegmentForPort(logicalCabinetId, portId) {
       var segments = deps.findCabinetSegments(logicalCabinetId);
@@ -6552,6 +6590,9 @@
                   var parentOriginX;
                   var parentOriginY;
                   var points;
+                  var hasSourcePortBinding;
+                  var hasTargetPortBinding;
+                  var hasPortBinding;
                   var j;
                   if (edge == null || !Array.isArray(route.points) || !edgeBelongsToLayoutFrame(edge, frame)) {
                     continue;
@@ -6580,29 +6621,36 @@
                     );
                   }
                   edgeGeometry = edgeGeometry.clone();
-                  edgeGeometry.points = nextPoints.length > 0 ? nextPoints : null;
+                  edgeGeometry.points = isSnakeLayout && route.manual && nextPoints.length > 0 ? nextPoints : null;
                   model2.setGeometry(edge, edgeGeometry);
                   var nextStyle = model2.getStyle(edge) || "";
-                  if (isSnakeLayout && route.manual && route.sourcePortId != null && String(route.sourcePortId).length > 0) {
+                  hasSourcePortBinding = route.sourcePortId != null && String(route.sourcePortId).length > 0;
+                  hasTargetPortBinding = route.targetPortId != null && String(route.targetPortId).length > 0;
+                  hasPortBinding = hasSourcePortBinding || hasTargetPortBinding;
+                  if (hasSourcePortBinding) {
                     applyEdgeConstraintByPortId(edge, true, route.sourcePortId);
+                    nextStyle = model2.getStyle(edge) || nextStyle;
                     nextStyle = mxUtils.setStyle(
                       nextStyle,
                       "sourcePortId",
                       String(route.sourcePortId)
                     );
                   }
-                  if (isSnakeLayout && route.manual && route.targetPortId != null && String(route.targetPortId).length > 0) {
+                  if (hasTargetPortBinding) {
                     applyEdgeConstraintByPortId(edge, false, route.targetPortId);
+                    nextStyle = model2.getStyle(edge) || nextStyle;
                     nextStyle = mxUtils.setStyle(
                       nextStyle,
                       "targetPortId",
                       String(route.targetPortId)
                     );
                   }
-                  nextStyle = mxUtils.setStyle(nextStyle, "entryX", null);
-                  nextStyle = mxUtils.setStyle(nextStyle, "entryY", null);
-                  nextStyle = mxUtils.setStyle(nextStyle, "exitX", null);
-                  nextStyle = mxUtils.setStyle(nextStyle, "exitY", null);
+                  if (!hasPortBinding) {
+                    nextStyle = mxUtils.setStyle(nextStyle, "entryX", null);
+                    nextStyle = mxUtils.setStyle(nextStyle, "entryY", null);
+                    nextStyle = mxUtils.setStyle(nextStyle, "exitX", null);
+                    nextStyle = mxUtils.setStyle(nextStyle, "exitY", null);
+                  }
                   if (isSnakeLayout && route.manual) {
                     nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "0");
                     nextStyle = mxUtils.setStyle(
@@ -6628,18 +6676,18 @@
                       "eidLayoutManaged",
                       null
                     );
-                    nextStyle = mxUtils.setStyle(nextStyle, "sourcePortId", null);
-                    nextStyle = mxUtils.setStyle(nextStyle, "targetPortId", null);
-                    nextStyle = mxUtils.setStyle(
-                      nextStyle,
-                      "sourcePortConstraint",
-                      null
-                    );
-                    nextStyle = mxUtils.setStyle(
-                      nextStyle,
-                      "targetPortConstraint",
-                      null
-                    );
+                    if (!hasPortBinding) {
+                      nextStyle = mxUtils.setStyle(
+                        nextStyle,
+                        "sourcePortConstraint",
+                        null
+                      );
+                      nextStyle = mxUtils.setStyle(
+                        nextStyle,
+                        "targetPortConstraint",
+                        null
+                      );
+                    }
                     nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "auto");
                     nextStyle = mxUtils.setStyle(
                       nextStyle,
