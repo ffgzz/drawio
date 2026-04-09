@@ -14,7 +14,7 @@ import { getAttr } from "../utils/xml.js";
 import { openBackendSaveDialog, openBackendRollbackDialog } from "../ui/backendDialogs.js";
 
 function parseHostMessage(data) {
-  if (data == null) {
+  if (data === null) {
     return null;
   }
 
@@ -33,6 +33,7 @@ function parseHostMessage(data) {
   return null;
 }
 
+// 根据宿主页面传来的 viewport 坐标，结合当前 graph 的 view 状态，计算出一个合理的图元插入点
 function resolveGraphInsertPoint(ctx, payload) {
   var graph = ctx.graph;
   var diagramContainer = ctx.ui != null ? ctx.ui.diagramContainer : null;
@@ -56,6 +57,7 @@ function resolveGraphInsertPoint(ctx, payload) {
   );
 }
 
+// 将数值限制在 min 和 max 之间，非数值类型会被当做无穷大处理
 function clamp(value, min, max) {
   if (!isFinite(value)) {
     return min;
@@ -64,6 +66,7 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+// 构建 SVG 导出结果的 payload，包含 SVG 数据和格式信息
 function buildSvgExportPayload(ctx, format) {
   var graph = ctx.graph;
   var bounds = graph.getGraphBounds();
@@ -113,6 +116,7 @@ function buildSvgExportPayload(ctx, format) {
   };
 }
 
+// 向宿主页面发送事件，eventName 是事件名称，payload 是事件数据对象，会被序列化成 JSON 字符串
 export function emitHostEvent(eventName, payload) {
   var targetWindow = window.opener || window.parent;
 
@@ -137,6 +141,7 @@ export function emitHostEvent(eventName, payload) {
   );
 }
 
+// 安装宿主桥接层，接收并处理来自宿主页面的消息，完成图元/图框/配电柜的插入和布局等操作
 export function installHostBridge(ctx) {
   if (window.__eidElectricalHostBridgeInstalled) {
     return;
@@ -176,8 +181,7 @@ export function installHostBridge(ctx) {
       "align",
       label.align != null ? String(label.align) : "center",
     );
-    var fieldPath =
-      label.fieldPath != null ? String(label.fieldPath) : "";
+    var fieldPath = label.fieldPath != null ? String(label.fieldPath) : "";
     var cell;
 
     if (fieldPath.length > 0) {
@@ -309,7 +313,10 @@ export function installHostBridge(ctx) {
   }
 
   function postReply(targetWindow, payload) {
-    if (targetWindow != null && typeof targetWindow.postMessage === "function") {
+    if (
+      targetWindow != null &&
+      typeof targetWindow.postMessage === "function"
+    ) {
       targetWindow.postMessage(JSON.stringify(payload), "*");
     }
   }
@@ -333,7 +340,8 @@ export function installHostBridge(ctx) {
       event: "eid-host-error",
       action: payload != null ? payload.action : "",
       actionId: payload != null ? payload.actionId : "",
-      error: error != null && error.message != null ? error.message : String(error),
+      error:
+        error != null && error.message != null ? error.message : String(error),
     });
   }
 
@@ -378,12 +386,55 @@ export function installHostBridge(ctx) {
     if (explicitFrameCellId.length > 0) {
       explicitFrame = ctx.model.getCell(explicitFrameCellId);
 
-      if (explicitFrame != null && frameDomainApi.findDrawingFrame(explicitFrame) === explicitFrame) {
+      if (
+        explicitFrame != null &&
+        frameDomainApi.findDrawingFrame(explicitFrame) === explicitFrame
+      ) {
         return explicitFrame;
       }
     }
 
     return resolveSelectedFrame(payload);
+  }
+
+  function belongsToLayoutFrame(cell, frame) {
+    var ownerFrame;
+
+    if (cell == null || frame == null) {
+      return false;
+    }
+
+    if (cell === frame || model.getParent(cell) === frame) {
+      return true;
+    }
+
+    ownerFrame = frameDomainApi.findDrawingFrame(cell);
+
+    if (ownerFrame == null) {
+      return true;
+    }
+
+    return ownerFrame === frame;
+  }
+
+  function edgeBelongsToLayoutFrame(edge, frame) {
+    var source;
+    var target;
+
+    if (edge == null || frame == null || model == null) {
+      return false;
+    }
+
+    source = model.getTerminal(edge, true);
+    target = model.getTerminal(edge, false);
+
+    if (source == null || target == null) {
+      return false;
+    }
+
+    return (
+      belongsToLayoutFrame(source, frame) && belongsToLayoutFrame(target, frame)
+    );
   }
 
   function collectDescendants(parent, result) {
@@ -438,7 +489,8 @@ export function installHostBridge(ctx) {
 
       if (
         getAttr(cell, "pluginType") == constants.ROOT_TYPE &&
-        ((getAttr(cell, "instanceId") == target) || (cell.id != null && String(cell.id) == target))
+        (getAttr(cell, "instanceId") == target ||
+          (cell.id != null && String(cell.id) == target))
       ) {
         return cell;
       }
@@ -483,7 +535,11 @@ export function installHostBridge(ctx) {
           evt.stopImmediatePropagation();
 
           if (payload.format === "svg") {
-            postResult(evt.source, payload, buildSvgExportPayload(ctx, payload.format));
+            postResult(
+              evt.source,
+              payload,
+              buildSvgExportPayload(ctx, payload.format),
+            );
             return;
           }
 
@@ -542,7 +598,11 @@ export function installHostBridge(ctx) {
               model.beginUpdate();
             }
             try {
-              for (labelIndex = 0; labelIndex < frameLabels.length; labelIndex++) {
+              for (
+                labelIndex = 0;
+                labelIndex < frameLabels.length;
+                labelIndex++
+              ) {
                 var frameLabel = frameLabels[labelIndex];
 
                 if (frameLabel == null) {
@@ -554,7 +614,11 @@ export function installHostBridge(ctx) {
                 );
               }
 
-              for (labelIndex = 0; labelIndex < insertedCells.length; labelIndex++) {
+              for (
+                labelIndex = 0;
+                labelIndex < insertedCells.length;
+                labelIndex++
+              ) {
                 if (model != null) {
                   model.add(insertedFrame, insertedCells[labelIndex]);
                 } else {
@@ -669,7 +733,8 @@ export function installHostBridge(ctx) {
           }
 
           postResult(evt.source, payload, {
-            frameId: insertedFrame != null ? getAttr(insertedFrame, "frameId") : "",
+            frameId:
+              insertedFrame != null ? getAttr(insertedFrame, "frameId") : "",
             groupId:
               insertedFrame != null
                 ? frameDomainApi.getFrameGroupId(insertedFrame)
@@ -682,7 +747,10 @@ export function installHostBridge(ctx) {
           return;
         }
 
-        if (payload.action === "insertCabinet" && payload.cabinetModel != null) {
+        if (
+          payload.action === "insertCabinet" &&
+          payload.cabinetModel != null
+        ) {
           evt.stopImmediatePropagation();
           commandApi.insertCabinet(payload.cabinetModel);
           postResult(evt.source, payload, {
@@ -781,9 +849,29 @@ export function installHostBridge(ctx) {
                 continue;
               }
 
+              if (!belongsToLayoutFrame(cell, frame)) {
+                continue;
+              }
+
               geometry = model.getGeometry(cell);
 
               if (geometry == null) {
+                continue;
+              }
+
+              if (getAttr(cell, "pluginType") == constants.CABINET_TYPE) {
+                movedCells.push(cell);
+                edges = graph.getConnections(cell) || [];
+
+                for (j = 0; j < edges.length; j++) {
+                  if (
+                    edges[j] != null &&
+                    edges[j].id != null &&
+                    edgeBelongsToLayoutFrame(edges[j], frame)
+                  ) {
+                    edgeMap[String(edges[j].id)] = edges[j];
+                  }
+                }
                 continue;
               }
 
@@ -801,7 +889,11 @@ export function installHostBridge(ctx) {
               edges = graph.getConnections(cell) || [];
 
               for (j = 0; j < edges.length; j++) {
-                if (edges[j] != null && edges[j].id != null) {
+                if (
+                  edges[j] != null &&
+                  edges[j].id != null &&
+                  edgeBelongsToLayoutFrame(edges[j], frame)
+                ) {
                   edgeMap[String(edges[j].id)] = edges[j];
                 }
               }
@@ -831,7 +923,11 @@ export function installHostBridge(ctx) {
                 var points;
                 var j;
 
-                if (edge == null || !Array.isArray(route.points)) {
+                if (
+                  edge == null ||
+                  !Array.isArray(route.points) ||
+                  !edgeBelongsToLayoutFrame(edge, frame)
+                ) {
                   continue;
                 }
 
@@ -842,7 +938,8 @@ export function installHostBridge(ctx) {
                 }
 
                 edgeParent = model.getParent(edge);
-                parentGeometry = edgeParent != null ? model.getGeometry(edgeParent) : null;
+                parentGeometry =
+                  edgeParent != null ? model.getGeometry(edgeParent) : null;
                 parentOriginX = parentGeometry != null ? parentGeometry.x : 0;
                 parentOriginY = parentGeometry != null ? parentGeometry.y : 0;
                 points = route.points;
@@ -915,13 +1012,29 @@ export function installHostBridge(ctx) {
                   );
                   nextStyle = mxUtils.setStyle(nextStyle, "noEdgeStyle", "1");
                   nextStyle = mxUtils.setStyle(nextStyle, "edgeStyle", null);
-                  nextStyle = mxUtils.setStyle(nextStyle, "eidLayoutManaged", "1");
+                  nextStyle = mxUtils.setStyle(
+                    nextStyle,
+                    "eidLayoutManaged",
+                    "1",
+                  );
                 } else {
-                  nextStyle = mxUtils.setStyle(nextStyle, "eidLayoutManaged", null);
+                  nextStyle = mxUtils.setStyle(
+                    nextStyle,
+                    "eidLayoutManaged",
+                    null,
+                  );
                   nextStyle = mxUtils.setStyle(nextStyle, "sourcePortId", null);
                   nextStyle = mxUtils.setStyle(nextStyle, "targetPortId", null);
-                  nextStyle = mxUtils.setStyle(nextStyle, "sourcePortConstraint", null);
-                  nextStyle = mxUtils.setStyle(nextStyle, "targetPortConstraint", null);
+                  nextStyle = mxUtils.setStyle(
+                    nextStyle,
+                    "sourcePortConstraint",
+                    null,
+                  );
+                  nextStyle = mxUtils.setStyle(
+                    nextStyle,
+                    "targetPortConstraint",
+                    null,
+                  );
                   nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "auto");
                   nextStyle = mxUtils.setStyle(
                     nextStyle,

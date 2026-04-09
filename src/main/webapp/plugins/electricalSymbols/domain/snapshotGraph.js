@@ -314,7 +314,11 @@ export function createSnapshotDomain() {
     }
 
     if (deps.isCabinetSegment(cell)) {
-      return deps.trim(deps.getAttr(cell, "logicalCabinetId")) || null;
+      return (
+        deps.trim(cell.id != null ? String(cell.id) : "") ||
+        deps.trim(deps.getAttr(cell, "logicalCabinetId")) ||
+        null
+      );
     }
 
     if (deps.isElectricalRoot(cell)) {
@@ -452,15 +456,22 @@ export function createSnapshotDomain() {
 
   function exportCabinetObject(segment) {
     var cabinetModel = deps.extractCabinetModel(segment);
+    var currentFrame = deps.findDrawingFrame(segment);
     var originFrame = deps.findFrameById(cabinetModel.originFrameId);
     var geometry = model.getGeometry(segment);
     var segmentPorts = deps.parsePortLayout(deps.getAttr(segment, "portsJson"));
+    var logicalCabinetId = deps.trim(cabinetModel.logicalCabinetId);
+    var segmentObjectId =
+      deps.trim(segment != null && segment.id != null ? String(segment.id) : "") ||
+      logicalCabinetId;
+    var currentFrameId =
+      currentFrame != null ? deps.trim(deps.getAttr(currentFrame, "frameId")) : "";
 
     return {
-      id: deps.trim(cabinetModel.logicalCabinetId),
+      id: segmentObjectId,
       kind: "cabinet",
-      parentId: deps.trim(cabinetModel.originFrameId) || null,
-      groupId: originFrame != null ? deps.getFrameGroupId(originFrame) : null,
+      parentId: currentFrameId || deps.trim(cabinetModel.originFrameId) || null,
+      groupId: currentFrame != null ? deps.getFrameGroupId(currentFrame) : null,
       geometry: {
         x: geometry != null ? geometry.x : cabinetModel.cabinetX,
         y:
@@ -477,6 +488,12 @@ export function createSnapshotDomain() {
       props: {
         cabinetModel,
         segmentPorts,
+        logicalCabinetId: logicalCabinetId || null,
+        originFrameId: deps.trim(cabinetModel.originFrameId) || null,
+        currentFrameId: currentFrameId || null,
+        segmentCellId:
+          deps.trim(segment != null && segment.id != null ? String(segment.id) : "") ||
+          null,
       },
     };
   }
@@ -623,7 +640,6 @@ export function createSnapshotDomain() {
     var symbolObjects = [];
     var genericObjects = [];
     var edgeObjects = [];
-    var cabinetSeen = {};
     var allCells = getAllModelCells();
     var i;
 
@@ -635,12 +651,7 @@ export function createSnapshotDomain() {
       var cell = allCells[i];
 
       if (deps.isCabinetSegment(cell)) {
-        var logicalId = deps.trim(deps.getAttr(cell, "logicalCabinetId"));
-
-        if (!cabinetSeen[logicalId]) {
-          cabinetSeen[logicalId] = true;
-          cabinetObjects.push(exportCabinetObject(cell));
-        }
+        cabinetObjects.push(exportCabinetObject(cell));
       } else if (deps.isElectricalRoot(cell)) {
         symbolObjects.push(exportSymbolObject(cell));
       } else if (shouldExportGenericObject(cell)) {
@@ -736,7 +747,12 @@ export function createSnapshotDomain() {
     return genericMap[key] || frameMap[key] || symbolMap[key] || null;
   }
 
-  function resolveImportedEdgeTerminal(terminal, symbolMap, genericMap) {
+  function resolveImportedEdgeTerminal(
+    terminal,
+    symbolMap,
+    genericMap,
+    cabinetLogicalIdMap,
+  ) {
     var objectId = deps.trim(terminal != null ? terminal.objectId : "");
     var portId = deps.trim(terminal != null ? terminal.portId : "");
 
@@ -753,7 +769,12 @@ export function createSnapshotDomain() {
     }
 
     if (portId.length > 0) {
-      return findCabinetSegmentForPort(objectId, portId);
+      return findCabinetSegmentForPort(
+        cabinetLogicalIdMap != null && cabinetLogicalIdMap[objectId] != null
+          ? cabinetLogicalIdMap[objectId]
+          : objectId,
+        portId,
+      );
     }
 
     return null;
@@ -847,8 +868,18 @@ export function createSnapshotDomain() {
           var cabinetModel = deps.cloneJson(
             cabinetObject.props != null ? cabinetObject.props.cabinetModel : {},
           );
-          cabinetModel.logicalCabinetId = cabinetObject.id;
-          cabinetModel.originFrameId = cabinetObject.parentId;
+          cabinetModel.logicalCabinetId =
+            deps.trim(
+              cabinetObject.props != null
+                ? cabinetObject.props.logicalCabinetId
+                : null,
+            ) || cabinetObject.id;
+          cabinetModel.originFrameId =
+            deps.trim(
+              cabinetObject.props != null
+                ? cabinetObject.props.originFrameId
+                : null,
+            ) || cabinetObject.parentId;
           cabinetModel.cabinetX = cabinetObject.geometry.x;
           cabinetModel.cabinetWidth = cabinetObject.geometry.width;
           deps.relayoutCabinetByModel(cabinetModel);
@@ -963,17 +994,32 @@ export function createSnapshotDomain() {
         }
 
         if (Array.isArray(snapshot.edges)) {
+          var cabinetLogicalIdMap = {};
+
+          for (i = 0; i < cabinetObjects.length; i++) {
+            var edgeCabinetObject = cabinetObjects[i];
+            var edgeCabinetLogicalId =
+              deps.trim(
+                edgeCabinetObject.props != null
+                  ? edgeCabinetObject.props.logicalCabinetId
+                  : null,
+              ) || edgeCabinetObject.id;
+            cabinetLogicalIdMap[edgeCabinetObject.id] = edgeCabinetLogicalId;
+          }
+
           for (i = 0; i < snapshot.edges.length; i++) {
             var edgeObject = snapshot.edges[i];
             var sourceRoot = resolveImportedEdgeTerminal(
               edgeObject.source,
               symbolMap,
               genericMap,
+              cabinetLogicalIdMap,
             );
             var targetRoot = resolveImportedEdgeTerminal(
               edgeObject.target,
               symbolMap,
               genericMap,
+              cabinetLogicalIdMap,
             );
 
             if (

@@ -4421,7 +4421,7 @@
         return deps.trim(deps.getAttr(cell, "frameId")) || null;
       }
       if (deps.isCabinetSegment(cell)) {
-        return deps.trim(deps.getAttr(cell, "logicalCabinetId")) || null;
+        return deps.trim(cell.id != null ? String(cell.id) : "") || deps.trim(deps.getAttr(cell, "logicalCabinetId")) || null;
       }
       if (deps.isElectricalRoot(cell)) {
         return getSymbolObjectId(cell);
@@ -4535,14 +4535,18 @@
     }
     function exportCabinetObject(segment) {
       var cabinetModel = deps.extractCabinetModel(segment);
+      var currentFrame = deps.findDrawingFrame(segment);
       var originFrame = deps.findFrameById(cabinetModel.originFrameId);
       var geometry = model.getGeometry(segment);
       var segmentPorts = deps.parsePortLayout(deps.getAttr(segment, "portsJson"));
+      var logicalCabinetId = deps.trim(cabinetModel.logicalCabinetId);
+      var segmentObjectId = deps.trim(segment != null && segment.id != null ? String(segment.id) : "") || logicalCabinetId;
+      var currentFrameId = currentFrame != null ? deps.trim(deps.getAttr(currentFrame, "frameId")) : "";
       return {
-        id: deps.trim(cabinetModel.logicalCabinetId),
+        id: segmentObjectId,
         kind: "cabinet",
-        parentId: deps.trim(cabinetModel.originFrameId) || null,
-        groupId: originFrame != null ? deps.getFrameGroupId(originFrame) : null,
+        parentId: currentFrameId || deps.trim(cabinetModel.originFrameId) || null,
+        groupId: currentFrame != null ? deps.getFrameGroupId(currentFrame) : null,
         geometry: {
           x: geometry != null ? geometry.x : cabinetModel.cabinetX,
           y: geometry != null ? geometry.y : originFrame != null ? Math.round(
@@ -4553,7 +4557,11 @@
         },
         props: {
           cabinetModel,
-          segmentPorts
+          segmentPorts,
+          logicalCabinetId: logicalCabinetId || null,
+          originFrameId: deps.trim(cabinetModel.originFrameId) || null,
+          currentFrameId: currentFrameId || null,
+          segmentCellId: deps.trim(segment != null && segment.id != null ? String(segment.id) : "") || null
         }
       };
     }
@@ -4670,7 +4678,6 @@
       var symbolObjects = [];
       var genericObjects = [];
       var edgeObjects = [];
-      var cabinetSeen = {};
       var allCells = getAllModelCells();
       var i;
       for (i = 0; i < frames.length; i++) {
@@ -4679,11 +4686,7 @@
       for (i = 0; i < allCells.length; i++) {
         var cell = allCells[i];
         if (deps.isCabinetSegment(cell)) {
-          var logicalId = deps.trim(deps.getAttr(cell, "logicalCabinetId"));
-          if (!cabinetSeen[logicalId]) {
-            cabinetSeen[logicalId] = true;
-            cabinetObjects.push(exportCabinetObject(cell));
-          }
+          cabinetObjects.push(exportCabinetObject(cell));
         } else if (deps.isElectricalRoot(cell)) {
           symbolObjects.push(exportSymbolObject(cell));
         } else if (shouldExportGenericObject3(cell)) {
@@ -4750,7 +4753,7 @@
       }
       return genericMap[key] || frameMap[key] || symbolMap[key] || null;
     }
-    function resolveImportedEdgeTerminal(terminal, symbolMap, genericMap) {
+    function resolveImportedEdgeTerminal(terminal, symbolMap, genericMap, cabinetLogicalIdMap) {
       var objectId = deps.trim(terminal != null ? terminal.objectId : "");
       var portId = deps.trim(terminal != null ? terminal.portId : "");
       if (objectId.length == 0) {
@@ -4763,7 +4766,10 @@
         return symbolMap[objectId];
       }
       if (portId.length > 0) {
-        return findCabinetSegmentForPort(objectId, portId);
+        return findCabinetSegmentForPort(
+          cabinetLogicalIdMap != null && cabinetLogicalIdMap[objectId] != null ? cabinetLogicalIdMap[objectId] : objectId,
+          portId
+        );
       }
       return null;
     }
@@ -4834,8 +4840,12 @@
             var cabinetModel = deps.cloneJson(
               cabinetObject.props != null ? cabinetObject.props.cabinetModel : {}
             );
-            cabinetModel.logicalCabinetId = cabinetObject.id;
-            cabinetModel.originFrameId = cabinetObject.parentId;
+            cabinetModel.logicalCabinetId = deps.trim(
+              cabinetObject.props != null ? cabinetObject.props.logicalCabinetId : null
+            ) || cabinetObject.id;
+            cabinetModel.originFrameId = deps.trim(
+              cabinetObject.props != null ? cabinetObject.props.originFrameId : null
+            ) || cabinetObject.parentId;
             cabinetModel.cabinetX = cabinetObject.geometry.x;
             cabinetModel.cabinetWidth = cabinetObject.geometry.width;
             deps.relayoutCabinetByModel(cabinetModel);
@@ -4933,17 +4943,27 @@
             }
           }
           if (Array.isArray(snapshot.edges)) {
+            var cabinetLogicalIdMap = {};
+            for (i = 0; i < cabinetObjects.length; i++) {
+              var edgeCabinetObject = cabinetObjects[i];
+              var edgeCabinetLogicalId = deps.trim(
+                edgeCabinetObject.props != null ? edgeCabinetObject.props.logicalCabinetId : null
+              ) || edgeCabinetObject.id;
+              cabinetLogicalIdMap[edgeCabinetObject.id] = edgeCabinetLogicalId;
+            }
             for (i = 0; i < snapshot.edges.length; i++) {
               var edgeObject = snapshot.edges[i];
               var sourceRoot = resolveImportedEdgeTerminal(
                 edgeObject.source,
                 symbolMap,
-                genericMap
+                genericMap,
+                cabinetLogicalIdMap
               );
               var targetRoot = resolveImportedEdgeTerminal(
                 edgeObject.target,
                 symbolMap,
-                genericMap
+                genericMap,
+                cabinetLogicalIdMap
               );
               if (sourceRoot == null && targetRoot == null && !deps.isObject(
                 edgeObject.props != null ? edgeObject.props.geometry : null
@@ -5959,7 +5979,7 @@
 
   // runtime/hostBridge.js
   function parseHostMessage(data) {
-    if (data == null) {
+    if (data === null) {
       return null;
     }
     if (typeof data === "string") {
@@ -6237,6 +6257,33 @@
       }
       return resolveSelectedFrame(payload);
     }
+    function belongsToLayoutFrame(cell, frame) {
+      var ownerFrame;
+      if (cell == null || frame == null) {
+        return false;
+      }
+      if (cell === frame || model.getParent(cell) === frame) {
+        return true;
+      }
+      ownerFrame = frameDomainApi.findDrawingFrame(cell);
+      if (ownerFrame == null) {
+        return true;
+      }
+      return ownerFrame === frame;
+    }
+    function edgeBelongsToLayoutFrame(edge, frame) {
+      var source;
+      var target;
+      if (edge == null || frame == null || model == null) {
+        return false;
+      }
+      source = model.getTerminal(edge, true);
+      target = model.getTerminal(edge, false);
+      if (source == null || target == null) {
+        return false;
+      }
+      return belongsToLayoutFrame(source, frame) && belongsToLayoutFrame(target, frame);
+    }
     function collectDescendants(parent, result) {
       var childCount;
       var i;
@@ -6305,7 +6352,11 @@
           if (payload.action === "exportDiagram") {
             evt.stopImmediatePropagation();
             if (payload.format === "svg") {
-              postResult(evt.source, payload, buildSvgExportPayload(ctx, payload.format));
+              postResult(
+                evt.source,
+                payload,
+                buildSvgExportPayload(ctx, payload.format)
+              );
               return;
             }
             throw new Error("\u4E0D\u652F\u6301\u7684\u5BFC\u51FA\u683C\u5F0F");
@@ -6446,8 +6497,21 @@
                 if (cell == null) {
                   continue;
                 }
+                if (!belongsToLayoutFrame(cell, frame)) {
+                  continue;
+                }
                 geometry = model2.getGeometry(cell);
                 if (geometry == null) {
+                  continue;
+                }
+                if (getAttr(cell, "pluginType") == constants.CABINET_TYPE) {
+                  movedCells.push(cell);
+                  edges = graph2.getConnections(cell) || [];
+                  for (j = 0; j < edges.length; j++) {
+                    if (edges[j] != null && edges[j].id != null && edgeBelongsToLayoutFrame(edges[j], frame)) {
+                      edgeMap[String(edges[j].id)] = edges[j];
+                    }
+                  }
                   continue;
                 }
                 nextGeometry = geometry.clone();
@@ -6462,7 +6526,7 @@
                 movedCells.push(cell);
                 edges = graph2.getConnections(cell) || [];
                 for (j = 0; j < edges.length; j++) {
-                  if (edges[j] != null && edges[j].id != null) {
+                  if (edges[j] != null && edges[j].id != null && edgeBelongsToLayoutFrame(edges[j], frame)) {
                     edgeMap[String(edges[j].id)] = edges[j];
                   }
                 }
@@ -6489,7 +6553,7 @@
                   var parentOriginY;
                   var points;
                   var j;
-                  if (edge == null || !Array.isArray(route.points)) {
+                  if (edge == null || !Array.isArray(route.points) || !edgeBelongsToLayoutFrame(edge, frame)) {
                     continue;
                   }
                   edgeGeometry = model2.getGeometry(edge);
@@ -6553,13 +6617,29 @@
                     );
                     nextStyle = mxUtils.setStyle(nextStyle, "noEdgeStyle", "1");
                     nextStyle = mxUtils.setStyle(nextStyle, "edgeStyle", null);
-                    nextStyle = mxUtils.setStyle(nextStyle, "eidLayoutManaged", "1");
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "eidLayoutManaged",
+                      "1"
+                    );
                   } else {
-                    nextStyle = mxUtils.setStyle(nextStyle, "eidLayoutManaged", null);
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "eidLayoutManaged",
+                      null
+                    );
                     nextStyle = mxUtils.setStyle(nextStyle, "sourcePortId", null);
                     nextStyle = mxUtils.setStyle(nextStyle, "targetPortId", null);
-                    nextStyle = mxUtils.setStyle(nextStyle, "sourcePortConstraint", null);
-                    nextStyle = mxUtils.setStyle(nextStyle, "targetPortConstraint", null);
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "sourcePortConstraint",
+                      null
+                    );
+                    nextStyle = mxUtils.setStyle(
+                      nextStyle,
+                      "targetPortConstraint",
+                      null
+                    );
                     nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "auto");
                     nextStyle = mxUtils.setStyle(
                       nextStyle,
