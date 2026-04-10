@@ -4536,19 +4536,24 @@
     function exportCabinetObject(segment) {
       var cabinetModel = deps.extractCabinetModel(segment);
       var originFrame = deps.findFrameById(cabinetModel.originFrameId);
+      var geometry = model.getGeometry(segment);
+      var segmentPorts = deps.parsePortLayout(deps.getAttr(segment, "portsJson"));
       return {
         id: deps.trim(cabinetModel.logicalCabinetId),
         kind: "cabinet",
         parentId: deps.trim(cabinetModel.originFrameId) || null,
         groupId: originFrame != null ? deps.getFrameGroupId(originFrame) : null,
         geometry: {
-          x: cabinetModel.cabinetX,
-          y: originFrame != null ? Math.round(deps.getFrameConfig(originFrame).height * deps.FRAME_MARGIN_RATIO) : 0,
-          width: cabinetModel.cabinetWidth,
-          height: 0
+          x: geometry != null ? geometry.x : cabinetModel.cabinetX,
+          y: geometry != null ? geometry.y : originFrame != null ? Math.round(
+            deps.getFrameConfig(originFrame).height * deps.FRAME_MARGIN_RATIO
+          ) : 0,
+          width: geometry != null ? geometry.width : cabinetModel.cabinetWidth,
+          height: geometry != null ? geometry.height : 0
         },
         props: {
-          cabinetModel
+          cabinetModel,
+          segmentPorts
         }
       };
     }
@@ -6029,8 +6034,7 @@
     data = mxUtils.getXml(svgRoot);
     return {
       data,
-      format,
-      xml: ""
+      format
     };
   }
   function emitHostEvent(eventName, payload) {
@@ -6106,6 +6110,45 @@
       style = mxUtils.setStyle(style, "rounded", "0");
       model.setStyle(edge, style);
     }
+    function clearLayoutRouteMetadata(edge) {
+      var style = model.getStyle(edge) || "";
+      style = mxUtils.setStyle(style, "eidLayoutManaged", null);
+      style = mxUtils.setStyle(style, "sourcePortId", null);
+      style = mxUtils.setStyle(style, "targetPortId", null);
+      style = mxUtils.setStyle(style, "sourcePortConstraint", null);
+      style = mxUtils.setStyle(style, "targetPortConstraint", null);
+      model.setStyle(edge, style);
+    }
+    function isLayoutManagedEdge(edge) {
+      var style;
+      if (edge == null || model == null) {
+        return false;
+      }
+      style = model.getStyle(edge) || "";
+      return mxUtils.getValue(style, "eidLayoutManaged", "0") === "1";
+    }
+    function applyEdgeConstraintByPortId(edge, source, portId) {
+      var terminal;
+      var port;
+      var constraint;
+      if (edge == null || portId == null || String(portId).length == 0 || graph == null || model == null) {
+        return;
+      }
+      terminal = model.getTerminal(edge, source);
+      if (terminal == null) {
+        return;
+      }
+      port = getPortMetaById(terminal, String(portId));
+      if (port == null) {
+        return;
+      }
+      constraint = new mxConnectionConstraint(
+        new mxPoint(Number(port.x) || 0, Number(port.y) || 0),
+        false,
+        port.id != null ? String(port.id) : ""
+      );
+      graph.setConnectionConstraint(edge, terminal, source, constraint);
+    }
     function clearConnectedEdgesForCells(cells) {
       var edgeMap = {};
       var i;
@@ -6120,15 +6163,21 @@
         }
         var edges = graph.getConnections(cell) || [];
         for (j = 0; j < edges.length; j++) {
-          if (edges[j] != null && edges[j].id != null) {
+          if (edges[j] != null && edges[j].id != null && isLayoutManagedEdge(edges[j])) {
             edgeMap[String(edges[j].id)] = edges[j];
           }
         }
       }
       for (var edgeId in edgeMap) {
         if (edgeMap.hasOwnProperty(edgeId)) {
-          clearEdgePoints(edgeMap[edgeId]);
-          resetEdgeAutoStyle(edgeMap[edgeId]);
+          var edge = edgeMap[edgeId];
+          var edgeStyle = model.getStyle(edge) || "";
+          var sourcePortId = mxUtils.getValue(edgeStyle, "sourcePortId", "");
+          var targetPortId = mxUtils.getValue(edgeStyle, "targetPortId", "");
+          clearEdgePoints(edge);
+          resetEdgeAutoStyle(edge);
+          applyEdgeConstraintByPortId(edge, true, sourcePortId);
+          applyEdgeConstraintByPortId(edge, false, targetPortId);
         }
       }
     }
@@ -6255,12 +6304,9 @@
           }
           if (payload.action === "exportDiagram") {
             evt.stopImmediatePropagation();
-            if (payload.format === "svg" || payload.format === "xmlsvg") {
+            if (payload.format === "svg") {
               postResult(evt.source, payload, buildSvgExportPayload(ctx, payload.format));
               return;
-            }
-            if (payload.format === "png" || payload.format === "xmlpng") {
-              throw new Error("\u5F53\u524D\u5BBF\u4E3B\u6865\u4EC5\u652F\u6301 SVG \u5BFC\u51FA");
             }
             throw new Error("\u4E0D\u652F\u6301\u7684\u5BFC\u51FA\u683C\u5F0F");
           }
@@ -6366,11 +6412,11 @@
             var frame = resolveFrameCell(payload);
             var graph2 = ctx.graph;
             var model2 = ctx.model != null ? ctx.model : graph2 != null && typeof graph2.getModel === "function" ? graph2.getModel() : null;
-            var state = ctx.state != null ? ctx.state : runtimeState;
             var movedCells = [];
             var edgeMap = {};
             var frameGeometry;
             var frameOrigin;
+            var isSnakeLayout = payload.layoutMode === "snake-wrap";
             var i;
             if (frame == null) {
               throw new Error("\u672A\u627E\u5230\u8981\u5E03\u5C40\u7684\u56FE\u6846");
@@ -6380,29 +6426,6 @@
               x: frameGeometry != null ? frameGeometry.x : 0,
               y: frameGeometry != null ? frameGeometry.y : 0
             };
-            if (window.console != null) {
-              console.log(
-                "[electricalSymbols host bridge][request][json]",
-                JSON.stringify(
-                  {
-                    frameCellId: payload.frameCellId || "",
-                    frameId: getAttr(frame, "frameId"),
-                    positions: payload.positions,
-                    edgeRoutes: payload.edgeRoutes,
-                    frameOrigin,
-                    frameGeometry: frameGeometry != null ? {
-                      x: frameGeometry.x,
-                      y: frameGeometry.y,
-                      width: frameGeometry.width,
-                      height: frameGeometry.height,
-                      relative: !!frameGeometry.relative
-                    } : null
-                  },
-                  null,
-                  2
-                )
-              );
-            }
             runtimeState.updatingModel = true;
             model2.beginUpdate();
             try {
@@ -6447,6 +6470,10 @@
               for (var edgeId in edgeMap) {
                 if (edgeMap.hasOwnProperty(edgeId)) {
                   clearEdgePoints(edgeMap[edgeId]);
+                  if (!isSnakeLayout) {
+                    clearLayoutRouteMetadata(edgeMap[edgeId]);
+                    resetEdgeAutoStyle(edgeMap[edgeId]);
+                  }
                 }
               }
               if (Array.isArray(payload.edgeRoutes)) {
@@ -6492,14 +6519,16 @@
                   edgeGeometry.points = nextPoints.length > 0 ? nextPoints : null;
                   model2.setGeometry(edge, edgeGeometry);
                   var nextStyle = model2.getStyle(edge) || "";
-                  if (route.sourcePortId != null && String(route.sourcePortId).length > 0) {
+                  if (isSnakeLayout && route.manual && route.sourcePortId != null && String(route.sourcePortId).length > 0) {
+                    applyEdgeConstraintByPortId(edge, true, route.sourcePortId);
                     nextStyle = mxUtils.setStyle(
                       nextStyle,
                       "sourcePortId",
                       String(route.sourcePortId)
                     );
                   }
-                  if (route.targetPortId != null && String(route.targetPortId).length > 0) {
+                  if (isSnakeLayout && route.manual && route.targetPortId != null && String(route.targetPortId).length > 0) {
+                    applyEdgeConstraintByPortId(edge, false, route.targetPortId);
                     nextStyle = mxUtils.setStyle(
                       nextStyle,
                       "targetPortId",
@@ -6510,7 +6539,7 @@
                   nextStyle = mxUtils.setStyle(nextStyle, "entryY", null);
                   nextStyle = mxUtils.setStyle(nextStyle, "exitX", null);
                   nextStyle = mxUtils.setStyle(nextStyle, "exitY", null);
-                  if (route.manual) {
+                  if (isSnakeLayout && route.manual) {
                     nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "0");
                     nextStyle = mxUtils.setStyle(
                       nextStyle,
@@ -6524,7 +6553,13 @@
                     );
                     nextStyle = mxUtils.setStyle(nextStyle, "noEdgeStyle", "1");
                     nextStyle = mxUtils.setStyle(nextStyle, "edgeStyle", null);
+                    nextStyle = mxUtils.setStyle(nextStyle, "eidLayoutManaged", "1");
                   } else {
+                    nextStyle = mxUtils.setStyle(nextStyle, "eidLayoutManaged", null);
+                    nextStyle = mxUtils.setStyle(nextStyle, "sourcePortId", null);
+                    nextStyle = mxUtils.setStyle(nextStyle, "targetPortId", null);
+                    nextStyle = mxUtils.setStyle(nextStyle, "sourcePortConstraint", null);
+                    nextStyle = mxUtils.setStyle(nextStyle, "targetPortConstraint", null);
                     nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "auto");
                     nextStyle = mxUtils.setStyle(
                       nextStyle,
@@ -6545,26 +6580,6 @@
                   }
                   nextStyle = mxUtils.setStyle(nextStyle, "rounded", "0");
                   model2.setStyle(edge, nextStyle);
-                  if (window.console != null) {
-                    console.log(
-                      "[electricalSymbols host bridge][edge-applied][json]",
-                      JSON.stringify(
-                        {
-                          edgeId,
-                          routePoints: route.points,
-                          sourcePortId: route.sourcePortId != null ? String(route.sourcePortId) : "",
-                          targetPortId: route.targetPortId != null ? String(route.targetPortId) : "",
-                          manual: !!route.manual,
-                          geometryPoints: nextPoints.map(function(point2) {
-                            return { x: point2.x, y: point2.y };
-                          }),
-                          style: model2.getStyle(edge) || ""
-                        },
-                        null,
-                        2
-                      )
-                    );
-                  }
                 }
               }
             } finally {
@@ -6578,21 +6593,6 @@
             postResult(evt.source, payload, {
               movedCount: movedCells.length
             });
-            if (window.console != null) {
-              console.log(
-                "[electricalSymbols host bridge][result][json]",
-                JSON.stringify(
-                  {
-                    movedCount: movedCells.length,
-                    movedCellIds: movedCells.map(function(cell2) {
-                      return cell2 != null && cell2.id != null ? String(cell2.id) : "";
-                    })
-                  },
-                  null,
-                  2
-                )
-              );
-            }
           }
         } catch (e) {
           postError(evt.source, payload, e);
