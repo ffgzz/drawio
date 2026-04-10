@@ -6438,6 +6438,11 @@
             openBackendRollbackDialog();
             return;
           }
+          if (payload.action === "ping") {
+            evt.stopImmediatePropagation();
+            postResult(evt.source, payload, {});
+            return;
+          }
           if (payload.action === "insertFrame" && payload.config != null) {
             evt.stopImmediatePropagation();
             var selectedFrame = resolveSelectedFrame(payload);
@@ -6481,6 +6486,93 @@
                 runtimeState.updatingModel = false;
               }
             }
+            if (insertedFrame != null && Array.isArray(payload.decorationCells) && payload.decorationCells.length > 0) {
+              runtimeState.updatingModel = true;
+              if (model2 != null) {
+                model2.beginUpdate();
+              }
+              try {
+                for (var di = 0; di < payload.decorationCells.length; di++) {
+                  var deco = payload.decorationCells[di];
+                  if (deco == null) continue;
+                  var decoGeo = new mxGeometry(
+                    Number(deco.x) || 0,
+                    Number(deco.y) || 0,
+                    Math.max(1, Number(deco.width) || 0),
+                    Math.max(1, Number(deco.height) || 0)
+                  );
+                  var decoCell = new mxCell(
+                    deco.label || "",
+                    decoGeo,
+                    deco.style || ""
+                  );
+                  decoCell.vertex = true;
+                  decoCell.setConnectable(false);
+                  if (model2 != null) {
+                    model2.add(insertedFrame, decoCell);
+                  } else {
+                    insertedFrame.insert(decoCell);
+                  }
+                }
+              } finally {
+                if (model2 != null) {
+                  model2.endUpdate();
+                }
+                runtimeState.updatingModel = false;
+              }
+            }
+            if (insertedFrame != null && Array.isArray(payload.decorationEdges) && payload.decorationEdges.length > 0) {
+              runtimeState.updatingModel = true;
+              if (model2 != null) {
+                model2.beginUpdate();
+              }
+              try {
+                for (var ei = 0; ei < payload.decorationEdges.length; ei++) {
+                  var edgeDeco = payload.decorationEdges[ei];
+                  if (edgeDeco == null) continue;
+                  var pts = edgeDeco.points || [];
+                  if (pts.length < 2) continue;
+                  var edgeGeo = new mxGeometry();
+                  edgeGeo.relative = true;
+                  edgeGeo.setTerminalPoint(
+                    new mxPoint(Number(pts[0].x) || 0, Number(pts[0].y) || 0),
+                    true
+                  );
+                  edgeGeo.setTerminalPoint(
+                    new mxPoint(
+                      Number(pts[pts.length - 1].x) || 0,
+                      Number(pts[pts.length - 1].y) || 0
+                    ),
+                    false
+                  );
+                  if (pts.length > 2) {
+                    edgeGeo.points = [];
+                    for (var pi = 1; pi < pts.length - 1; pi++) {
+                      edgeGeo.points.push(
+                        new mxPoint(Number(pts[pi].x) || 0, Number(pts[pi].y) || 0)
+                      );
+                    }
+                  }
+                  var edgeCell = new mxCell(
+                    edgeDeco.label || "",
+                    edgeGeo,
+                    edgeDeco.style || ""
+                  );
+                  edgeCell.edge = true;
+                  edgeCell.setConnectable(false);
+                  if (model2 != null) {
+                    model2.add(insertedFrame, edgeCell);
+                  } else {
+                    insertedFrame.insert(edgeCell);
+                  }
+                }
+              } finally {
+                if (model2 != null) {
+                  model2.endUpdate();
+                }
+                runtimeState.updatingModel = false;
+              }
+            }
             postResult(evt.source, payload, {
               frameId: insertedFrame != null ? getAttr(insertedFrame, "frameId") : "",
               groupId: insertedFrame != null ? frameDomainApi.getFrameGroupId(insertedFrame) : "",
@@ -6505,6 +6597,29 @@
               selectedFrameCellId: selectedFrame != null && selectedFrame.id != null ? String(selectedFrame.id) : "",
               selectedFrameId: selectedFrame != null ? getAttr(selectedFrame, "frameId") : "",
               selectedGroupId: selectedFrame != null ? frameDomainApi.getFrameGroupId(selectedFrame) : ""
+            });
+            return;
+          }
+          if (payload.action === "selectCell") {
+            evt.stopImmediatePropagation();
+            var requestedCellId = payload.cellId != null ? String(payload.cellId) : "";
+            var requestedCell = resolveLayoutCell(requestedCellId);
+            var selectionGraph = ctx.graph != null ? ctx.graph : ctx.ui != null && ctx.ui.editor != null ? ctx.ui.editor.graph : null;
+            var selectedFrame2;
+            if (requestedCell == null) {
+              throw new Error("\u672A\u627E\u5230\u8981\u9009\u4E2D\u7684\u5355\u5143");
+            }
+            if (selectionGraph == null) {
+              throw new Error("\u5F53\u524D\u56FE\u7F16\u8F91\u5668\u5B9E\u4F8B\u4E0D\u53EF\u7528");
+            }
+            selectionGraph.setSelectionCell(requestedCell);
+            selectionGraph.scrollCellToVisible(requestedCell);
+            selectedFrame2 = selectionApi.getSelectedFrame();
+            postResult(evt.source, payload, {
+              selectedCellId: requestedCell != null && requestedCell.id != null ? String(requestedCell.id) : "",
+              selectedFrameCellId: selectedFrame2 != null && selectedFrame2.id != null ? String(selectedFrame2.id) : "",
+              selectedFrameId: selectedFrame2 != null ? getAttr(selectedFrame2, "frameId") : "",
+              selectedGroupId: selectedFrame2 != null ? frameDomainApi.getFrameGroupId(selectedFrame2) : ""
             });
             return;
           }

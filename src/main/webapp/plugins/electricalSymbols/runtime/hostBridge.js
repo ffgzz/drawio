@@ -596,6 +596,12 @@ export function installHostBridge(ctx) {
           return;
         }
 
+        if (payload.action === "ping") {
+          evt.stopImmediatePropagation();
+          postResult(evt.source, payload, {});
+          return;
+        }
+
         if (payload.action === "insertFrame" && payload.config != null) {
           evt.stopImmediatePropagation();
           var selectedFrame = resolveSelectedFrame(payload);
@@ -806,6 +812,49 @@ export function installHostBridge(ctx) {
             selectedGroupId:
               selectedFrame != null
                 ? frameDomainApi.getFrameGroupId(selectedFrame)
+                : "",
+          });
+          return;
+        }
+
+        if (payload.action === "selectCell") {
+          evt.stopImmediatePropagation();
+          var requestedCellId = payload.cellId != null ? String(payload.cellId) : "";
+          var requestedCell = resolveLayoutCell(requestedCellId);
+          var selectionGraph =
+            ctx.graph != null
+              ? ctx.graph
+              : ctx.ui != null && ctx.ui.editor != null
+                ? ctx.ui.editor.graph
+                : null;
+          var selectedFrame2;
+
+          if (requestedCell == null) {
+            throw new Error("未找到要选中的单元");
+          }
+
+          if (selectionGraph == null) {
+            throw new Error("当前图编辑器实例不可用");
+          }
+
+          selectionGraph.setSelectionCell(requestedCell);
+          selectionGraph.scrollCellToVisible(requestedCell);
+          selectedFrame2 = selectionApi.getSelectedFrame();
+
+          postResult(evt.source, payload, {
+            selectedCellId:
+              requestedCell != null && requestedCell.id != null
+                ? String(requestedCell.id)
+                : "",
+            selectedFrameCellId:
+              selectedFrame2 != null && selectedFrame2.id != null
+                ? String(selectedFrame2.id)
+                : "",
+            selectedFrameId:
+              selectedFrame2 != null ? getAttr(selectedFrame2, "frameId") : "",
+            selectedGroupId:
+              selectedFrame2 != null
+                ? frameDomainApi.getFrameGroupId(selectedFrame2)
                 : "",
           });
           return;
