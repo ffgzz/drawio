@@ -505,6 +505,105 @@ export function installHostBridge(ctx) {
             }
           }
 
+          // ── Insert decoration cells (non-text shapes) ────────────────
+          if (
+            insertedFrame != null &&
+            Array.isArray(payload.decorationCells) &&
+            payload.decorationCells.length > 0
+          ) {
+            runtimeState.updatingModel = true;
+            if (model != null) {
+              model.beginUpdate();
+            }
+            try {
+              for (var di = 0; di < payload.decorationCells.length; di++) {
+                var deco = payload.decorationCells[di];
+                if (deco == null) continue;
+                var decoGeo = new mxGeometry(
+                  Number(deco.x) || 0,
+                  Number(deco.y) || 0,
+                  Math.max(1, Number(deco.width) || 0),
+                  Math.max(1, Number(deco.height) || 0),
+                );
+                var decoCell = new mxCell(
+                  deco.label || "",
+                  decoGeo,
+                  deco.style || "",
+                );
+                decoCell.vertex = true;
+                decoCell.setConnectable(false);
+                if (model != null) {
+                  model.add(insertedFrame, decoCell);
+                } else {
+                  insertedFrame.insert(decoCell);
+                }
+              }
+            } finally {
+              if (model != null) {
+                model.endUpdate();
+              }
+              runtimeState.updatingModel = false;
+            }
+          }
+
+          // ── Insert decoration edges (lines) ──────────────────────────
+          if (
+            insertedFrame != null &&
+            Array.isArray(payload.decorationEdges) &&
+            payload.decorationEdges.length > 0
+          ) {
+            runtimeState.updatingModel = true;
+            if (model != null) {
+              model.beginUpdate();
+            }
+            try {
+              for (var ei = 0; ei < payload.decorationEdges.length; ei++) {
+                var edgeDeco = payload.decorationEdges[ei];
+                if (edgeDeco == null) continue;
+                var pts = edgeDeco.points || [];
+                if (pts.length < 2) continue;
+                var edgeGeo = new mxGeometry();
+                edgeGeo.relative = true;
+                edgeGeo.setTerminalPoint(
+                  new mxPoint(Number(pts[0].x) || 0, Number(pts[0].y) || 0),
+                  true,
+                );
+                edgeGeo.setTerminalPoint(
+                  new mxPoint(
+                    Number(pts[pts.length - 1].x) || 0,
+                    Number(pts[pts.length - 1].y) || 0,
+                  ),
+                  false,
+                );
+                if (pts.length > 2) {
+                  edgeGeo.points = [];
+                  for (var pi = 1; pi < pts.length - 1; pi++) {
+                    edgeGeo.points.push(
+                      new mxPoint(Number(pts[pi].x) || 0, Number(pts[pi].y) || 0),
+                    );
+                  }
+                }
+                var edgeCell = new mxCell(
+                  edgeDeco.label || "",
+                  edgeGeo,
+                  edgeDeco.style || "",
+                );
+                edgeCell.edge = true;
+                edgeCell.setConnectable(false);
+                if (model != null) {
+                  model.add(insertedFrame, edgeCell);
+                } else {
+                  insertedFrame.insert(edgeCell);
+                }
+              }
+            } finally {
+              if (model != null) {
+                model.endUpdate();
+              }
+              runtimeState.updatingModel = false;
+            }
+          }
+
           postResult(evt.source, payload, {
             frameId: insertedFrame != null ? getAttr(insertedFrame, "frameId") : "",
             groupId:
