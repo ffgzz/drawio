@@ -7,6 +7,7 @@ import { cabinetDomainApi } from "../domain/cabinet.js";
 import { connectionConstraintsApi } from "../runtime/connectionConstraints.js";
 import { installCanvasFeatures, ACTION_ITEMS } from "../runtime/canvasFeatures.js";
 import { installHostBridge } from "../runtime/hostBridge.js";
+import { installViewportVirtualization } from "../runtime/viewportVirtualization.js";
 import { portSwapModeApi } from "../runtime/portSwapMode.js";
 import { cabinetDialogsApi } from "../ui/cabinetDialog.js";
 
@@ -254,6 +255,9 @@ export function activateAppRuntime(app) {
   });
 
   installCanvasFeatures(app.ctx);
+
+  // 视口虚拟化：对远离视口的图框做虚拟折叠以减少 SVG DOM 节点
+  installViewportVirtualization(app.ctx);
 
   // 隐藏不需要的原生工具栏按钮
   pruneToolbarButtons(ui);

@@ -6015,6 +6015,341 @@
     openBackendSaveDialog
   };
 
+  // runtime/viewportVirtualization.js
+  var DEBUG = true;
+  function debugLog() {
+    if (DEBUG && typeof console !== "undefined") {
+      var args = ["[LOD]"];
+      for (var i = 0; i < arguments.length; i++) {
+        args.push(arguments[i]);
+      }
+      console.log.apply(console, args);
+    }
+  }
+  var OVERVIEW_PX = 360;
+  var PRELOAD_MARGIN_PX = 600;
+  var HYSTERESIS = 0.05;
+  var THROTTLE_MS = 120;
+  var INIT_DELAY_MS = 200;
+  var FRAME_NOMINAL_WIDTH = 820;
+  var overviewMode = false;
+  var culledFrameSet = /* @__PURE__ */ new Set();
+  var installed = false;
+  var throttleTimer = null;
+  var _graph = null;
+  function isOrphanTopLevelCell(cell) {
+    if (cell == null || isDrawingFrame(cell)) {
+      return false;
+    }
+    var model = _graph.getModel();
+    var parent = model.getParent(cell);
+    if (parent == null) {
+      return false;
+    }
+    return model.getParent(parent) === model.getRoot();
+  }
+  function getCurrentScale(graph) {
+    if (graph.useCssTransforms) {
+      return graph.currentScale || 1;
+    }
+    return graph.view != null ? graph.view.scale || 1 : 1;
+  }
+  function getViewportRect(graph) {
+    var c = graph.container;
+    if (c == null) {
+      return null;
+    }
+    var s = getCurrentScale(graph);
+    var tx;
+    var ty;
+    if (graph.useCssTransforms) {
+      tx = graph.currentTranslate != null ? graph.currentTranslate.x : 0;
+      ty = graph.currentTranslate != null ? graph.currentTranslate.y : 0;
+    } else {
+      var t = graph.view != null ? graph.view.translate : null;
+      tx = t != null ? t.x : 0;
+      ty = t != null ? t.y : 0;
+    }
+    return {
+      x: c.scrollLeft / s - tx,
+      y: c.scrollTop / s - ty,
+      width: c.clientWidth / s,
+      height: c.clientHeight / s
+    };
+  }
+  function expandRectByPixels(rect, scale) {
+    var m = PRELOAD_MARGIN_PX / scale;
+    return {
+      x: rect.x - m,
+      y: rect.y - m,
+      width: rect.width + m * 2,
+      height: rect.height + m * 2
+    };
+  }
+  function rectsIntersect(a, b) {
+    return !(a.x + a.width < b.x || b.x + b.width < a.x || a.y + a.height < b.y || b.y + b.height < a.y);
+  }
+  function collectAllFrames(graph) {
+    var model = graph.getModel();
+    var frames = [];
+    function walk(cell) {
+      if (cell == null) {
+        return;
+      }
+      if (isDrawingFrame(cell)) {
+        frames.push(cell);
+        return;
+      }
+      var n = model.getChildCount(cell);
+      for (var i = 0; i < n; i++) {
+        walk(model.getChildAt(cell, i));
+      }
+    }
+    walk(model.getRoot());
+    return frames;
+  }
+  function getFrameAbsoluteRect(graph, frame) {
+    var model = graph.getModel();
+    var geo = model.getGeometry(frame);
+    if (geo == null) {
+      return null;
+    }
+    var x = geo.x;
+    var y = geo.y;
+    var p = model.getParent(frame);
+    while (p != null && p !== model.getRoot()) {
+      var pg = model.getGeometry(p);
+      if (pg != null) {
+        x += pg.x;
+        y += pg.y;
+      }
+      p = model.getParent(p);
+    }
+    return { x, y, width: geo.width, height: geo.height };
+  }
+  function recompute(graph) {
+    var scale = getCurrentScale(graph);
+    var changed = false;
+    var screenW = FRAME_NOMINAL_WIDTH * scale;
+    var newOverview;
+    if (overviewMode) {
+      newOverview = screenW < OVERVIEW_PX * (1 + HYSTERESIS);
+    } else {
+      newOverview = screenW < OVERVIEW_PX * (1 - HYSTERESIS);
+    }
+    if (graph.cellEditor != null && graph.cellEditor.editingCell != null) {
+      newOverview = overviewMode;
+    }
+    if (newOverview !== overviewMode) {
+      overviewMode = newOverview;
+      changed = true;
+    }
+    var vp = getViewportRect(graph);
+    if (vp == null) {
+      return changed;
+    }
+    var expanded = expandRectByPixels(vp, scale);
+    var frames = collectAllFrames(graph);
+    for (var i = 0; i < frames.length; i++) {
+      var frame = frames[i];
+      var rect = getFrameAbsoluteRect(graph, frame);
+      var shouldCull = rect == null || !rectsIntersect(rect, expanded);
+      var isCulled = culledFrameSet.has(frame);
+      if (shouldCull && !isCulled) {
+        culledFrameSet.add(frame);
+        changed = true;
+      } else if (!shouldCull && isCulled) {
+        culledFrameSet.delete(frame);
+        changed = true;
+      }
+    }
+    for (var f of culledFrameSet) {
+      if (f.parent == null) {
+        culledFrameSet.delete(f);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  function clearInvalidSelection(graph) {
+    if (!overviewMode) {
+      return;
+    }
+    var sel = graph.getSelectionCells();
+    if (sel == null || sel.length === 0) {
+      return;
+    }
+    var remove = [];
+    for (var i = 0; i < sel.length; i++) {
+      if (!isDrawingFrame(sel[i])) {
+        remove.push(sel[i]);
+      }
+    }
+    if (remove.length > 0) {
+      debugLog("clearSelection: " + remove.length + " cells");
+      graph.removeSelectionCells(remove);
+    }
+  }
+  function runCullingPass(graph) {
+    if (recompute(graph)) {
+      debugLog(
+        "changed: overview=" + overviewMode,
+        "culled=" + culledFrameSet.size,
+        "scale=" + getCurrentScale(graph).toFixed(3)
+      );
+      clearInvalidSelection(graph);
+      graph.view.revalidate();
+      graph.view.validate();
+    }
+  }
+  function scheduleThrottledCulling(graph) {
+    if (throttleTimer != null) {
+      return;
+    }
+    throttleTimer = setTimeout(function() {
+      throttleTimer = null;
+      runCullingPass(graph);
+    }, THROTTLE_MS);
+  }
+  function withAllFramesExpanded(fn) {
+    var graph = getApp().ctx.graph;
+    var savedCulled = new Set(culledFrameSet);
+    var savedOverview = overviewMode;
+    var needRestore = culledFrameSet.size > 0 || overviewMode;
+    if (needRestore) {
+      debugLog("expandAll: clearing culled=" + savedCulled.size + " overview=" + savedOverview);
+      culledFrameSet.clear();
+      overviewMode = false;
+      graph.view.revalidate();
+      graph.view.validate();
+    }
+    try {
+      return fn();
+    } finally {
+      if (needRestore) {
+        for (var f of savedCulled) {
+          culledFrameSet.add(f);
+        }
+        overviewMode = savedOverview;
+        debugLog("expandAll: restored");
+        graph.view.revalidate();
+        graph.view.validate();
+      }
+    }
+  }
+  function installViewportVirtualization(ctx) {
+    if (installed) {
+      return;
+    }
+    var graph = ctx.graph;
+    if (graph.container == null) {
+      return;
+    }
+    installed = true;
+    _graph = graph;
+    debugLog("install: OVERVIEW_PX=" + OVERVIEW_PX, "PRELOAD_MARGIN_PX=" + PRELOAD_MARGIN_PX);
+    var _origCollapsed = graph.isCellCollapsed;
+    graph.isCellCollapsed = function(cell) {
+      if (culledFrameSet.has(cell)) {
+        return true;
+      }
+      return _origCollapsed.call(this, cell);
+    };
+    var _origFoldable = graph.isCellFoldable;
+    graph.isCellFoldable = function(cell, collapse) {
+      if (culledFrameSet.has(cell)) {
+        return false;
+      }
+      return _origFoldable.call(this, cell, collapse);
+    };
+    var _origGetLabel = graph.getLabel;
+    graph.getLabel = function(cell) {
+      if (overviewMode) {
+        return "";
+      }
+      return _origGetLabel.call(this, cell);
+    };
+    var _origSelectable = graph.isCellSelectable;
+    graph.isCellSelectable = function(cell) {
+      if (overviewMode && !isDrawingFrame(cell)) {
+        return false;
+      }
+      return _origSelectable.call(this, cell);
+    };
+    var _origMovable = graph.isCellMovable;
+    graph.isCellMovable = function(cell) {
+      if (overviewMode && !isDrawingFrame(cell)) {
+        return false;
+      }
+      return _origMovable.call(this, cell);
+    };
+    var _origEditable = graph.isCellEditable;
+    graph.isCellEditable = function(cell) {
+      if (overviewMode) {
+        return false;
+      }
+      return _origEditable.call(this, cell);
+    };
+    var _origGetCellAt = graph.getCellAt;
+    graph.getCellAt = function(x, y, parent, vertices, edges, ignoreFn) {
+      if (overviewMode && parent != null && isDrawingFrame(parent)) {
+        return null;
+      }
+      return _origGetCellAt.call(this, x, y, parent, vertices, edges, ignoreFn);
+    };
+    var _origVisible = graph.isCellVisible;
+    graph.isCellVisible = function(cell) {
+      if (overviewMode && isOrphanTopLevelCell(cell) && !graph.getModel().isEdge(cell)) {
+        return false;
+      }
+      return _origVisible.call(this, cell);
+    };
+    var _origConstraints = graph.getAllConnectionConstraints;
+    graph.getAllConnectionConstraints = function(terminal, source) {
+      if (overviewMode) {
+        return null;
+      }
+      return _origConstraints.call(this, terminal, source);
+    };
+    var _origGetSvg = graph.getSvg;
+    if (typeof _origGetSvg === "function") {
+      graph.getSvg = function() {
+        var self = this;
+        var outerArgs = arguments;
+        return withAllFramesExpanded(function() {
+          return _origGetSvg.apply(self, outerArgs);
+        });
+      };
+    }
+    var container = graph.container;
+    container.addEventListener("scroll", function() {
+      scheduleThrottledCulling(graph);
+    });
+    graph.view.addListener(mxEvent.SCALE, function() {
+      scheduleThrottledCulling(graph);
+    });
+    graph.view.addListener(mxEvent.SCALE_AND_TRANSLATE, function() {
+      scheduleThrottledCulling(graph);
+    });
+    graph.getModel().addListener(mxEvent.CHANGE, function() {
+      for (var f of culledFrameSet) {
+        if (f.parent == null) {
+          culledFrameSet.delete(f);
+        }
+      }
+      scheduleThrottledCulling(graph);
+    });
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(function() {
+        scheduleThrottledCulling(graph);
+      }).observe(container);
+    }
+    setTimeout(function() {
+      debugLog("initial culling pass");
+      runCullingPass(graph);
+    }, INIT_DELAY_MS);
+  }
+
   // runtime/hostBridge.js
   function parseHostMessage(data) {
     if (data === null) {
@@ -6632,7 +6967,9 @@
           }
           if (payload.action === "restoreDiagramSnapshot" && payload.snapshot != null) {
             evt.stopImmediatePropagation();
-            snapshotDomainApi.restoreDiagramSnapshot(payload.snapshot);
+            withAllFramesExpanded(function() {
+              snapshotDomainApi.restoreDiagramSnapshot(payload.snapshot);
+            });
             postResult(evt.source, payload, {
               snapshot: snapshotDomainApi.exportDiagramSnapshot()
             });
@@ -11249,6 +11586,7 @@
       setCanvasStatus
     });
     installCanvasFeatures(app.ctx);
+    installViewportVirtualization(app.ctx);
     pruneToolbarButtons(ui);
     installCustomToolbarButtons(ui);
     if (ui.menubarContainer != null) {

@@ -13,6 +13,7 @@ import { findPortHostRoot } from "../core/runtimeHelpers.js";
 import { createMetaCell } from "../utils/xml.js";
 import { getAttr } from "../utils/xml.js";
 import { openBackendSaveDialog, openBackendRollbackDialog } from "../ui/backendDialogs.js";
+import { withAllFramesExpanded } from "./viewportVirtualization.js";
 
 function parseHostMessage(data) {
   if (data === null) {
@@ -560,6 +561,7 @@ export function installHostBridge(ctx) {
           evt.stopImmediatePropagation();
 
           if (payload.format === "svg") {
+            // graph.getSvg 已被 viewportVirtualization 自动包裹 expand/restore
             postResult(
               evt.source,
               payload,
@@ -870,7 +872,11 @@ export function installHostBridge(ctx) {
 
         if (payload.action === "restoreDiagramSnapshot" && payload.snapshot != null) {
           evt.stopImmediatePropagation();
-          snapshotDomainApi.restoreDiagramSnapshot(payload.snapshot);
+          // 恢复快照前临时展开所有虚拟折叠，避免 restoreDiagramSnapshot
+          // 内部操作与虚拟折叠态冲突；结束后 withAllFramesExpanded 会重算折叠集合
+          withAllFramesExpanded(function () {
+            snapshotDomainApi.restoreDiagramSnapshot(payload.snapshot);
+          });
           postResult(evt.source, payload, {
             snapshot: snapshotDomainApi.exportDiagramSnapshot(),
           });
