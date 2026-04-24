@@ -764,6 +764,32 @@ export function createSnapshotDomain() {
     return binding != null ? binding.constraint : null;
   }
 
+  function buildConstraintFromSnapshotPort(ports, portId) {
+    var target = deps.trim(portId);
+    var i;
+
+    if (!Array.isArray(ports) || target.length === 0) {
+      return null;
+    }
+
+    for (i = 0; i < ports.length; i++) {
+      if (deps.trim(ports[i].id) === target) {
+        return new mxConnectionConstraint(
+          new mxPoint(
+            toNumber(ports[i].x, 0),
+            toNumber(ports[i].y, 0),
+          ),
+          ports[i].perimeter !== false,
+          ports[i].id,
+          toNumber(ports[i].dx, 0),
+          toNumber(ports[i].dy, 0),
+        );
+      }
+    }
+
+    return null;
+  }
+
   function createGenericCellFromSnapshot(object) {
     var objectId = deps.trim(object != null ? object.id : "");
     var cell = new mxCell(
@@ -1051,6 +1077,18 @@ export function createSnapshotDomain() {
 
         if (Array.isArray(snapshot.edges)) {
           var cabinetLogicalIdMap = {};
+          var genericPortsMap = {};
+
+          for (i = 0; i < genericObjects.length; i++) {
+            var gobj = genericObjects[i];
+            if (
+              gobj.props != null &&
+              Array.isArray(gobj.props.ports) &&
+              gobj.props.ports.length > 0
+            ) {
+              genericPortsMap[gobj.id] = gobj.props.ports;
+            }
+          }
 
           for (i = 0; i < cabinetObjects.length; i++) {
             var edgeCabinetObject = cabinetObjects[i];
@@ -1078,15 +1116,7 @@ export function createSnapshotDomain() {
               cabinetLogicalIdMap,
             );
 
-            if (
-              sourceRoot == null &&
-              targetRoot == null &&
-              !deps.isObject(
-                edgeObject.props != null ? edgeObject.props.geometry : null,
-              )
-            ) {
-              continue;
-            }
+
 
             var style =
               edgeObject.props != null &&
@@ -1118,6 +1148,20 @@ export function createSnapshotDomain() {
               targetRoot,
               edgeObject.target.portId,
             );
+
+            if (sourceConstraint == null && sourceRoot != null && edgeObject.source != null) {
+              sourceConstraint = buildConstraintFromSnapshotPort(
+                genericPortsMap[deps.trim(edgeObject.source.objectId)],
+                edgeObject.source.portId,
+              );
+            }
+
+            if (targetConstraint == null && targetRoot != null && edgeObject.target != null) {
+              targetConstraint = buildConstraintFromSnapshotPort(
+                genericPortsMap[deps.trim(edgeObject.target.objectId)],
+                edgeObject.target.portId,
+              );
+            }
 
             if (sourceConstraint != null) {
               graph.setConnectionConstraint(

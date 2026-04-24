@@ -221,6 +221,7 @@
     "electricalPreview=\u5237\u65B0\u9884\u89C8",
     "electricalAddLibrary=\u52A0\u5165\u5E93",
     "electricalClearScreen=\u6E05\u5C4F",
+    "electricalForceDelete=\u5F3A\u5236\u5220\u9664",
     "electricalUploadPrimarySvg=\u4E0A\u4F20\u9ED8\u8BA4SVG",
     "electricalEnableVariants=\u542F\u7528\u53D8\u4F53SVG",
     "electricalAddVariantSvg=\u65B0\u589E\u53D8\u4F53SVG"
@@ -1238,7 +1239,7 @@
       return false;
     }
     for (i = 0; i < parts.length; i++) {
-      if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(parts[i])) {
+      if (!/^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(parts[i])) {
         return false;
       }
     }
@@ -3753,6 +3754,376 @@
     syncRoot
   };
 
+  // runtime/viewportVirtualization.js
+  var DEBUG = true;
+  function debugLog() {
+    if (DEBUG && typeof console !== "undefined") {
+      var args = ["[LOD]"];
+      for (var i = 0; i < arguments.length; i++) {
+        args.push(arguments[i]);
+      }
+      console.log.apply(console, args);
+    }
+  }
+  var OVERVIEW_PX = 360;
+  var PRELOAD_MARGIN_PX = 600;
+  var HYSTERESIS = 0.05;
+  var THROTTLE_MS = 120;
+  var INIT_DELAY_MS = 200;
+  var FRAME_NOMINAL_WIDTH = 820;
+  var overviewMode = false;
+  var culledFrameSet = /* @__PURE__ */ new Set();
+  var installed = false;
+  var throttleTimer = null;
+  var _graph = null;
+  function isOrphanTopLevelCell(cell) {
+    if (cell == null || isDrawingFrame(cell)) {
+      return false;
+    }
+    var model = _graph.getModel();
+    var parent = model.getParent(cell);
+    if (parent == null) {
+      return false;
+    }
+    return model.getParent(parent) === model.getRoot();
+  }
+  function getCurrentScale(graph) {
+    if (graph.useCssTransforms) {
+      return graph.currentScale || 1;
+    }
+    return graph.view != null ? graph.view.scale || 1 : 1;
+  }
+  function getViewportRect(graph) {
+    var c = graph.container;
+    if (c == null) {
+      return null;
+    }
+    var s = getCurrentScale(graph);
+    var tx;
+    var ty;
+    if (graph.useCssTransforms) {
+      tx = graph.currentTranslate != null ? graph.currentTranslate.x : 0;
+      ty = graph.currentTranslate != null ? graph.currentTranslate.y : 0;
+    } else {
+      var t = graph.view != null ? graph.view.translate : null;
+      tx = t != null ? t.x : 0;
+      ty = t != null ? t.y : 0;
+    }
+    return {
+      x: c.scrollLeft / s - tx,
+      y: c.scrollTop / s - ty,
+      width: c.clientWidth / s,
+      height: c.clientHeight / s
+    };
+  }
+  function expandRectByPixels(rect, scale) {
+    var m = PRELOAD_MARGIN_PX / scale;
+    return {
+      x: rect.x - m,
+      y: rect.y - m,
+      width: rect.width + m * 2,
+      height: rect.height + m * 2
+    };
+  }
+  function rectsIntersect(a, b) {
+    return !(a.x + a.width < b.x || b.x + b.width < a.x || a.y + a.height < b.y || b.y + b.height < a.y);
+  }
+  function collectAllFrames(graph) {
+    var model = graph.getModel();
+    var frames = [];
+    function walk(cell) {
+      if (cell == null) {
+        return;
+      }
+      if (isDrawingFrame(cell)) {
+        frames.push(cell);
+        return;
+      }
+      var n = model.getChildCount(cell);
+      for (var i = 0; i < n; i++) {
+        walk(model.getChildAt(cell, i));
+      }
+    }
+    walk(model.getRoot());
+    return frames;
+  }
+  function getFrameAbsoluteRect(graph, frame) {
+    var model = graph.getModel();
+    var geo = model.getGeometry(frame);
+    if (geo == null) {
+      return null;
+    }
+    var x = geo.x;
+    var y = geo.y;
+    var p = model.getParent(frame);
+    while (p != null && p !== model.getRoot()) {
+      var pg = model.getGeometry(p);
+      if (pg != null) {
+        x += pg.x;
+        y += pg.y;
+      }
+      p = model.getParent(p);
+    }
+    return { x, y, width: geo.width, height: geo.height };
+  }
+  function recompute(graph) {
+    var scale = getCurrentScale(graph);
+    var changed = false;
+    var screenW = FRAME_NOMINAL_WIDTH * scale;
+    var newOverview;
+    if (overviewMode) {
+      newOverview = screenW < OVERVIEW_PX * (1 + HYSTERESIS);
+    } else {
+      newOverview = screenW < OVERVIEW_PX * (1 - HYSTERESIS);
+    }
+    if (graph.cellEditor != null && graph.cellEditor.editingCell != null) {
+      newOverview = overviewMode;
+    }
+    if (newOverview !== overviewMode) {
+      overviewMode = newOverview;
+      changed = true;
+    }
+    var vp = getViewportRect(graph);
+    if (vp == null) {
+      return changed;
+    }
+    var expanded = expandRectByPixels(vp, scale);
+    var frames = collectAllFrames(graph);
+    for (var i = 0; i < frames.length; i++) {
+      var frame = frames[i];
+      var rect = getFrameAbsoluteRect(graph, frame);
+      var shouldCull = rect == null || !rectsIntersect(rect, expanded);
+      var isCulled = culledFrameSet.has(frame);
+      if (shouldCull && !isCulled) {
+        culledFrameSet.add(frame);
+        changed = true;
+      } else if (!shouldCull && isCulled) {
+        culledFrameSet.delete(frame);
+        changed = true;
+      }
+    }
+    for (var f of culledFrameSet) {
+      if (f.parent == null) {
+        culledFrameSet.delete(f);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  function clearInvalidSelection(graph) {
+    if (!overviewMode) {
+      return;
+    }
+    var sel = graph.getSelectionCells();
+    if (sel == null || sel.length === 0) {
+      return;
+    }
+    var remove = [];
+    for (var i = 0; i < sel.length; i++) {
+      if (!isDrawingFrame(sel[i])) {
+        remove.push(sel[i]);
+      }
+    }
+    if (remove.length > 0) {
+      debugLog("clearSelection: " + remove.length + " cells");
+      graph.removeSelectionCells(remove);
+    }
+  }
+  function runCullingPass(graph) {
+    if (recompute(graph)) {
+      debugLog(
+        "changed: overview=" + overviewMode,
+        "culled=" + culledFrameSet.size,
+        "scale=" + getCurrentScale(graph).toFixed(3)
+      );
+      clearInvalidSelection(graph);
+      graph.view.revalidate();
+      graph.view.validate();
+    }
+  }
+  function scheduleThrottledCulling(graph) {
+    if (throttleTimer != null) {
+      return;
+    }
+    throttleTimer = setTimeout(function() {
+      throttleTimer = null;
+      runCullingPass(graph);
+    }, THROTTLE_MS);
+  }
+  function withAllFramesExpanded(fn) {
+    var graph = getApp().ctx.graph;
+    var savedCulled = new Set(culledFrameSet);
+    var savedOverview = overviewMode;
+    var needRestore = culledFrameSet.size > 0 || overviewMode;
+    if (needRestore) {
+      debugLog("expandAll: clearing culled=" + savedCulled.size + " overview=" + savedOverview);
+      culledFrameSet.clear();
+      overviewMode = false;
+      graph.view.revalidate();
+      graph.view.validate();
+    }
+    try {
+      return fn();
+    } finally {
+      if (needRestore) {
+        for (var f of savedCulled) {
+          culledFrameSet.add(f);
+        }
+        overviewMode = savedOverview;
+        debugLog("expandAll: restored");
+        graph.view.revalidate();
+        graph.view.validate();
+      }
+    }
+  }
+  function installViewportVirtualization(ctx) {
+    if (installed) {
+      return;
+    }
+    var graph = ctx.graph;
+    if (graph.container == null) {
+      return;
+    }
+    installed = true;
+    _graph = graph;
+    debugLog("install: OVERVIEW_PX=" + OVERVIEW_PX, "PRELOAD_MARGIN_PX=" + PRELOAD_MARGIN_PX);
+    var _origCollapsed = graph.isCellCollapsed;
+    graph.isCellCollapsed = function(cell) {
+      if (culledFrameSet.has(cell)) {
+        return true;
+      }
+      return _origCollapsed.call(this, cell);
+    };
+    var _origFoldable = graph.isCellFoldable;
+    graph.isCellFoldable = function(cell, collapse) {
+      if (culledFrameSet.has(cell)) {
+        return false;
+      }
+      return _origFoldable.call(this, cell, collapse);
+    };
+    var _origGetLabel = graph.getLabel;
+    graph.getLabel = function(cell) {
+      if (overviewMode) {
+        return "";
+      }
+      return _origGetLabel.call(this, cell);
+    };
+    var _origSelectable = graph.isCellSelectable;
+    graph.isCellSelectable = function(cell) {
+      if (overviewMode && !isDrawingFrame(cell)) {
+        return false;
+      }
+      return _origSelectable.call(this, cell);
+    };
+    var _origMovable = graph.isCellMovable;
+    graph.isCellMovable = function(cell) {
+      if (overviewMode && !isDrawingFrame(cell)) {
+        return false;
+      }
+      return _origMovable.call(this, cell);
+    };
+    var _origDeletable = graph.isCellDeletable;
+    graph.isCellDeletable = function(cell) {
+      if (overviewMode) {
+        return false;
+      }
+      return _origDeletable.call(this, cell);
+    };
+    var _origEditable = graph.isCellEditable;
+    graph.isCellEditable = function(cell) {
+      if (overviewMode) {
+        return false;
+      }
+      return _origEditable.call(this, cell);
+    };
+    var FRAME_BORDER_TOLERANCE = 8;
+    function isOnFrameBorder(cellState, gx, gy) {
+      var tol = FRAME_BORDER_TOLERANCE;
+      var left = cellState.x;
+      var top = cellState.y;
+      var right = cellState.x + cellState.width;
+      var bottom = cellState.y + cellState.height;
+      var scale = graph.view.scale;
+      var tolScaled = tol * scale;
+      if (gx < left - tolScaled || gx > right + tolScaled || gy < top - tolScaled || gy > bottom + tolScaled) {
+        return false;
+      }
+      if (gx < left + tolScaled || gx > right - tolScaled || gy < top + tolScaled || gy > bottom - tolScaled) {
+        return true;
+      }
+      return false;
+    }
+    var _origGetCellAt = graph.getCellAt;
+    graph.getCellAt = function(x, y, parent, vertices, edges, ignoreFn) {
+      if (overviewMode && parent != null && isDrawingFrame(parent)) {
+        return null;
+      }
+      var result = _origGetCellAt.call(this, x, y, parent, vertices, edges, ignoreFn);
+      if (!overviewMode && result != null && isDrawingFrame(result)) {
+        var state = graph.view.getState(result);
+        if (state != null) {
+          var onBorder = isOnFrameBorder(state, x, y);
+          console.log("[FrameHit] x=" + x + " y=" + y + " state=(" + state.x + "," + state.y + "," + state.width + "," + state.height + ") scale=" + graph.view.scale + " onBorder=" + onBorder);
+          if (!onBorder) {
+            return null;
+          }
+        }
+      }
+      return result;
+    };
+    var _origVisible = graph.isCellVisible;
+    graph.isCellVisible = function(cell) {
+      if (overviewMode && isOrphanTopLevelCell(cell) && !graph.getModel().isEdge(cell)) {
+        return false;
+      }
+      return _origVisible.call(this, cell);
+    };
+    var _origConstraints = graph.getAllConnectionConstraints;
+    graph.getAllConnectionConstraints = function(terminal, source) {
+      if (overviewMode) {
+        return null;
+      }
+      return _origConstraints.call(this, terminal, source);
+    };
+    var _origGetSvg = graph.getSvg;
+    if (typeof _origGetSvg === "function") {
+      graph.getSvg = function() {
+        var self = this;
+        var outerArgs = arguments;
+        return withAllFramesExpanded(function() {
+          return _origGetSvg.apply(self, outerArgs);
+        });
+      };
+    }
+    var container = graph.container;
+    container.addEventListener("scroll", function() {
+      scheduleThrottledCulling(graph);
+    });
+    graph.view.addListener(mxEvent.SCALE, function() {
+      scheduleThrottledCulling(graph);
+    });
+    graph.view.addListener(mxEvent.SCALE_AND_TRANSLATE, function() {
+      scheduleThrottledCulling(graph);
+    });
+    graph.getModel().addListener(mxEvent.CHANGE, function() {
+      for (var f of culledFrameSet) {
+        if (f.parent == null) {
+          culledFrameSet.delete(f);
+        }
+      }
+      scheduleThrottledCulling(graph);
+    });
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(function() {
+        scheduleThrottledCulling(graph);
+      }).observe(container);
+    }
+    setTimeout(function() {
+      debugLog("initial culling pass");
+      runCullingPass(graph);
+    }, INIT_DELAY_MS);
+  }
+
   // application/commands.js
   function getDefaultParentChildren() {
     var app = getApp();
@@ -3975,9 +4346,44 @@
       state.allowProtectedDelete = false;
     }
   }
+  function forceDeleteSelection() {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var model = app.ctx.model;
+    var cells = graph.getSelectionCells();
+    if (cells == null || cells.length === 0) {
+      showStatus("\u6CA1\u6709\u9009\u4E2D\u4EFB\u4F55\u5143\u7D20", true);
+      return;
+    }
+    if (!mxUtils.confirm("\u5F3A\u5236\u5220\u9664\u5C06\u65E0\u89C6\u6240\u6709\u4FDD\u62A4\uFF0C\u786E\u5B9A\u7EE7\u7EED\uFF1F")) {
+      return;
+    }
+    withAllFramesExpanded(function() {
+      var toRemove = [];
+      var i, j, child;
+      for (i = 0; i < cells.length; i++) {
+        toRemove.push(cells[i]);
+        var desc = model.getDescendants(cells[i]);
+        for (j = 0; j < desc.length; j++) {
+          child = desc[j];
+          if (child !== cells[i]) {
+            toRemove.push(child);
+          }
+        }
+      }
+      model.beginUpdate();
+      try {
+        graph.cellsRemoved(toRemove);
+      } finally {
+        model.endUpdate();
+      }
+    });
+    showStatus("\u5F3A\u5236\u5220\u9664\u5B8C\u6210 (" + cells.length + " \u4E2A\u5143\u7D20)", false);
+  }
   var commandApi = {
     applyInstanceSpec,
     clearCurrentPage,
+    forceDeleteSelection,
     insertCabinet,
     insertFrame,
     insertIntoGraph,
@@ -4767,6 +5173,28 @@
       var binding = getGenericPortBindingById2(root, portId);
       return binding != null ? binding.constraint : null;
     }
+    function buildConstraintFromSnapshotPort(ports, portId) {
+      var target = deps.trim(portId);
+      var i;
+      if (!Array.isArray(ports) || target.length === 0) {
+        return null;
+      }
+      for (i = 0; i < ports.length; i++) {
+        if (deps.trim(ports[i].id) === target) {
+          return new mxConnectionConstraint(
+            new mxPoint(
+              toNumber(ports[i].x, 0),
+              toNumber(ports[i].y, 0)
+            ),
+            ports[i].perimeter !== false,
+            ports[i].id,
+            toNumber(ports[i].dx, 0),
+            toNumber(ports[i].dy, 0)
+          );
+        }
+      }
+      return null;
+    }
     function createGenericCellFromSnapshot(object) {
       var objectId = deps.trim(object != null ? object.id : "");
       var cell = new mxCell(
@@ -4982,6 +5410,13 @@
           }
           if (Array.isArray(snapshot.edges)) {
             var cabinetLogicalIdMap = {};
+            var genericPortsMap = {};
+            for (i = 0; i < genericObjects.length; i++) {
+              var gobj = genericObjects[i];
+              if (gobj.props != null && Array.isArray(gobj.props.ports) && gobj.props.ports.length > 0) {
+                genericPortsMap[gobj.id] = gobj.props.ports;
+              }
+            }
             for (i = 0; i < cabinetObjects.length; i++) {
               var edgeCabinetObject = cabinetObjects[i];
               var edgeCabinetLogicalId = deps.trim(
@@ -5003,11 +5438,6 @@
                 genericMap,
                 cabinetLogicalIdMap
               );
-              if (sourceRoot == null && targetRoot == null && !deps.isObject(
-                edgeObject.props != null ? edgeObject.props.geometry : null
-              )) {
-                continue;
-              }
               var style = edgeObject.props != null && edgeObject.props.style != null && deps.trim(edgeObject.props.style.raw).length > 0 ? edgeObject.props.style.raw : "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;";
               var edgeParent = resolveImportedObjectParent(
                 edgeObject.props != null ? edgeObject.props.parentId : null,
@@ -5033,6 +5463,18 @@
                 targetRoot,
                 edgeObject.target.portId
               );
+              if (sourceConstraint == null && sourceRoot != null && edgeObject.source != null) {
+                sourceConstraint = buildConstraintFromSnapshotPort(
+                  genericPortsMap[deps.trim(edgeObject.source.objectId)],
+                  edgeObject.source.portId
+                );
+              }
+              if (targetConstraint == null && targetRoot != null && edgeObject.target != null) {
+                targetConstraint = buildConstraintFromSnapshotPort(
+                  genericPortsMap[deps.trim(edgeObject.target.objectId)],
+                  edgeObject.target.portId
+                );
+              }
               if (sourceConstraint != null) {
                 graph.setConnectionConstraint(
                   edge,
@@ -6015,341 +6457,6 @@
     openBackendSaveDialog
   };
 
-  // runtime/viewportVirtualization.js
-  var DEBUG = true;
-  function debugLog() {
-    if (DEBUG && typeof console !== "undefined") {
-      var args = ["[LOD]"];
-      for (var i = 0; i < arguments.length; i++) {
-        args.push(arguments[i]);
-      }
-      console.log.apply(console, args);
-    }
-  }
-  var OVERVIEW_PX = 360;
-  var PRELOAD_MARGIN_PX = 600;
-  var HYSTERESIS = 0.05;
-  var THROTTLE_MS = 120;
-  var INIT_DELAY_MS = 200;
-  var FRAME_NOMINAL_WIDTH = 820;
-  var overviewMode = false;
-  var culledFrameSet = /* @__PURE__ */ new Set();
-  var installed = false;
-  var throttleTimer = null;
-  var _graph = null;
-  function isOrphanTopLevelCell(cell) {
-    if (cell == null || isDrawingFrame(cell)) {
-      return false;
-    }
-    var model = _graph.getModel();
-    var parent = model.getParent(cell);
-    if (parent == null) {
-      return false;
-    }
-    return model.getParent(parent) === model.getRoot();
-  }
-  function getCurrentScale(graph) {
-    if (graph.useCssTransforms) {
-      return graph.currentScale || 1;
-    }
-    return graph.view != null ? graph.view.scale || 1 : 1;
-  }
-  function getViewportRect(graph) {
-    var c = graph.container;
-    if (c == null) {
-      return null;
-    }
-    var s = getCurrentScale(graph);
-    var tx;
-    var ty;
-    if (graph.useCssTransforms) {
-      tx = graph.currentTranslate != null ? graph.currentTranslate.x : 0;
-      ty = graph.currentTranslate != null ? graph.currentTranslate.y : 0;
-    } else {
-      var t = graph.view != null ? graph.view.translate : null;
-      tx = t != null ? t.x : 0;
-      ty = t != null ? t.y : 0;
-    }
-    return {
-      x: c.scrollLeft / s - tx,
-      y: c.scrollTop / s - ty,
-      width: c.clientWidth / s,
-      height: c.clientHeight / s
-    };
-  }
-  function expandRectByPixels(rect, scale) {
-    var m = PRELOAD_MARGIN_PX / scale;
-    return {
-      x: rect.x - m,
-      y: rect.y - m,
-      width: rect.width + m * 2,
-      height: rect.height + m * 2
-    };
-  }
-  function rectsIntersect(a, b) {
-    return !(a.x + a.width < b.x || b.x + b.width < a.x || a.y + a.height < b.y || b.y + b.height < a.y);
-  }
-  function collectAllFrames(graph) {
-    var model = graph.getModel();
-    var frames = [];
-    function walk(cell) {
-      if (cell == null) {
-        return;
-      }
-      if (isDrawingFrame(cell)) {
-        frames.push(cell);
-        return;
-      }
-      var n = model.getChildCount(cell);
-      for (var i = 0; i < n; i++) {
-        walk(model.getChildAt(cell, i));
-      }
-    }
-    walk(model.getRoot());
-    return frames;
-  }
-  function getFrameAbsoluteRect(graph, frame) {
-    var model = graph.getModel();
-    var geo = model.getGeometry(frame);
-    if (geo == null) {
-      return null;
-    }
-    var x = geo.x;
-    var y = geo.y;
-    var p = model.getParent(frame);
-    while (p != null && p !== model.getRoot()) {
-      var pg = model.getGeometry(p);
-      if (pg != null) {
-        x += pg.x;
-        y += pg.y;
-      }
-      p = model.getParent(p);
-    }
-    return { x, y, width: geo.width, height: geo.height };
-  }
-  function recompute(graph) {
-    var scale = getCurrentScale(graph);
-    var changed = false;
-    var screenW = FRAME_NOMINAL_WIDTH * scale;
-    var newOverview;
-    if (overviewMode) {
-      newOverview = screenW < OVERVIEW_PX * (1 + HYSTERESIS);
-    } else {
-      newOverview = screenW < OVERVIEW_PX * (1 - HYSTERESIS);
-    }
-    if (graph.cellEditor != null && graph.cellEditor.editingCell != null) {
-      newOverview = overviewMode;
-    }
-    if (newOverview !== overviewMode) {
-      overviewMode = newOverview;
-      changed = true;
-    }
-    var vp = getViewportRect(graph);
-    if (vp == null) {
-      return changed;
-    }
-    var expanded = expandRectByPixels(vp, scale);
-    var frames = collectAllFrames(graph);
-    for (var i = 0; i < frames.length; i++) {
-      var frame = frames[i];
-      var rect = getFrameAbsoluteRect(graph, frame);
-      var shouldCull = rect == null || !rectsIntersect(rect, expanded);
-      var isCulled = culledFrameSet.has(frame);
-      if (shouldCull && !isCulled) {
-        culledFrameSet.add(frame);
-        changed = true;
-      } else if (!shouldCull && isCulled) {
-        culledFrameSet.delete(frame);
-        changed = true;
-      }
-    }
-    for (var f of culledFrameSet) {
-      if (f.parent == null) {
-        culledFrameSet.delete(f);
-        changed = true;
-      }
-    }
-    return changed;
-  }
-  function clearInvalidSelection(graph) {
-    if (!overviewMode) {
-      return;
-    }
-    var sel = graph.getSelectionCells();
-    if (sel == null || sel.length === 0) {
-      return;
-    }
-    var remove = [];
-    for (var i = 0; i < sel.length; i++) {
-      if (!isDrawingFrame(sel[i])) {
-        remove.push(sel[i]);
-      }
-    }
-    if (remove.length > 0) {
-      debugLog("clearSelection: " + remove.length + " cells");
-      graph.removeSelectionCells(remove);
-    }
-  }
-  function runCullingPass(graph) {
-    if (recompute(graph)) {
-      debugLog(
-        "changed: overview=" + overviewMode,
-        "culled=" + culledFrameSet.size,
-        "scale=" + getCurrentScale(graph).toFixed(3)
-      );
-      clearInvalidSelection(graph);
-      graph.view.revalidate();
-      graph.view.validate();
-    }
-  }
-  function scheduleThrottledCulling(graph) {
-    if (throttleTimer != null) {
-      return;
-    }
-    throttleTimer = setTimeout(function() {
-      throttleTimer = null;
-      runCullingPass(graph);
-    }, THROTTLE_MS);
-  }
-  function withAllFramesExpanded(fn) {
-    var graph = getApp().ctx.graph;
-    var savedCulled = new Set(culledFrameSet);
-    var savedOverview = overviewMode;
-    var needRestore = culledFrameSet.size > 0 || overviewMode;
-    if (needRestore) {
-      debugLog("expandAll: clearing culled=" + savedCulled.size + " overview=" + savedOverview);
-      culledFrameSet.clear();
-      overviewMode = false;
-      graph.view.revalidate();
-      graph.view.validate();
-    }
-    try {
-      return fn();
-    } finally {
-      if (needRestore) {
-        for (var f of savedCulled) {
-          culledFrameSet.add(f);
-        }
-        overviewMode = savedOverview;
-        debugLog("expandAll: restored");
-        graph.view.revalidate();
-        graph.view.validate();
-      }
-    }
-  }
-  function installViewportVirtualization(ctx) {
-    if (installed) {
-      return;
-    }
-    var graph = ctx.graph;
-    if (graph.container == null) {
-      return;
-    }
-    installed = true;
-    _graph = graph;
-    debugLog("install: OVERVIEW_PX=" + OVERVIEW_PX, "PRELOAD_MARGIN_PX=" + PRELOAD_MARGIN_PX);
-    var _origCollapsed = graph.isCellCollapsed;
-    graph.isCellCollapsed = function(cell) {
-      if (culledFrameSet.has(cell)) {
-        return true;
-      }
-      return _origCollapsed.call(this, cell);
-    };
-    var _origFoldable = graph.isCellFoldable;
-    graph.isCellFoldable = function(cell, collapse) {
-      if (culledFrameSet.has(cell)) {
-        return false;
-      }
-      return _origFoldable.call(this, cell, collapse);
-    };
-    var _origGetLabel = graph.getLabel;
-    graph.getLabel = function(cell) {
-      if (overviewMode) {
-        return "";
-      }
-      return _origGetLabel.call(this, cell);
-    };
-    var _origSelectable = graph.isCellSelectable;
-    graph.isCellSelectable = function(cell) {
-      if (overviewMode && !isDrawingFrame(cell)) {
-        return false;
-      }
-      return _origSelectable.call(this, cell);
-    };
-    var _origMovable = graph.isCellMovable;
-    graph.isCellMovable = function(cell) {
-      if (overviewMode && !isDrawingFrame(cell)) {
-        return false;
-      }
-      return _origMovable.call(this, cell);
-    };
-    var _origEditable = graph.isCellEditable;
-    graph.isCellEditable = function(cell) {
-      if (overviewMode) {
-        return false;
-      }
-      return _origEditable.call(this, cell);
-    };
-    var _origGetCellAt = graph.getCellAt;
-    graph.getCellAt = function(x, y, parent, vertices, edges, ignoreFn) {
-      if (overviewMode && parent != null && isDrawingFrame(parent)) {
-        return null;
-      }
-      return _origGetCellAt.call(this, x, y, parent, vertices, edges, ignoreFn);
-    };
-    var _origVisible = graph.isCellVisible;
-    graph.isCellVisible = function(cell) {
-      if (overviewMode && isOrphanTopLevelCell(cell) && !graph.getModel().isEdge(cell)) {
-        return false;
-      }
-      return _origVisible.call(this, cell);
-    };
-    var _origConstraints = graph.getAllConnectionConstraints;
-    graph.getAllConnectionConstraints = function(terminal, source) {
-      if (overviewMode) {
-        return null;
-      }
-      return _origConstraints.call(this, terminal, source);
-    };
-    var _origGetSvg = graph.getSvg;
-    if (typeof _origGetSvg === "function") {
-      graph.getSvg = function() {
-        var self = this;
-        var outerArgs = arguments;
-        return withAllFramesExpanded(function() {
-          return _origGetSvg.apply(self, outerArgs);
-        });
-      };
-    }
-    var container = graph.container;
-    container.addEventListener("scroll", function() {
-      scheduleThrottledCulling(graph);
-    });
-    graph.view.addListener(mxEvent.SCALE, function() {
-      scheduleThrottledCulling(graph);
-    });
-    graph.view.addListener(mxEvent.SCALE_AND_TRANSLATE, function() {
-      scheduleThrottledCulling(graph);
-    });
-    graph.getModel().addListener(mxEvent.CHANGE, function() {
-      for (var f of culledFrameSet) {
-        if (f.parent == null) {
-          culledFrameSet.delete(f);
-        }
-      }
-      scheduleThrottledCulling(graph);
-    });
-    if (typeof ResizeObserver !== "undefined") {
-      new ResizeObserver(function() {
-        scheduleThrottledCulling(graph);
-      }).observe(container);
-    }
-    setTimeout(function() {
-      debugLog("initial culling pass");
-      runCullingPass(graph);
-    }, INIT_DELAY_MS);
-  }
-
   // runtime/hostBridge.js
   function parseHostMessage(data) {
     if (data === null) {
@@ -6741,6 +6848,59 @@
             });
             return;
           }
+          if (payload.action === "insertRawXml" && typeof payload.xml === "string") {
+            evt.stopImmediatePropagation();
+            var insertPoint = resolveGraphInsertPoint(ctx, payload);
+            var xmlDoc = mxUtils.parseXml(payload.xml);
+            var cells = ctx.graph.importGraphModel(xmlDoc.documentElement, 0, 0);
+            var insertedIds = [];
+            if (Array.isArray(cells)) {
+              var model2 = ctx.graph.getModel();
+              model2.beginUpdate();
+              try {
+                for (var ci = 0; ci < cells.length; ci++) {
+                  var geo = model2.getGeometry(cells[ci]);
+                  if (geo != null) {
+                    geo = geo.clone();
+                    if (cells[ci].isEdge()) {
+                      if (geo.sourcePoint != null) {
+                        geo.sourcePoint.x += insertPoint.x;
+                        geo.sourcePoint.y += insertPoint.y;
+                      }
+                      if (geo.targetPoint != null) {
+                        geo.targetPoint.x += insertPoint.x;
+                        geo.targetPoint.y += insertPoint.y;
+                      }
+                      if (geo.points != null && Array.isArray(geo.points)) {
+                        for (var pi = 0; pi < geo.points.length; pi++) {
+                          geo.points[pi].x += insertPoint.x;
+                          geo.points[pi].y += insertPoint.y;
+                        }
+                      }
+                    } else {
+                      geo.x = insertPoint.x;
+                      geo.y = insertPoint.y;
+                    }
+                    model2.setGeometry(cells[ci], geo);
+                  }
+                  if (cells[ci] != null && cells[ci].id != null) {
+                    insertedIds.push(String(cells[ci].id));
+                  }
+                }
+              } finally {
+                model2.endUpdate();
+              }
+              if (cells.length > 0) {
+                ctx.graph.setSelectionCells(cells);
+                ctx.graph.scrollCellToVisible(cells[0]);
+              }
+            }
+            postResult(evt.source, payload, {
+              cellIds: insertedIds,
+              cellId: insertedIds.length > 0 ? insertedIds[0] : ""
+            });
+            return;
+          }
           if (payload.action === "exportDiagram") {
             evt.stopImmediatePropagation();
             if (payload.format === "svg") {
@@ -6960,8 +7120,11 @@
           }
           if (payload.action === "getDiagramSnapshot") {
             evt.stopImmediatePropagation();
+            var exportedSnapshot = withAllFramesExpanded(function() {
+              return snapshotDomainApi.exportDiagramSnapshot();
+            });
             postResult(evt.source, payload, {
-              snapshot: snapshotDomainApi.exportDiagramSnapshot()
+              snapshot: exportedSnapshot
             });
             return;
           }
@@ -6970,8 +7133,11 @@
             withAllFramesExpanded(function() {
               snapshotDomainApi.restoreDiagramSnapshot(payload.snapshot);
             });
+            var restoredSnapshot = withAllFramesExpanded(function() {
+              return snapshotDomainApi.exportDiagramSnapshot();
+            });
             postResult(evt.source, payload, {
-              snapshot: snapshotDomainApi.exportDiagramSnapshot()
+              snapshot: restoredSnapshot
             });
             return;
           }
@@ -7480,7 +7646,11 @@
       state: ctx.state,
       constants: ctx.constants,
       normalizeSnapshotGenericIds: snapshotDomainApi.normalizeSnapshotGenericIds,
-      exportDiagramSnapshot: snapshotDomainApi.exportDiagramSnapshot,
+      exportDiagramSnapshot: function() {
+        return withAllFramesExpanded(function() {
+          return snapshotDomainApi.exportDiagramSnapshot();
+        });
+      },
       resetPendingChangeRecords,
       computeSnapshotChanges: snapshotDomainApi.computeSnapshotChanges,
       collectChangeObjectIds: snapshotDomainApi.collectChangeObjectIds,
@@ -11133,6 +11303,9 @@
     electricalSaveBackend: function() {
       return execute(backendDialogsApi.openBackendSaveDialog);
     },
+    electricalForceDelete: function() {
+      return execute(commandApi.forceDeleteSelection);
+    },
     electricalSymbols: function() {
       return execute(templateEditorApi.toggleWindow);
     }
@@ -11248,6 +11421,10 @@
     {
       resourceKey: "electricalReassignPort",
       actionKey: "electricalReassignPort"
+    },
+    {
+      resourceKey: "electricalForceDelete",
+      actionKey: "electricalForceDelete"
     }
   ];
   var EXTRA_MENU_ACTIONS = [
@@ -11262,6 +11439,7 @@
     "electricalClearScreen",
     "electricalReassignPort",
     "electricalRefresh",
+    "electricalForceDelete",
     "electricalExport",
     "electricalSaveBackend",
     "electricalNewBackend",
@@ -11282,10 +11460,20 @@
     var menu = ui.menus.get("extras");
     var oldExtrasMenu = menu.funct;
     graph.isCellDeletable = function(cell) {
-      if (isDrawingFrame(cell)) {
+      if (isDrawingFrame(cell) || isPluginInternalCell(cell)) {
         return !!state.allowProtectedDelete;
       }
       return graphIsCellDeletable.apply(this, arguments);
+    };
+    var _origRemoveCells = graph.removeCells;
+    graph.removeCells = function(cells, includeEdges) {
+      if (cells != null && !state.allowProtectedDelete) {
+        cells = this.getDeletableCells(cells);
+        if (cells.length === 0) {
+          return [];
+        }
+      }
+      return _origRemoveCells.call(this, cells, includeEdges);
     };
     graph.isCellMovable = function(cell) {
       if (composeModeApi.isBlockedComposeTarget(cell) || composeModeApi.isLockedComposedChild(cell)) {
@@ -11341,6 +11529,7 @@
       actions.electricalRollbackBackend
     );
     ui.actions.addAction("electricalClearScreen", actions.electricalClearScreen);
+    ui.actions.addAction("electricalForceDelete", actions.electricalForceDelete);
     menu.funct = function(nextMenu, parent) {
       oldExtrasMenu.apply(this, arguments);
       ui.menus.addMenuItems(nextMenu, EXTRA_MENU_ACTIONS, parent);
@@ -11418,6 +11607,350 @@
     state.lastOperationSnapshot = snapshotDomainApi.exportDiagramSnapshot();
     model.addListener(mxEvent.CHANGE, modelSyncApi.recordCanvasOperation);
     model.addListener(mxEvent.CHANGE, modelSyncApi.handleModelChange);
+  }
+
+  // runtime/clipboardOverride.js
+  function collectExistingCodes(model) {
+    var codes = {};
+    var cells = model.cells;
+    var key;
+    var code;
+    for (key in cells) {
+      if (!Object.prototype.hasOwnProperty.call(cells, key)) {
+        continue;
+      }
+      var cell = cells[key];
+      code = trim(getAttr(cell, "deviceCode"));
+      if (code.length > 0) {
+        codes[code] = true;
+      }
+      code = trim(getAttr(cell, "cableCode"));
+      if (code.length > 0) {
+        codes[code] = true;
+      }
+    }
+    return codes;
+  }
+  function incrementCode(code, existingCodes) {
+    var match = code.match(/^(.*?)(\d+)$/);
+    var prefix;
+    var numStr;
+    var num;
+    var padLen;
+    var candidate;
+    if (!match) {
+      num = 0;
+      do {
+        num++;
+        candidate = code + "-" + num;
+      } while (existingCodes[candidate] === true);
+      return candidate;
+    }
+    prefix = match[1];
+    numStr = match[2];
+    padLen = numStr.length;
+    num = parseInt(numStr, 10);
+    do {
+      num++;
+      candidate = prefix + padNumber(num, padLen);
+    } while (existingCodes[candidate] === true);
+    return candidate;
+  }
+  function padNumber(num, minLen) {
+    var s = String(num);
+    while (s.length < minLen) {
+      s = "0" + s;
+    }
+    return s;
+  }
+  function isProtectedFromCopy(cell) {
+    if (cell == null) {
+      return false;
+    }
+    if (isDrawingFrame(cell) || isCabinetSegment(cell) || isCabinetGap(cell)) {
+      return true;
+    }
+    var model = getApp().ctx.model;
+    var parent = model.getParent(cell);
+    while (parent != null) {
+      if (isDrawingFrame(parent) || isCabinetSegment(parent) || isCabinetGap(parent)) {
+        return true;
+      }
+      parent = model.getParent(parent);
+    }
+    return false;
+  }
+  function isDeviceRoot(cell) {
+    return isElectricalRoot(cell);
+  }
+  function rewriteClonedCellAttributes(clonedCells, existingCodes, duplicateLog) {
+    var i;
+    var cell;
+    for (i = 0; i < clonedCells.length; i++) {
+      cell = clonedCells[i];
+      if (cell == null) {
+        continue;
+      }
+      if (isDeviceRoot(cell)) {
+        rewriteDeviceCell(cell, existingCodes, duplicateLog);
+        continue;
+      }
+      rewriteCableCell(cell, existingCodes, duplicateLog);
+    }
+  }
+  function rewriteDeviceCell(cell, existingCodes, duplicateLog) {
+    var oldCode = trim(getAttr(cell, "deviceCode"));
+    var oldInstanceId = trim(getAttr(cell, "instanceId"));
+    var newInstanceId = generateUuid();
+    var newCode;
+    if (oldCode.length > 0) {
+      newCode = incrementCode(oldCode, existingCodes);
+      existingCodes[newCode] = true;
+    } else {
+      newCode = "";
+    }
+    if (cell.value != null && cell.value.nodeType === 1) {
+      cell.value = cell.value.cloneNode(true);
+      cell.value.setAttribute("instanceId", newInstanceId);
+      if (newCode.length > 0) {
+        cell.value.setAttribute("deviceCode", newCode);
+      }
+      updateSymbolPayloadJson(cell, newCode, newInstanceId);
+    }
+    duplicateLog.push({
+      type: "device",
+      originalCode: oldCode,
+      newCode,
+      originalInstanceId: oldInstanceId,
+      newInstanceId
+    });
+    rewriteChildLabels(cell, "deviceCode", newCode);
+  }
+  function rewriteCableCell(cell, existingCodes, duplicateLog) {
+    var oldCode = trim(getAttr(cell, "cableCode"));
+    if (oldCode.length === 0) {
+      return;
+    }
+    var newCode = incrementCode(oldCode, existingCodes);
+    existingCodes[newCode] = true;
+    if (cell.value != null && cell.value.nodeType === 1) {
+      cell.value = cell.value.cloneNode(true);
+      cell.value.setAttribute("cableCode", newCode);
+    }
+    duplicateLog.push({
+      type: "cable",
+      originalCode: oldCode,
+      newCode
+    });
+  }
+  function updateSymbolPayloadJson(cell, newCode, newInstanceId) {
+    var payloadStr = trim(getAttr(cell, "symbolPayload"));
+    if (payloadStr.length === 0) {
+      return;
+    }
+    try {
+      var payload = JSON.parse(payloadStr);
+      if (payload.instanceId != null) {
+        payload.instanceId = newInstanceId;
+      }
+      if (payload.device != null && payload.device.code != null && newCode.length > 0) {
+        payload.device.code = newCode;
+      }
+      cell.value.setAttribute("symbolPayload", JSON.stringify(payload));
+    } catch (e) {
+    }
+  }
+  function rewriteChildLabels(rootCell, attrName, newValue) {
+    if (newValue.length === 0 || rootCell.children == null) {
+      return;
+    }
+    var model = getApp().ctx.model;
+    var childCount = model.getChildCount(rootCell);
+    var i;
+    for (i = 0; i < childCount; i++) {
+      var child = model.getChildAt(rootCell, i);
+      var labelFieldPath = trim(getAttr(child, "esFieldPath"));
+      if (labelFieldPath === attrName || labelFieldPath === "device.code") {
+        if (child.value != null && child.value.nodeType === 1) {
+          child.value = child.value.cloneNode(true);
+          child.value.setAttribute("label", newValue);
+        }
+      }
+    }
+  }
+  function disconnectDanglingEdges(clonedCells, originalCells) {
+    var cloneIdSet = {};
+    var i;
+    for (i = 0; i < clonedCells.length; i++) {
+      if (clonedCells[i] != null && clonedCells[i].id != null) {
+        cloneIdSet[clonedCells[i].id] = true;
+      }
+    }
+    for (i = 0; i < clonedCells.length; i++) {
+      var cell = clonedCells[i];
+      if (cell == null || !cell.edge) {
+        continue;
+      }
+      if (cell.source != null && cloneIdSet[cell.source.id] == null) {
+        cell.source = null;
+      }
+      if (cell.target != null && cloneIdSet[cell.target.id] == null) {
+        cell.target = null;
+      }
+    }
+  }
+  function logDuplicates(duplicateLog) {
+    for (var k = 0; k < duplicateLog.length; k++) {
+      var entry = duplicateLog[k];
+      if (entry.type === "device") {
+        console.warn(
+          "[EID Clipboard] \u590D\u5236\u8BBE\u5907: %s \u2192 %s (instanceId: %s)",
+          entry.originalCode,
+          entry.newCode,
+          entry.newInstanceId
+        );
+      } else if (entry.type === "cable") {
+        console.warn(
+          "[EID Clipboard] \u590D\u5236\u7535\u7F06: %s \u2192 %s",
+          entry.originalCode,
+          entry.newCode
+        );
+      }
+    }
+    emitHostEvent("eid-duplicate-created", {
+      duplicates: duplicateLog
+    });
+  }
+  function installClipboardOverride(ctx) {
+    var graph = ctx.graph;
+    function separateProtected(cells) {
+      var filtered = [];
+      var hadProtected = false;
+      var i;
+      for (i = 0; i < cells.length; i++) {
+        if (isProtectedFromCopy(cells[i])) {
+          hadProtected = true;
+        } else {
+          filtered.push(cells[i]);
+        }
+      }
+      return { filtered, hadProtected };
+    }
+    var _origDuplicateCells = graph.duplicateCells;
+    graph.duplicateCells = function(cells, append) {
+      var input = cells || this.getSelectionCells();
+      if (!Array.isArray(input) || input.length === 0) {
+        return _origDuplicateCells.call(this, cells, append);
+      }
+      var result = separateProtected(input);
+      if (result.hadProtected) {
+        emitHostEvent("eid-clipboard-filtered", {
+          message: "\u56FE\u6846/\u914D\u7535\u67DC\u65E0\u6CD5\u590D\u5236\uFF0C\u5DF2\u81EA\u52A8\u6392\u9664"
+        });
+      }
+      if (result.filtered.length === 0) {
+        return [];
+      }
+      var model = this.getModel();
+      var existingCodes = collectExistingCodes(model);
+      var duplicateLog = [];
+      var clonedCells = this.cloneCells(result.filtered);
+      rewriteClonedCellAttributes(clonedCells, existingCodes, duplicateLog);
+      disconnectDanglingEdges(clonedCells, result.filtered);
+      var imported;
+      model.beginUpdate();
+      try {
+        var s = this.gridSize;
+        imported = this.importCells(clonedCells, s, s, null);
+      } finally {
+        model.endUpdate();
+      }
+      if (imported != null && imported.length > 0) {
+        this.setSelectionCells(imported);
+      }
+      if (duplicateLog.length > 0) {
+        logDuplicates(duplicateLog);
+      }
+      return imported || [];
+    };
+    var _origPaste = mxClipboard.paste;
+    mxClipboard.paste = function(graph2) {
+      if (graph2 == null) {
+        return;
+      }
+      var copiedCells = mxClipboard.getCells();
+      if (!Array.isArray(copiedCells) || copiedCells.length === 0) {
+        return _origPaste.call(this, graph2);
+      }
+      var clonedCells = graph2.cloneCells(copiedCells);
+      if (clonedCells.length === 0) {
+        return;
+      }
+      var model = graph2.getModel();
+      var existingCodes = collectExistingCodes(model);
+      var duplicateLog = [];
+      rewriteClonedCellAttributes(clonedCells, existingCodes, duplicateLog);
+      disconnectDanglingEdges(clonedCells, copiedCells);
+      model.beginUpdate();
+      try {
+        var defaultParent = graph2.getDefaultParent();
+        var dx = mxClipboard.getDx();
+        var dy = mxClipboard.getDy();
+        var imported = graph2.importCells(clonedCells, dx, dy, defaultParent);
+        if (imported != null && imported.length > 0) {
+          graph2.setSelectionCells(imported);
+        }
+        mxClipboard.setDx(dx + 10);
+        mxClipboard.setDy(dy + 10);
+      } finally {
+        model.endUpdate();
+      }
+      if (duplicateLog.length > 0) {
+        logDuplicates(duplicateLog);
+      }
+    };
+    var _origCopy = mxClipboard.copy;
+    mxClipboard.copy = function(graph2, cells) {
+      if (graph2 == null) {
+        return _origCopy.call(this, graph2, cells);
+      }
+      var selectedCells = cells || graph2.getSelectionCells();
+      if (!Array.isArray(selectedCells) || selectedCells.length === 0) {
+        return _origCopy.call(this, graph2, cells);
+      }
+      var result = separateProtected(selectedCells);
+      if (result.hadProtected) {
+        emitHostEvent("eid-clipboard-filtered", {
+          message: "\u56FE\u6846/\u914D\u7535\u67DC\u65E0\u6CD5\u590D\u5236\uFF0C\u5DF2\u81EA\u52A8\u6392\u9664"
+        });
+      }
+      if (result.filtered.length === 0) {
+        mxClipboard.setCells(null);
+        return null;
+      }
+      return _origCopy.call(this, graph2, result.filtered);
+    };
+    var _origCut = mxClipboard.cut;
+    mxClipboard.cut = function(graph2, cells) {
+      if (graph2 == null) {
+        return _origCut.call(this, graph2, cells);
+      }
+      var selectedCells = cells || graph2.getSelectionCells();
+      if (!Array.isArray(selectedCells) || selectedCells.length === 0) {
+        return _origCut.call(this, graph2, cells);
+      }
+      var result = separateProtected(selectedCells);
+      if (result.hadProtected) {
+        emitHostEvent("eid-clipboard-filtered", {
+          message: "\u56FE\u6846/\u914D\u7535\u67DC\u65E0\u6CD5\u526A\u5207\uFF0C\u5DF2\u81EA\u52A8\u6392\u9664"
+        });
+      }
+      if (result.filtered.length === 0) {
+        mxClipboard.setCells(null);
+        return null;
+      }
+      return _origCut.call(this, graph2, result.filtered);
+    };
   }
 
   // bootstrap/createApp.js
@@ -11586,6 +12119,7 @@
       setCanvasStatus
     });
     installCanvasFeatures(app.ctx);
+    installClipboardOverride(app.ctx);
     installViewportVirtualization(app.ctx);
     pruneToolbarButtons(ui);
     installCustomToolbarButtons(ui);

@@ -6,6 +6,7 @@ import { getApp } from "../core/appRuntime.js";
 import { resetPendingChangeRecords, showStatus } from "../core/runtimeHelpers.js";
 import { snapshotDomainApi } from "../domain/snapshot.js";
 import { emitHostEvent } from "../runtime/hostBridge.js";
+import { withAllFramesExpanded } from "../runtime/viewportVirtualization.js";
 import {
   loadBackendSession,
   normalizeBackendBaseUrl,
@@ -30,7 +31,11 @@ function buildBackendServiceDeps() {
     state: ctx.state,
     constants: ctx.constants,
     normalizeSnapshotGenericIds: snapshotDomainApi.normalizeSnapshotGenericIds,
-    exportDiagramSnapshot: snapshotDomainApi.exportDiagramSnapshot,
+    exportDiagramSnapshot: function () {
+      return withAllFramesExpanded(function () {
+        return snapshotDomainApi.exportDiagramSnapshot();
+      });
+    },
     resetPendingChangeRecords,
     computeSnapshotChanges: snapshotDomainApi.computeSnapshotChanges,
     collectChangeObjectIds: snapshotDomainApi.collectChangeObjectIds,

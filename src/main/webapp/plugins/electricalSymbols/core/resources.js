@@ -22,6 +22,7 @@ export const ELECTRICAL_RESOURCE_ENTRIES = [
   "electricalPreview=刷新预览",
   "electricalAddLibrary=加入库",
   "electricalClearScreen=清屏",
+  "electricalForceDelete=强制删除",
   "electricalUploadPrimarySvg=上传默认SVG",
   "electricalEnableVariants=启用变体SVG",
   "electricalAddVariantSvg=新增变体SVG",

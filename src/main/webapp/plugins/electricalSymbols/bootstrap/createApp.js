@@ -6,6 +6,7 @@ import { isCabinetGap, setCanvasStatus } from "../core/runtimeHelpers.js";
 import { cabinetDomainApi } from "../domain/cabinet.js";
 import { connectionConstraintsApi } from "../runtime/connectionConstraints.js";
 import { installCanvasFeatures, ACTION_ITEMS } from "../runtime/canvasFeatures.js";
+import { installClipboardOverride } from "../runtime/clipboardOverride.js";
 import { installHostBridge } from "../runtime/hostBridge.js";
 import { installViewportVirtualization } from "../runtime/viewportVirtualization.js";
 import { portSwapModeApi } from "../runtime/portSwapMode.js";
@@ -255,6 +256,9 @@ export function activateAppRuntime(app) {
   });
 
   installCanvasFeatures(app.ctx);
+
+  // 剪贴板覆写：拦截复制/粘贴，处理设备/电缆编号递增，阻止图框/配电柜复制
+  installClipboardOverride(app.ctx);
 
   // 视口虚拟化：对远离视口的图框做虚拟折叠以减少 SVG DOM 节点
   installViewportVirtualization(app.ctx);

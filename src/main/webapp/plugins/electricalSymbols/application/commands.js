@@ -16,6 +16,7 @@ import { frameDomainApi } from "../domain/frame.js";
 import { portSwapModeApi } from "../runtime/portSwapMode.js";
 import { selectionApi } from "./selection.js";
 import { symbolDomainApi } from "../domain/symbol.js";
+import { withAllFramesExpanded } from "../runtime/viewportVirtualization.js";
 
 function getDefaultParentChildren() {
   var app = getApp();
@@ -301,9 +302,55 @@ export function clearCurrentPage() {
   }
 }
 
+function forceDeleteSelection() {
+  var app = getApp();
+  var graph = app.ctx.graph;
+  var model = app.ctx.model;
+  var cells = graph.getSelectionCells();
+
+  if (cells == null || cells.length === 0) {
+    showStatus("没有选中任何元素", true);
+    return;
+  }
+
+  if (!mxUtils.confirm("强制删除将无视所有保护，确定继续？")) {
+    return;
+  }
+
+  withAllFramesExpanded(function () {
+    // 收集所有后代，确保图框子元素一并移除
+    var toRemove = [];
+    var i, j, child;
+
+    for (i = 0; i < cells.length; i++) {
+      toRemove.push(cells[i]);
+      var desc = model.getDescendants(cells[i]);
+
+      for (j = 0; j < desc.length; j++) {
+        child = desc[j];
+
+        if (child !== cells[i]) {
+          toRemove.push(child);
+        }
+      }
+    }
+
+    model.beginUpdate();
+
+    try {
+      graph.cellsRemoved(toRemove);
+    } finally {
+      model.endUpdate();
+    }
+  });
+
+  showStatus("强制删除完成 (" + cells.length + " 个元素)", false);
+}
+
 export var commandApi = {
     applyInstanceSpec,
     clearCurrentPage,
+    forceDeleteSelection,
     insertCabinet,
     insertFrame,
     insertIntoGraph,

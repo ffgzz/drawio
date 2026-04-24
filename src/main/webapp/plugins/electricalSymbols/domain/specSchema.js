@@ -88,7 +88,7 @@ export function isValidFieldPath(path) {
   }
 
   for (i = 0; i < parts.length; i++) {
-    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(parts[i])) {
+    if (!/^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(parts[i])) {
       return false;
     }
   }

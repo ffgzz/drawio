@@ -80,6 +80,9 @@ export var actionApi = {
   electricalSaveBackend: function () {
     return execute(backendDialogsApi.openBackendSaveDialog);
   },
+  electricalForceDelete: function () {
+    return execute(commandApi.forceDeleteSelection);
+  },
   electricalSymbols: function () {
     return execute(templateEditorApi.toggleWindow);
   },

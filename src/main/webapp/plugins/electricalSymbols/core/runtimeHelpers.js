@@ -90,7 +90,7 @@ export function findPortHostRoot(cell) {
   return null;
 }
 
-function isPluginInternalCell(cell) {
+export function isPluginInternalCell(cell) {
   var constants = getConstants();
   var kind = trim(getAttr(cell, "esKind"));
 
@@ -201,6 +201,7 @@ export var runtimeHelpersApi = {
   isCabinetSegment,
   isDrawingFrame,
   isElectricalRoot,
+  isPluginInternalCell,
   isPortHostRoot,
   nextItemId,
   normalizeMode,

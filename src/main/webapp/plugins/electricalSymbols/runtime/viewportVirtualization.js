@@ -385,6 +385,10 @@ export function getFrameLod(frame) {
  * 临时恢复全部图框为 Detail 可见状态执行 fn（同步），完成后还原。
  * 用于导出 / 快照等需要完整 DOM 的操作。
  */
+export function isOverviewMode() {
+  return overviewMode;
+}
+
 export function withAllFramesExpanded(fn) {
   var graph = getApp().ctx.graph;
   var savedCulled = new Set(culledFrameSet);
@@ -501,7 +505,20 @@ export function installViewportVirtualization(ctx) {
   };
 
   // ================================================================
-  // 6. isCellEditable — Overview 模式全部不可编辑
+  // 6. isCellDeletable — Overview 模式禁止一切删除
+  // ================================================================
+  var _origDeletable = graph.isCellDeletable;
+
+  graph.isCellDeletable = function (cell) {
+    if (overviewMode) {
+      return false;
+    }
+
+    return _origDeletable.call(this, cell);
+  };
+
+  // ================================================================
+  // 7. isCellEditable — Overview 模式全部不可编辑
   // ================================================================
   var _origEditable = graph.isCellEditable;
 
@@ -515,10 +532,52 @@ export function installViewportVirtualization(ctx) {
 
   // ================================================================
   // 7. getCellAt — Overview 模式点击图框内部 → 返回图框本身
+  //              非 Overview 模式下图框只有边框可选中（防止误触内部空白）
   //
   // getCellAt 递归到 DrawingFrame 时截断，调用方回退检查
   // 图框自身的 intersects → 点击图框区域 = 选中图框。
   // ================================================================
+
+  /** 图框边框命中容差（图形坐标，≈ strokeWidth + 额外可点击边距） */
+  var FRAME_BORDER_TOLERANCE = 8;
+
+  /**
+   * 判断 (x, y) 是否落在图框边框区域（strokeWidth + 容差）。
+   * 坐标为 graph 坐标（非屏幕坐标）。
+   */
+  function isOnFrameBorder(cellState, gx, gy) {
+    var tol = FRAME_BORDER_TOLERANCE;
+    var left = cellState.x;
+    var top = cellState.y;
+    var right = cellState.x + cellState.width;
+    var bottom = cellState.y + cellState.height;
+    var scale = graph.view.scale;
+    var tolScaled = tol * scale;
+
+    // 先判断是否在整个矩形范围内（含容差外扩）
+    if (
+      gx < left - tolScaled ||
+      gx > right + tolScaled ||
+      gy < top - tolScaled ||
+      gy > bottom + tolScaled
+    ) {
+      return false;
+    }
+
+    // 在内部矩形之外 = 落在边框带上
+    if (
+      gx < left + tolScaled ||
+      gx > right - tolScaled ||
+      gy < top + tolScaled ||
+      gy > bottom - tolScaled
+    ) {
+      return true;
+    }
+
+    // 落在内部区域
+    return false;
+  }
+
   var _origGetCellAt = graph.getCellAt;
 
   graph.getCellAt = function (x, y, parent, vertices, edges, ignoreFn) {
@@ -526,7 +585,23 @@ export function installViewportVirtualization(ctx) {
       return null;
     }
 
-    return _origGetCellAt.call(this, x, y, parent, vertices, edges, ignoreFn);
+    var result = _origGetCellAt.call(this, x, y, parent, vertices, edges, ignoreFn);
+
+    // 非 Overview 模式：如果命中的是图框自身且点击不在边框上，则不选中
+    if (!overviewMode && result != null && isDrawingFrame(result)) {
+      var state = graph.view.getState(result);
+      if (state != null) {
+        var onBorder = isOnFrameBorder(state, x, y);
+        console.log("[FrameHit] x=" + x + " y=" + y +
+          " state=(" + state.x + "," + state.y + "," + state.width + "," + state.height + ")" +
+          " scale=" + graph.view.scale + " onBorder=" + onBorder);
+        if (!onBorder) {
+          return null;
+        }
+      }
+    }
+
+    return result;
   };
 
   // ================================================================

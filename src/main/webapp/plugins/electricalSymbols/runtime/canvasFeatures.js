@@ -4,7 +4,7 @@
  */
 // 顶部动作栏按钮顺序在这里集中维护。
 import { actionApi } from "../application/actions.js";
-import { isDrawingFrame } from "../core/runtimeHelpers.js";
+import { isDrawingFrame, isPluginInternalCell } from "../core/runtimeHelpers.js";
 import { composeModeApi } from "./composeMode.js";
 import { modelSyncApi } from "./modelSync.js";
 import { portSwapModeApi } from "./portSwapMode.js";
@@ -17,6 +17,10 @@ export var ACTION_ITEMS = [
   {
     resourceKey: "electricalReassignPort",
     actionKey: "electricalReassignPort",
+  },
+  {
+    resourceKey: "electricalForceDelete",
+    actionKey: "electricalForceDelete",
   },
 ];
 
@@ -33,6 +37,7 @@ var EXTRA_MENU_ACTIONS = [
   "electricalClearScreen",
   "electricalReassignPort",
   "electricalRefresh",
+  "electricalForceDelete",
   "electricalExport",
   "electricalSaveBackend",
   "electricalNewBackend",
@@ -56,11 +61,31 @@ export function installCanvasFeatures(ctx) {
   var oldExtrasMenu = menu.funct;
 
   graph.isCellDeletable = function (cell) {
-    if (isDrawingFrame(cell)) {
+    if (isDrawingFrame(cell) || isPluginInternalCell(cell)) {
       return !!state.allowProtectedDelete;
     }
 
     return graphIsCellDeletable.apply(this, arguments);
+  };
+
+  // draw.io 的 cut action 有两条路径：
+  //   路径 1: ui.copyXml() 成功 → graph.removeCells(cells, false)  — 传了显式 cells
+  //   路径 2: copyXml 返回 null → mxClipboard.cut → mxClipboard.removeCells
+  // 原生 graph.removeCells 只在 cells==null 时调 getDeletableCells 过滤，
+  // 传了显式 cells 就跳过过滤。这里统一拦截 graph.removeCells，
+  // 当有显式 cells 且非 allowProtectedDelete 时，先过滤不可删除的元素。
+  var _origRemoveCells = graph.removeCells;
+
+  graph.removeCells = function (cells, includeEdges) {
+    if (cells != null && !state.allowProtectedDelete) {
+      cells = this.getDeletableCells(cells);
+
+      if (cells.length === 0) {
+        return [];
+      }
+    }
+
+    return _origRemoveCells.call(this, cells, includeEdges);
   };
 
   graph.isCellMovable = function (cell) {
@@ -129,6 +154,7 @@ export function installCanvasFeatures(ctx) {
     actions.electricalRollbackBackend,
   );
   ui.actions.addAction("electricalClearScreen", actions.electricalClearScreen);
+  ui.actions.addAction("electricalForceDelete", actions.electricalForceDelete);
 
   menu.funct = function (nextMenu, parent) {
     oldExtrasMenu.apply(this, arguments);

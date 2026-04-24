@@ -557,6 +557,63 @@ export function installHostBridge(ctx) {
           return;
         }
 
+        // ── Insert raw mxCell XML (basic shapes) ─────────────────────
+        if (payload.action === "insertRawXml" && typeof payload.xml === "string") {
+          evt.stopImmediatePropagation();
+          var insertPoint = resolveGraphInsertPoint(ctx, payload);
+          var xmlDoc = mxUtils.parseXml(payload.xml);
+          var cells = ctx.graph.importGraphModel(xmlDoc.documentElement, 0, 0);
+          var insertedIds = [];
+          if (Array.isArray(cells)) {
+            // Move imported cells from (0,0) to the resolved graph point
+            var model = ctx.graph.getModel();
+            model.beginUpdate();
+            try {
+              for (var ci = 0; ci < cells.length; ci++) {
+                var geo = model.getGeometry(cells[ci]);
+                if (geo != null) {
+                  geo = geo.clone();
+                  if (cells[ci].isEdge()) {
+                    // Edges: offset source/target points and intermediate waypoints
+                    if (geo.sourcePoint != null) {
+                      geo.sourcePoint.x += insertPoint.x;
+                      geo.sourcePoint.y += insertPoint.y;
+                    }
+                    if (geo.targetPoint != null) {
+                      geo.targetPoint.x += insertPoint.x;
+                      geo.targetPoint.y += insertPoint.y;
+                    }
+                    if (geo.points != null && Array.isArray(geo.points)) {
+                      for (var pi = 0; pi < geo.points.length; pi++) {
+                        geo.points[pi].x += insertPoint.x;
+                        geo.points[pi].y += insertPoint.y;
+                      }
+                    }
+                  } else {
+                    geo.x = insertPoint.x;
+                    geo.y = insertPoint.y;
+                  }
+                  model.setGeometry(cells[ci], geo);
+                }
+                if (cells[ci] != null && cells[ci].id != null) {
+                  insertedIds.push(String(cells[ci].id));
+                }
+              }
+            } finally {
+              model.endUpdate();
+            }
+            if (cells.length > 0) {
+              ctx.graph.setSelectionCells(cells);
+              ctx.graph.scrollCellToVisible(cells[0]);
+            }
+          }
+          postResult(evt.source, payload, {
+            cellIds: insertedIds,
+            cellId: insertedIds.length > 0 ? insertedIds[0] : "",
+          });
+          return;
+        }
+
         if (payload.action === "exportDiagram") {
           evt.stopImmediatePropagation();
 
@@ -864,8 +921,13 @@ export function installHostBridge(ctx) {
 
         if (payload.action === "getDiagramSnapshot") {
           evt.stopImmediatePropagation();
+          // 导出快照前临时展开所有虚拟折叠，确保 getEdgePortId 等依赖
+          // view state 的操作能正确解析端口信息
+          var exportedSnapshot = withAllFramesExpanded(function () {
+            return snapshotDomainApi.exportDiagramSnapshot();
+          });
           postResult(evt.source, payload, {
-            snapshot: snapshotDomainApi.exportDiagramSnapshot(),
+            snapshot: exportedSnapshot,
           });
           return;
         }
@@ -877,8 +939,11 @@ export function installHostBridge(ctx) {
           withAllFramesExpanded(function () {
             snapshotDomainApi.restoreDiagramSnapshot(payload.snapshot);
           });
+          var restoredSnapshot = withAllFramesExpanded(function () {
+            return snapshotDomainApi.exportDiagramSnapshot();
+          });
           postResult(evt.source, payload, {
-            snapshot: snapshotDomainApi.exportDiagramSnapshot(),
+            snapshot: restoredSnapshot,
           });
           return;
         }
