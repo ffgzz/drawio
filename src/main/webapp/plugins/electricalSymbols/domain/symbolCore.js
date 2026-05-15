@@ -25,7 +25,7 @@ function getSymbolCoreDeps() {
 function makeRootStyle() {
   return (
     "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;" +
-    "connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;"
+    "connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=1;rotatable=0;resizable=1;"
   );
 }
 

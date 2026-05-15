@@ -4,7 +4,11 @@
  */
 // 顶部动作栏按钮顺序在这里集中维护。
 import { actionApi } from "../application/actions.js";
-import { isDrawingFrame, isPluginInternalCell } from "../core/runtimeHelpers.js";
+import {
+  isDrawingFrame,
+  isElectricalRoot,
+  isPluginInternalCell,
+} from "../core/runtimeHelpers.js";
 import { composeModeApi } from "./composeMode.js";
 import { modelSyncApi } from "./modelSync.js";
 import { portSwapModeApi } from "./portSwapMode.js";
@@ -54,6 +58,7 @@ export function installCanvasFeatures(ctx) {
   var actions = actionApi;
   var graphIsCellDeletable = graph.isCellDeletable;
   var graphIsCellMovable = graph.isCellMovable;
+  var graphIsCellResizable = graph.isCellResizable;
   var graphIsCellSelectable = graph.isCellSelectable;
   var graphSelectCellForEvent = graph.selectCellForEvent;
   var graphGetMovableCells = graph.getMovableCells;
@@ -97,6 +102,18 @@ export function installCanvasFeatures(ctx) {
     }
 
     return graphIsCellMovable.apply(this, arguments);
+  };
+
+  graph.isCellResizable = function (cell) {
+    if (isElectricalRoot(cell)) {
+      return true;
+    }
+
+    if (isPluginInternalCell(cell)) {
+      return false;
+    }
+
+    return graphIsCellResizable.apply(this, arguments);
   };
 
   graph.isCellSelectable = function (cell) {

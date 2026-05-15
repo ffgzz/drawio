@@ -3403,7 +3403,7 @@
     return buildSymbolCoreDeps();
   }
   function makeRootStyle() {
-    return "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;";
+    return "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=1;rotatable=0;resizable=1;";
   }
   function makeBodyStyle(spec) {
     var deps = getSymbolCoreDeps();
@@ -11454,6 +11454,7 @@
     var actions = actionApi;
     var graphIsCellDeletable = graph.isCellDeletable;
     var graphIsCellMovable = graph.isCellMovable;
+    var graphIsCellResizable = graph.isCellResizable;
     var graphIsCellSelectable = graph.isCellSelectable;
     var graphSelectCellForEvent = graph.selectCellForEvent;
     var graphGetMovableCells = graph.getMovableCells;
@@ -11480,6 +11481,15 @@
         return false;
       }
       return graphIsCellMovable.apply(this, arguments);
+    };
+    graph.isCellResizable = function(cell) {
+      if (isElectricalRoot(cell)) {
+        return true;
+      }
+      if (isPluginInternalCell(cell)) {
+        return false;
+      }
+      return graphIsCellResizable.apply(this, arguments);
     };
     graph.isCellSelectable = function(cell) {
       if (composeModeApi.isBlockedComposeTarget(cell)) {
