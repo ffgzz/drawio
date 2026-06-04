@@ -66,22 +66,26 @@ export function isCabinetGap(cell) {
   return getAttr(cell, "pluginType") == getConstants().CABINET_GAP_TYPE;
 }
 
-// 端口宿主既可能是普通电气图元，也可能是配电柜片段。
-export function isPortHostRoot(cell) {
-  return isElectricalRoot(cell) || isCabinetSegment(cell);
+export function isGenericPortHost(cell) {
+  return getAttr(cell, "eidGenericPortHost") == "1";
 }
 
-// 遇到通用图元时停止向上查找，避免误把普通图形当成插件端口宿主。
+// 端口宿主既可能是普通电气图元，也可能是配电柜片段，也可能是自动布局升级过的基础图形。
+export function isPortHostRoot(cell) {
+  return isElectricalRoot(cell) || isCabinetSegment(cell) || isGenericPortHost(cell);
+}
+
+// 遇到未升级的通用图元时停止向上查找，避免误把普通图形当成插件端口宿主。
 export function findPortHostRoot(cell) {
   var model = getGraphApi().model;
 
   while (cell != null) {
-    if (shouldExportGenericObject(cell)) {
-      return null;
-    }
-
     if (isPortHostRoot(cell)) {
       return cell;
+    }
+
+    if (shouldExportGenericObject(cell)) {
+      return null;
     }
 
     cell = model.getParent(cell);
@@ -201,6 +205,7 @@ export var runtimeHelpersApi = {
   isCabinetSegment,
   isDrawingFrame,
   isElectricalRoot,
+  isGenericPortHost,
   isPluginInternalCell,
   isPortHostRoot,
   nextItemId,

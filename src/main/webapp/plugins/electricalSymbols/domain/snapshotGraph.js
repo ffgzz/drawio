@@ -207,6 +207,10 @@ export function createSnapshotDomain() {
     );
   }
 
+  function isImplicitDrawioGenericPortId(portId) {
+    return /^port:\d+$/.test(deps.trim(portId).toLowerCase());
+  }
+
   function getEdgePortId(edge, root, source) {
     var style = graph.getCellStyle(edge) || {};
     var key = source ? "sourcePortId" : "targetPortId";
@@ -257,18 +261,27 @@ export function createSnapshotDomain() {
           deps.trim(binding.port.name).length > 0 &&
           deps.trim(binding.port.name) == deps.trim(constraint.name)
         ) {
+          if (isImplicitDrawioGenericPortId(binding.port.id)) {
+            return "";
+          }
+
           return deps.trim(binding.port.id);
         }
 
         if (
           binding.constraint != null &&
           binding.constraint.point != null &&
-          Math.abs(binding.constraint.point.x - constraint.point.x) < 0.0001 &&
-          Math.abs(binding.constraint.point.y - constraint.point.y) < 0.0001 &&
+          point != null &&
+          Math.abs(binding.constraint.point.x - point.x) < 0.0001 &&
+          Math.abs(binding.constraint.point.y - point.y) < 0.0001 &&
           toNumber(binding.constraint.dx, 0) == toNumber(constraint.dx, 0) &&
           toNumber(binding.constraint.dy, 0) == toNumber(constraint.dy, 0) &&
           binding.constraint.perimeter === constraint.perimeter
         ) {
+          if (isImplicitDrawioGenericPortId(binding.port.id)) {
+            return "";
+          }
+
           return deps.trim(binding.port.id);
         }
 
@@ -277,6 +290,10 @@ export function createSnapshotDomain() {
           Math.abs(binding.port.x - absolutePoint.x) < 1 &&
           Math.abs(binding.port.y - absolutePoint.y) < 1
         ) {
+          if (isImplicitDrawioGenericPortId(binding.port.id)) {
+            return "";
+          }
+
           return deps.trim(binding.port.id);
         }
       }
@@ -288,6 +305,10 @@ export function createSnapshotDomain() {
           Math.abs(ports[i].x - point.x) < 0.0001 &&
           Math.abs(ports[i].y - point.y) < 0.0001
         ) {
+          if (isGenericRoot && isImplicitDrawioGenericPortId(ports[i].id)) {
+            return "";
+          }
+
           return deps.trim(ports[i].id);
         }
       }
@@ -443,9 +464,13 @@ export function createSnapshotDomain() {
   }
 
   function extractGenericPorts(cell) {
-    return collectGenericPortBindings(cell).map(function (entry) {
-      return entry.port;
-    });
+    return collectGenericPortBindings(cell)
+      .filter(function (entry) {
+        return !isImplicitDrawioGenericPortId(entry.port.id);
+      })
+      .map(function (entry) {
+        return entry.port;
+      });
   }
 
   function getGenericPortBindingById(cell, portId) {
@@ -655,7 +680,7 @@ export function createSnapshotDomain() {
       props: {
         style: model.getStyle(cell) || "",
         value: serializeCellValue(cell.value),
-        vertex: cell.vertex === true,
+        vertex: model.isVertex(cell),
         connectable:
           typeof cell.isConnectable === "function"
             ? !!cell.isConnectable()

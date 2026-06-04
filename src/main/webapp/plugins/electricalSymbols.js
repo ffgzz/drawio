@@ -405,17 +405,20 @@
   function isCabinetGap(cell) {
     return getAttr(cell, "pluginType") == getConstants().CABINET_GAP_TYPE;
   }
+  function isGenericPortHost(cell) {
+    return getAttr(cell, "eidGenericPortHost") == "1";
+  }
   function isPortHostRoot(cell) {
-    return isElectricalRoot(cell) || isCabinetSegment(cell);
+    return isElectricalRoot(cell) || isCabinetSegment(cell) || isGenericPortHost(cell);
   }
   function findPortHostRoot(cell) {
     var model = getGraphApi().model;
     while (cell != null) {
-      if (shouldExportGenericObject(cell)) {
-        return null;
-      }
       if (isPortHostRoot(cell)) {
         return cell;
+      }
+      if (shouldExportGenericObject(cell)) {
+        return null;
       }
       cell = model.getParent(cell);
     }
@@ -4772,6 +4775,9 @@
         toNumber(mxUtils.getValue(style, prefix + "Dy", 0), 0)
       );
     }
+    function isImplicitDrawioGenericPortId(portId) {
+      return /^port:\d+$/.test(deps.trim(portId).toLowerCase());
+    }
     function getEdgePortId2(edge, root, source) {
       var style = graph.getCellStyle(edge) || {};
       var key = source ? "sourcePortId" : "targetPortId";
@@ -4804,12 +4810,21 @@
         for (i = 0; i < genericBindings.length; i++) {
           var binding = genericBindings[i];
           if (deps.trim(binding.port.name).length > 0 && deps.trim(binding.port.name) == deps.trim(constraint.name)) {
+            if (isImplicitDrawioGenericPortId(binding.port.id)) {
+              return "";
+            }
             return deps.trim(binding.port.id);
           }
-          if (binding.constraint != null && binding.constraint.point != null && Math.abs(binding.constraint.point.x - constraint.point.x) < 1e-4 && Math.abs(binding.constraint.point.y - constraint.point.y) < 1e-4 && toNumber(binding.constraint.dx, 0) == toNumber(constraint.dx, 0) && toNumber(binding.constraint.dy, 0) == toNumber(constraint.dy, 0) && binding.constraint.perimeter === constraint.perimeter) {
+          if (binding.constraint != null && binding.constraint.point != null && point != null && Math.abs(binding.constraint.point.x - point.x) < 1e-4 && Math.abs(binding.constraint.point.y - point.y) < 1e-4 && toNumber(binding.constraint.dx, 0) == toNumber(constraint.dx, 0) && toNumber(binding.constraint.dy, 0) == toNumber(constraint.dy, 0) && binding.constraint.perimeter === constraint.perimeter) {
+            if (isImplicitDrawioGenericPortId(binding.port.id)) {
+              return "";
+            }
             return deps.trim(binding.port.id);
           }
           if (absolutePoint != null && Math.abs(binding.port.x - absolutePoint.x) < 1 && Math.abs(binding.port.y - absolutePoint.y) < 1) {
+            if (isImplicitDrawioGenericPortId(binding.port.id)) {
+              return "";
+            }
             return deps.trim(binding.port.id);
           }
         }
@@ -4817,6 +4832,9 @@
       if (point != null) {
         for (i = 0; i < ports.length; i++) {
           if (Math.abs(ports[i].x - point.x) < 1e-4 && Math.abs(ports[i].y - point.y) < 1e-4) {
+            if (isGenericRoot && isImplicitDrawioGenericPortId(ports[i].id)) {
+              return "";
+            }
             return deps.trim(ports[i].id);
           }
         }
@@ -4923,7 +4941,9 @@
       return result;
     }
     function extractGenericPorts(cell) {
-      return collectGenericPortBindings2(cell).map(function(entry) {
+      return collectGenericPortBindings2(cell).filter(function(entry) {
+        return !isImplicitDrawioGenericPortId(entry.port.id);
+      }).map(function(entry) {
         return entry.port;
       });
     }
@@ -5089,7 +5109,7 @@
         props: {
           style: model.getStyle(cell) || "",
           value: serializeCellValue(cell.value),
-          vertex: cell.vertex === true,
+          vertex: model.isVertex(cell),
           connectable: typeof cell.isConnectable === "function" ? !!cell.isConnectable() : cell.connectable !== false,
           visible: cell.visible !== false,
           collapsed: !!cell.collapsed,
@@ -6563,6 +6583,223 @@
     var model = ctx.model != null ? ctx.model : graph != null && typeof graph.getModel === "function" ? graph.getModel() : null;
     var runtimeState = ctx.state != null ? ctx.state : {};
     var constants = ctx.constants;
+    var MANAGED_LAYOUT_PORT_PREFIX = "eid-layout-port:";
+    var BASIC_DEFAULT_PORT_PREFIX = "eid-basic-port:";
+    function isManagedLayoutPortId(id) {
+      return String(id || "").indexOf(MANAGED_LAYOUT_PORT_PREFIX) === 0;
+    }
+    function isBasicDefaultPortId(id) {
+      return String(id || "").indexOf(BASIC_DEFAULT_PORT_PREFIX) === 0;
+    }
+    function isPluginOwnedCell(cell) {
+      return getAttr(cell, "esKind") != null || getAttr(cell, "pluginType") != null || getAttr(cell, "eidCadSymbol") != null;
+    }
+    function createGenericHostValue(cell) {
+      var currentValue = cell != null ? cell.value : null;
+      var value;
+      var label;
+      if (currentValue != null && currentValue.nodeType == mxConstants.NODETYPE_ELEMENT) {
+        value = currentValue.cloneNode(true);
+      } else {
+        value = mxUtils.createXmlDocument().createElement("object");
+        label = currentValue != null ? String(currentValue) : "";
+        if (label.length > 0) {
+          value.setAttribute("label", label);
+        }
+      }
+      value.setAttribute("eidGenericPortHost", "1");
+      return value;
+    }
+    function parsePortArrayFromValue(value) {
+      var raw;
+      var parsed;
+      if (value == null || value.nodeType != mxConstants.NODETYPE_ELEMENT) {
+        return [];
+      }
+      raw = value.getAttribute("portsJson");
+      if (raw == null || String(raw).length == 0) {
+        return [];
+      }
+      try {
+        parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (e) {
+        return [];
+      }
+    }
+    function setGenericHostPorts(cell, ports) {
+      var value;
+      var serialized;
+      if (cell == null || model == null || !model.isVertex(cell)) {
+        return;
+      }
+      value = createGenericHostValue(cell);
+      serialized = JSON.stringify(Array.isArray(ports) ? ports : []);
+      value.setAttribute("portsJson", serialized);
+      value.setAttribute("portLayout", serialized);
+      model.setValue(cell, value);
+    }
+    function getBasicDefaultPorts() {
+      return [
+        {
+          id: BASIC_DEFAULT_PORT_PREFIX + "left",
+          x: 0,
+          y: 0.5,
+          direction: "left",
+          ioMode: "both",
+          marker: "hidden"
+        },
+        {
+          id: BASIC_DEFAULT_PORT_PREFIX + "right",
+          x: 1,
+          y: 0.5,
+          direction: "right",
+          ioMode: "both",
+          marker: "hidden"
+        },
+        {
+          id: BASIC_DEFAULT_PORT_PREFIX + "top",
+          x: 0.5,
+          y: 0,
+          direction: "up",
+          ioMode: "both",
+          marker: "hidden"
+        },
+        {
+          id: BASIC_DEFAULT_PORT_PREFIX + "bottom",
+          x: 0.5,
+          y: 1,
+          direction: "down",
+          ioMode: "both",
+          marker: "hidden"
+        }
+      ];
+    }
+    function ensureDefaultGenericPortHost(cell) {
+      var ports;
+      var hasDefaultPort = false;
+      var i;
+      if (cell == null || model == null || !model.isVertex(cell) || isPluginOwnedCell(cell)) {
+        return;
+      }
+      ports = parsePortArrayFromValue(cell.value);
+      for (i = 0; i < ports.length; i++) {
+        if (isBasicDefaultPortId(ports[i] != null ? ports[i].id : "")) {
+          hasDefaultPort = true;
+          break;
+        }
+      }
+      if (!hasDefaultPort) {
+        ports = ports.concat(getBasicDefaultPorts());
+      }
+      setGenericHostPorts(cell, ports);
+    }
+    function cleanupManagedLayoutPortsForCell(cell) {
+      var ports;
+      var nextPorts = [];
+      var i;
+      if (cell == null || model == null || !model.isVertex(cell) || getAttr(cell, "eidGenericPortHost") != "1") {
+        return;
+      }
+      ports = parsePortArrayFromValue(cell.value);
+      for (i = 0; i < ports.length; i++) {
+        if (!isManagedLayoutPortId(ports[i] != null ? ports[i].id : "")) {
+          nextPorts.push(ports[i]);
+        }
+      }
+      setGenericHostPorts(cell, nextPorts);
+    }
+    function normalizeManagedLayoutPort(raw) {
+      var objectId;
+      var port;
+      var id;
+      var x;
+      var y;
+      var direction;
+      var ioMode;
+      if (raw == null || typeof raw !== "object") {
+        return null;
+      }
+      objectId = raw.objectId != null ? String(raw.objectId) : "";
+      port = raw.port != null && typeof raw.port === "object" ? raw.port : null;
+      if (objectId.length == 0 || port == null) {
+        return null;
+      }
+      id = port.id != null ? String(port.id) : "";
+      x = Number(port.x);
+      y = Number(port.y);
+      if (!isManagedLayoutPortId(id) || !isFinite(x) || !isFinite(y)) {
+        return null;
+      }
+      direction = port.direction != null ? String(port.direction) : "any";
+      ioMode = port.ioMode != null ? String(port.ioMode) : "both";
+      return {
+        objectId,
+        port: {
+          id,
+          x: clamp2(x, 0, 1),
+          y: clamp2(y, 0, 1),
+          direction,
+          ioMode,
+          marker: "hidden",
+          name: port.name != null ? String(port.name) : ""
+        }
+      };
+    }
+    function addManagedPortToGroup(grouped, raw) {
+      var managed = normalizeManagedLayoutPort(raw);
+      var portsById;
+      if (managed == null) {
+        return;
+      }
+      portsById = grouped[managed.objectId];
+      if (portsById == null) {
+        portsById = {};
+        grouped[managed.objectId] = portsById;
+      }
+      portsById[managed.port.id] = managed.port;
+    }
+    function upsertManagedLayoutPorts(edgeRoutes) {
+      var grouped = {};
+      var objectId;
+      var cell;
+      var ports;
+      var nextPorts;
+      var portsById;
+      var portId;
+      var i;
+      if (!Array.isArray(edgeRoutes)) {
+        return;
+      }
+      for (i = 0; i < edgeRoutes.length; i++) {
+        var route = edgeRoutes[i] || {};
+        addManagedPortToGroup(grouped, route.sourceManagedPort);
+        addManagedPortToGroup(grouped, route.targetManagedPort);
+      }
+      for (objectId in grouped) {
+        if (!grouped.hasOwnProperty(objectId)) {
+          continue;
+        }
+        cell = model != null ? model.getCell(objectId) : null;
+        if (cell == null || !model.isVertex(cell) || isPluginOwnedCell(cell)) {
+          continue;
+        }
+        ports = parsePortArrayFromValue(cell.value);
+        nextPorts = [];
+        for (i = 0; i < ports.length; i++) {
+          if (!isManagedLayoutPortId(ports[i] != null ? ports[i].id : "")) {
+            nextPorts.push(ports[i]);
+          }
+        }
+        portsById = grouped[objectId];
+        for (portId in portsById) {
+          if (portsById.hasOwnProperty(portId)) {
+            nextPorts.push(portsById[portId]);
+          }
+        }
+        setGenericHostPorts(cell, nextPorts);
+      }
+    }
     function createFrameTemplateLabelCell(frame, label) {
       var frameConfig = frameDomainApi.getFrameConfig(frame);
       var width = Math.max(40, Math.round(Number(label.width) || 120));
@@ -6604,6 +6841,8 @@
       style = mxUtils.setStyle(style, "entryY", null);
       style = mxUtils.setStyle(style, "exitX", null);
       style = mxUtils.setStyle(style, "exitY", null);
+      style = mxUtils.setStyle(style, "entryPerimeter", null);
+      style = mxUtils.setStyle(style, "exitPerimeter", null);
       style = mxUtils.setStyle(style, "jettySize", "auto");
       style = mxUtils.setStyle(style, "sourceJettySize", "auto");
       style = mxUtils.setStyle(style, "targetJettySize", "auto");
@@ -6667,6 +6906,52 @@
         port.id != null ? String(port.id) : ""
       );
       graph.setConnectionConstraint(edge, root, source, constraint);
+    }
+    function readRouteConstraint(raw) {
+      var x;
+      var y;
+      if (raw == null || typeof raw !== "object") {
+        return null;
+      }
+      x = Number(raw.x);
+      y = Number(raw.y);
+      if (!isFinite(x) || !isFinite(y)) {
+        return null;
+      }
+      return {
+        x: clamp2(x, 0, 1),
+        y: clamp2(y, 0, 1)
+      };
+    }
+    function applyEdgeConstraintByPoint(edge, source, point) {
+      var terminal;
+      var root;
+      var constraint;
+      var style;
+      var xKey = source ? "exitX" : "entryX";
+      var yKey = source ? "exitY" : "entryY";
+      var perimeterKey = source ? "exitPerimeter" : "entryPerimeter";
+      if (edge == null || point == null || graph == null || model == null) {
+        return;
+      }
+      terminal = model.getTerminal(edge, source);
+      root = findPortHostRoot(terminal) || terminal;
+      if (root == null || !model.isVertex(root)) {
+        return;
+      }
+      if (terminal !== root) {
+        model.setTerminal(edge, root, source);
+      }
+      constraint = new mxConnectionConstraint(
+        new mxPoint(point.x, point.y),
+        false
+      );
+      graph.setConnectionConstraint(edge, root, source, constraint);
+      style = model.getStyle(edge) || "";
+      style = mxUtils.setStyle(style, xKey, String(point.x));
+      style = mxUtils.setStyle(style, yKey, String(point.y));
+      style = mxUtils.setStyle(style, perimeterKey, "1");
+      model.setStyle(edge, style);
     }
     function clearConnectedEdgesForCells(cells) {
       var edgeMap = {};
@@ -6882,6 +7167,9 @@
                       geo.y = insertPoint.y;
                     }
                     model2.setGeometry(cells[ci], geo);
+                  }
+                  if (cells[ci] != null && !cells[ci].isEdge()) {
+                    ensureDefaultGenericPortHost(cells[ci]);
                   }
                   if (cells[ci] != null && cells[ci].id != null) {
                     insertedIds.push(String(cells[ci].id));
@@ -7214,6 +7502,10 @@
                 }
               }
               if (Array.isArray(payload.edgeRoutes)) {
+                for (i = 0; i < movedCells.length; i++) {
+                  cleanupManagedLayoutPortsForCell(movedCells[i]);
+                }
+                upsertManagedLayoutPorts(payload.edgeRoutes);
                 for (i = 0; i < payload.edgeRoutes.length; i++) {
                   var route = payload.edgeRoutes[i] || {};
                   var edgeId = route.edgeId != null ? String(route.edgeId) : "";
@@ -7227,6 +7519,9 @@
                   var points;
                   var hasSourcePortBinding;
                   var hasTargetPortBinding;
+                  var sourceConstraint;
+                  var targetConstraint;
+                  var useNativeRouting;
                   var useManualRouteStyle;
                   var keepLayoutManagedFlag;
                   var j;
@@ -7242,38 +7537,47 @@
                   parentOriginX = parentGeometry != null ? parentGeometry.x : 0;
                   parentOriginY = parentGeometry != null ? parentGeometry.y : 0;
                   points = route.points;
-                  for (j = 0; j < points.length; j++) {
-                    var point = points[j] || {};
-                    var px = Number(point.x);
-                    var py = Number(point.y);
-                    if (!isFinite(px) || !isFinite(py)) {
-                      continue;
+                  useNativeRouting = route.useNativeRouting === true;
+                  if (!useNativeRouting) {
+                    for (j = 0; j < points.length; j++) {
+                      var point = points[j] || {};
+                      var px = Number(point.x);
+                      var py = Number(point.y);
+                      if (!isFinite(px) || !isFinite(py)) {
+                        continue;
+                      }
+                      nextPoints.push(
+                        new mxPoint(
+                          px + frameOrigin.x - parentOriginX,
+                          py + frameOrigin.y - parentOriginY
+                        )
+                      );
                     }
-                    nextPoints.push(
-                      new mxPoint(
-                        px + frameOrigin.x - parentOriginX,
-                        py + frameOrigin.y - parentOriginY
-                      )
-                    );
                   }
                   var nextStyle;
                   hasSourcePortBinding = route.sourcePortId != null && String(route.sourcePortId).length > 0;
                   hasTargetPortBinding = route.targetPortId != null && String(route.targetPortId).length > 0;
+                  sourceConstraint = useNativeRouting ? null : readRouteConstraint(route.sourceConstraint);
+                  targetConstraint = useNativeRouting ? null : readRouteConstraint(route.targetConstraint);
                   resetAutoLayoutEdgeState(edge);
                   edgeGeometry = edgeGeometry.clone();
-                  edgeGeometry.points = nextPoints.length > 0 ? nextPoints : null;
+                  edgeGeometry.points = !useNativeRouting && nextPoints.length > 0 ? nextPoints : null;
                   model2.setGeometry(edge, edgeGeometry);
                   nextStyle = model2.getStyle(edge) || "";
                   if (hasSourcePortBinding) {
                     applyEdgeConstraintByPortId(edge, true, route.sourcePortId);
+                  } else if (sourceConstraint != null) {
+                    applyEdgeConstraintByPoint(edge, true, sourceConstraint);
                   }
                   nextStyle = model2.getStyle(edge) || nextStyle;
                   if (hasTargetPortBinding) {
                     applyEdgeConstraintByPortId(edge, false, route.targetPortId);
+                  } else if (targetConstraint != null) {
+                    applyEdgeConstraintByPoint(edge, false, targetConstraint);
                   }
                   nextStyle = model2.getStyle(edge) || nextStyle;
-                  useManualRouteStyle = isSnakeLayout && route.manual || nextPoints.length > 0;
-                  keepLayoutManagedFlag = hasSourcePortBinding || hasTargetPortBinding || nextPoints.length > 0;
+                  useManualRouteStyle = !useNativeRouting && (isSnakeLayout && route.manual || nextPoints.length > 0);
+                  keepLayoutManagedFlag = hasSourcePortBinding || hasTargetPortBinding || sourceConstraint != null || targetConstraint != null || nextPoints.length > 0 || useNativeRouting;
                   if (useManualRouteStyle) {
                     nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "0");
                     nextStyle = mxUtils.setStyle(
