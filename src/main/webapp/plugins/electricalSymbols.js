@@ -853,6 +853,13 @@
       used += height;
     }
     pages.push({ blocks: current, height: used });
+    var offsetCursor = 0;
+    var p;
+    for (p = 0; p < pages.length; p++) {
+      pages[p].startOffset = offsetCursor;
+      offsetCursor += pages[p].height;
+      pages[p].endOffset = offsetCursor;
+    }
     var descriptors = [];
     var pageIndex;
     for (pageIndex = 0; pageIndex < pages.length; pageIndex++) {
@@ -903,6 +910,8 @@
         y: topMargin,
         width: modelData.cabinetWidth,
         height: segmentHeight,
+        segmentStartOffset: page.startOffset,
+        segmentEndOffset: page.endOffset,
         blocks,
         // 母线：靠左纵向贯穿，上下各留 busbarInsetY
         busbar: {

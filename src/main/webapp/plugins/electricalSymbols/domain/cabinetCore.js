@@ -556,6 +556,16 @@ export function buildCabinetPageDescriptors(cabinetModel, frameConfig) {
 
   pages.push({ blocks: current, height: used });
 
+  // 每段在"整柜"里的纵向区间，写进柜段属性供外部定位用
+  var offsetCursor = 0;
+  var p;
+
+  for (p = 0; p < pages.length; p++) {
+    pages[p].startOffset = offsetCursor;
+    offsetCursor += pages[p].height;
+    pages[p].endOffset = offsetCursor;
+  }
+
   var descriptors = [];
   var pageIndex;
 
@@ -620,6 +630,8 @@ export function buildCabinetPageDescriptors(cabinetModel, frameConfig) {
       y: topMargin,
       width: modelData.cabinetWidth,
       height: segmentHeight,
+      segmentStartOffset: page.startOffset,
+      segmentEndOffset: page.endOffset,
       blocks,
       // 母线：靠左纵向贯穿，上下各留 busbarInsetY
       busbar: {
