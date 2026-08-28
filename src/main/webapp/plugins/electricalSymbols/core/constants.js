@@ -33,6 +33,11 @@ export const ELECTRICAL_CONSTANTS = Object.freeze({
   CABINET_DESIGNATION_LABEL_KIND: "cabinetDesignationLabel",
   CABINET_GAP_KIND: "cabinetGap",
   PORT_EDGE_SNAP_THRESHOLD_PX: 14,
+  // Screen-space distance used when a user releases an electrical symbol near
+  // a compatible port. 18px was too precise at normal zoom and made the
+  // feature feel unavailable, especially on Retina displays.
+  CANVAS_PORT_SNAP_THRESHOLD_PX: 36,
+  CANVAS_PORT_SNAP_PREVIEW_RADIUS_PX: 160,
   TEMPLATE_DRAFT_STORAGE_KEY: "electrical-symbol-template-draft",
   FRAME_DEFAULT_WIDTH: 820,
   FRAME_DEFAULT_HEIGHT: 1180,

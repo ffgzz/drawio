@@ -17,7 +17,8 @@ export function makeFrameStyle() {
 export function makeFrameLabelStyle() {
   return (
     "text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;" +
-    "align=center;verticalAlign=middle;fontStyle=1;fontSize=13;" +
+    "align=center;verticalAlign=middle;fontStyle=0;fontSize=13;" +
+    "fontFamily=ISOCPEUR,ISOCP,Arial Narrow,PingFang SC,Noto Sans SC;" +
     "connectable=0;editable=0;movable=0;resizable=0;rotatable=0;deletable=0;pointerEvents=0;"
   );
 }

@@ -631,6 +631,7 @@ export function createSnapshotDomain() {
       },
       props: {
         spec,
+        cellId: deps.trim(root != null && root.id != null ? String(root.id) : ""),
       },
     };
   }
@@ -1062,6 +1063,12 @@ export function createSnapshotDomain() {
                 ),
               );
               var root = deps.buildSymbolCell(spec);
+              var restoredCellId = deps.trim(
+                symbolObject.props != null ? symbolObject.props.cellId : "",
+              );
+              if (restoredCellId.length > 0) {
+                root.id = restoredCellId;
+              }
               root.geometry = new mxGeometry(
                 symbolObject.geometry.x,
                 symbolObject.geometry.y,
@@ -1083,6 +1090,14 @@ export function createSnapshotDomain() {
                   ),
                 );
                 var fallbackRoot = deps.buildSymbolCell(fallbackSpec);
+                var fallbackCellId = deps.trim(
+                  nextPendingSymbols[i].props != null
+                    ? nextPendingSymbols[i].props.cellId
+                    : "",
+                );
+                if (fallbackCellId.length > 0) {
+                  fallbackRoot.id = fallbackCellId;
+                }
                 fallbackRoot.geometry = new mxGeometry(
                   nextPendingSymbols[i].geometry.x,
                   nextPendingSymbols[i].geometry.y,

@@ -4,6 +4,7 @@
  */
 import { getApp } from "../core/appRuntime.js";
 import { cloneJson } from "../utils/base.js";
+import { cloneValue, getAttr } from "../utils/xml.js";
 import {
   generateFrameGroupId,
   setCanvasStatus,
@@ -362,6 +363,69 @@ export function applyInstanceSpec(root, spec) {
   showStatus("已更新图元实例", false);
 }
 
+// Business-property edits must not rebuild a symbol or the whole diagram.
+// Update only the root payload and visible label text so geometry, ports,
+// terminals, edge parents and manual waypoints remain byte-for-byte intact.
+export function applySymbolDataSpec(root, spec) {
+  var app = getApp();
+  var graph = app.ctx.graph;
+  var model = app.ctx.model;
+  var state = app.ctx.state;
+  var labels = Array.isArray(spec.labels) ? spec.labels : [];
+  var labelsById = {};
+  var i;
+
+  if (root == null || root.parent == null) {
+    throw new Error("当前图元已不存在，无法应用属性修改");
+  }
+
+  for (i = 0; i < labels.length; i++) {
+    if (labels[i] != null && labels[i].id != null) {
+      labelsById[String(labels[i].id)] = labels[i];
+    }
+  }
+
+  state.updatingModel = true;
+  model.beginUpdate();
+
+  try {
+    var rootValue = cloneValue(root.value);
+    rootValue.setAttribute("dataJson", JSON.stringify(spec.data || {}));
+    rootValue.setAttribute("labelsJson", JSON.stringify(labels));
+    rootValue.setAttribute("symbolPayload", JSON.stringify(spec));
+    if (Array.isArray(spec.businessBindings)) {
+      rootValue.setAttribute(
+        "businessBindingsJson",
+        JSON.stringify(spec.businessBindings),
+      );
+    }
+    if (spec.businessBindingVersion != null) {
+      rootValue.setAttribute(
+        "businessBindingVersion",
+        String(spec.businessBindingVersion),
+      );
+    }
+    model.setValue(root, rootValue);
+
+    for (i = 0; i < model.getChildCount(root); i++) {
+      var child = model.getChildAt(root, i);
+      var key = getAttr(child, "esKey");
+      var label = key != null ? labelsById[String(key)] : null;
+      if (label == null) continue;
+      var childValue = cloneValue(child.value);
+      childValue.setAttribute("label", String(label.text || ""));
+      model.setValue(child, childValue);
+    }
+
+    graph.setSelectionCell(root);
+  } finally {
+    model.endUpdate();
+    state.updatingModel = false;
+  }
+
+  showStatus("已更新图元属性", false);
+}
+
 export function clearCurrentPage() {
   var app = getApp();
   var graph = app.ctx.graph;
@@ -443,6 +507,7 @@ function forceDeleteSelection() {
 }
 
 export var commandApi = {
+    applySymbolDataSpec,
     applyInstanceSpec,
     clearCurrentPage,
     forceDeleteSelection,

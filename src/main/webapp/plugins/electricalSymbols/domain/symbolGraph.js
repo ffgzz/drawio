@@ -134,7 +134,7 @@ export function createSymbolDomain() {
     var cell = new mxCell(
       deps.createMetaCell(deps.LABEL_TAG, deps.LABEL_KIND, label.id, label.text),
       geometry,
-      core.makeLabelStyle(label.align),
+      core.makeLabelStyle(label),
     );
     cell.vertex = true;
     cell.setConnectable(false);
@@ -163,7 +163,7 @@ export function createSymbolDomain() {
     value.setAttribute("esKey", label.id);
     value.setAttribute("label", label.text);
     model.setValue(cell, value);
-    model.setStyle(cell, core.makeLabelStyle(label.align));
+    model.setStyle(cell, core.makeLabelStyle(label));
     cell.setConnectable(false);
   }
 

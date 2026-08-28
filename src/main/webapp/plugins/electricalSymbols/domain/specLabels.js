@@ -19,6 +19,7 @@ export function normalizeLabelItem(raw, fallbackId, fallbackText) {
   var width = 120;
   var height = 26;
   var align = "center";
+  var boxed = false;
 
   if (isObject(raw)) {
     text = trim(raw.text || raw.label) || fallbackText;
@@ -29,6 +30,7 @@ export function normalizeLabelItem(raw, fallbackId, fallbackText) {
     width = Math.max(40, toInt(raw.width, width));
     height = Math.max(20, toInt(raw.height, height));
     align = normalizeLabelAlign(raw.align);
+    boxed = raw.boxed === true || raw.boxed === 1 || raw.boxed === "1";
   } else {
     text = trim(raw) || fallbackText;
   }
@@ -42,6 +44,7 @@ export function normalizeLabelItem(raw, fallbackId, fallbackText) {
     width,
     height,
     align,
+    boxed,
   };
 }
 
@@ -60,23 +63,46 @@ export function normalizeLabels(rawLabels) {
   return labels;
 }
 
+function resolveBindingText(binding, instance, getValueByPath) {
+  var normalizedBinding = trim(binding);
+  var hasTemplate;
+
+  if (
+    normalizedBinding.length == 0 ||
+    typeof getValueByPath !== "function"
+  ) {
+    return null;
+  }
+
+  hasTemplate = /\{\{\s*[^{}]+?\s*\}\}/.test(normalizedBinding);
+
+  if (hasTemplate) {
+    return normalizedBinding.replace(
+      /\{\{\s*([^{}]+?)\s*\}\}/g,
+      function (_placeholder, fieldPath) {
+        var value = getValueByPath(instance, trim(fieldPath));
+        return value != null ? String(value) : "";
+      },
+    );
+  }
+
+  var value = getValueByPath(instance, normalizedBinding);
+  return value != null ? String(value) : "";
+}
+
 export function buildResolvedLabels(labels, instance, getValueByPath) {
   var result = [];
   var i;
 
   for (i = 0; i < labels.length; i++) {
     var item = cloneJson(labels[i]);
-    var value =
-      typeof getValueByPath === "function"
-        ? getValueByPath(instance, item.binding)
-        : null;
+    var resolvedText = resolveBindingText(
+      item.binding,
+      instance,
+      getValueByPath,
+    );
 
-    item.text =
-      trim(item.binding).length > 0
-        ? value != null
-          ? String(value)
-          : ""
-        : item.text || "";
+    item.text = resolvedText != null ? resolvedText : item.text || "";
     result.push(item);
   }
 

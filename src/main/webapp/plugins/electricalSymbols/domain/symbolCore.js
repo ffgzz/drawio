@@ -40,12 +40,21 @@ function makeBodyStyle(spec) {
   );
 }
 
-function makeLabelStyle(align) {
+var EID_DRAWING_FONT_FAMILY =
+  "ISOCPEUR,ISOCP,Arial Narrow,PingFang SC,Noto Sans SC";
+
+function makeLabelStyle(label) {
+  var spacing = label.align == "left" ? 0 : 2;
   return (
-    "text;part=1;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;" +
+    "text;part=1;html=1;whiteSpace=wrap;overflow=visible;" +
+    "strokeColor=none;strokeWidth=0;fillColor=none;" +
     "align=" +
-    align +
-    ";verticalAlign=middle;spacing=2;rotatable=0;connectable=0;"
+    label.align +
+    ";verticalAlign=middle;spacing=" +
+    spacing +
+    ";fontSize=12;fontFamily=" +
+    EID_DRAWING_FONT_FAMILY +
+    ";fontStyle=0;rotatable=0;connectable=0;"
   );
 }
 

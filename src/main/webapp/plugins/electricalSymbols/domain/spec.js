@@ -174,10 +174,41 @@ export function normalizeSpec(raw) {
     labels: normalizeLabels(raw.labels),
     schema,
     data,
+    // Generated E&I symbols may grow to fit text, but must never be restored
+    // smaller than their library definition. Preserve the applied scale in
+    // snapshots so the host can enforce and regression-test that invariant.
+    layoutScale: Math.max(0.4, Number(raw.layoutScale) || 1),
     variantField,
     svgVariants: {},
     variantLayouts: normalizeVariantLayouts(raw.variantLayouts),
   };
+
+  // E&I generated symbols carry a small amount of host-owned metadata that is
+  // required after a snapshot is restored.  Dropping it here makes a restored
+  // breaker/cable/load indistinguishable from an ordinary symbol, and also
+  // replaces its stable instance id with the transient mxCell id.  Preserve
+  // these extension fields verbatim while keeping the core spec normalized.
+  if (deps.trim(raw.instanceId).length > 0) {
+    spec.instanceId = deps.trim(raw.instanceId);
+  }
+  if (deps.trim(raw.canvasCellId).length > 0) {
+    spec.canvasCellId = deps.trim(raw.canvasCellId);
+  }
+  if (deps.trim(raw.businessRole).length > 0) {
+    spec.businessRole = deps.trim(raw.businessRole);
+  }
+  if (Array.isArray(raw.businessBindings)) {
+    spec.businessBindings = deps.cloneJson(raw.businessBindings);
+  }
+  if (raw.businessBindingVersion != null) {
+    spec.businessBindingVersion = raw.businessBindingVersion;
+  }
+  if (deps.isObject(raw.libraryCategory)) {
+    spec.libraryCategory = deps.cloneJson(raw.libraryCategory);
+  }
+  if (deps.isObject(raw.visualBounds)) {
+    spec.visualBounds = deps.cloneJson(raw.visualBounds);
+  }
 
   for (var variantKey in variants) {
     if (
