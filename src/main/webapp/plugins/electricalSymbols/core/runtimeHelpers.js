@@ -66,13 +66,28 @@ export function isCabinetGap(cell) {
   return getAttr(cell, "pluginType") == getConstants().CABINET_GAP_TYPE;
 }
 
+// 配电柜里可独立调高的矩形块。每块派生一个出线端口，所以它本身是端口宿主。
+export function isCabinetBlock(cell) {
+  return getAttr(cell, "esKind") == getConstants().CABINET_BLOCK_KIND;
+}
+
+// 块与它所绑开关之间的托管连线。只存在于模型里不绘制，用来让拓扑完整。
+export function isCabinetSwitchLink(cell) {
+  return getAttr(cell, "esKind") == getConstants().CABINET_SWITCH_LINK_KIND;
+}
+
 export function isGenericPortHost(cell) {
   return getAttr(cell, "eidGenericPortHost") == "1";
 }
 
 // 端口宿主既可能是普通电气图元，也可能是配电柜片段，也可能是自动布局升级过的基础图形。
 export function isPortHostRoot(cell) {
-  return isElectricalRoot(cell) || isCabinetSegment(cell) || isGenericPortHost(cell);
+  return (
+    isElectricalRoot(cell) ||
+    isCabinetBlock(cell) ||
+    isCabinetSegment(cell) ||
+    isGenericPortHost(cell)
+  );
 }
 
 // 遇到未升级的通用图元时停止向上查找，避免误把普通图形当成插件端口宿主。
@@ -94,12 +109,27 @@ export function findPortHostRoot(cell) {
   return null;
 }
 
+// 图框模板装饰件（标题栏线条、方框等）没有 value 节点，无法靠 esKind 识别，
+// 插入时在样式里打这个标记，剪贴板保护和图框绑定都据此认出它们属于图框。
+export var FRAME_DECORATION_STYLE_FLAG = "eidFrameDeco=1";
+
+export function isFrameDecorationCell(cell) {
+  var style = cell != null && cell.style != null ? String(cell.style) : "";
+  return style.indexOf(FRAME_DECORATION_STYLE_FLAG) >= 0;
+}
+
 export function isPluginInternalCell(cell) {
   var constants = getConstants();
   var kind = trim(getAttr(cell, "esKind"));
 
   return (
     isCabinetGap(cell) ||
+    kind == constants.CABINET_BLOCK_KIND ||
+    kind == constants.CABINET_SWITCH_LINK_KIND ||
+    kind == constants.CABINET_BUSBAR_KIND ||
+    kind == constants.CABINET_NAME_LABEL_KIND ||
+    kind == constants.CABINET_LOCATION_LABEL_KIND ||
+    kind == constants.CABINET_DESIGNATION_LABEL_KIND ||
     kind == constants.BODY_KIND ||
     kind == constants.LABEL_KIND ||
     kind == constants.FRAME_LABEL_KIND ||

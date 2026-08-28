@@ -7,7 +7,7 @@ import { getApp } from "../core/appRuntime.js";
 import { cloneJson, trim } from "../utils/base.js";
 import { getAttr } from "../utils/xml.js";
 import { cabinetDomainApi } from "../domain/cabinet.js";
-import { cabinetDialogsApi } from "../ui/cabinetDialog.js";
+import { cabinetBlockDialogApi } from "../ui/cabinetBlockDialog.js";
 import { connectionConstraintsApi } from "./connectionConstraints.js";
 import { specDomainApi } from "../domain/spec.js";
 import {
@@ -31,10 +31,9 @@ function getPortSwapDeps() {
     findPortHostRoot,
     isCabinetSegment,
     isMovableConnectedTerminal: connectionConstraintsApi.isMovableConnectedTerminal,
-    closeGapDialogWindow: function () {
-      return cabinetDialogsApi.closeGapDialogWindow();
+    closeCabinetBlockDialog: function () {
+      return cabinetBlockDialogApi.closeCabinetBlockDialog();
     },
-    setSelectedCabinetGap: cabinetDomainApi.setSelectedCabinetGap,
     showStatus,
     setCanvasStatus,
     getPortAbsolutePosition: cabinetDomainApi.getPortAbsolutePosition,
@@ -288,7 +287,7 @@ function isCabinetPortOccupied(root, portId, ignoreEdge) {
   return false;
 }
 
-export function installGraphClickBehavior(extraDeps) {
+export function installGraphClickBehavior() {
   var runtime = getPortSwapRuntime();
   var deps = runtime.deps;
   var graph = runtime.graph;
@@ -327,17 +326,6 @@ export function installGraphClickBehavior(extraDeps) {
       }
     }
 
-    if (extraDeps.isCabinetGap(cell)) {
-      extraDeps.setSelectedCabinetGap(
-        deps.getAttr(cell, "logicalCabinetId"),
-        deps.getAttr(cell, "gapIndex"),
-      );
-      extraDeps.openCabinetGapDialog(cell, mouseEvent);
-      evt.consume();
-    } else if (state.selectedCabinetGap != null) {
-      extraDeps.closeGapDialogWindow();
-      extraDeps.setSelectedCabinetGap(null, null);
-    }
   });
 }
 
@@ -478,8 +466,7 @@ export function enterPortSwapMode() {
     return;
   }
 
-  deps.closeGapDialogWindow();
-  deps.setSelectedCabinetGap(null, null);
+  deps.closeCabinetBlockDialog();
 
   var context = getPortSwapContextFromSelection();
 

@@ -9,7 +9,7 @@ import {
   setCanvasStatus,
   showStatus,
 } from "../core/runtimeHelpers.js";
-import { cabinetDialogsApi } from "../ui/cabinetDialog.js";
+import { cabinetBlockDialogApi } from "../ui/cabinetBlockDialog.js";
 import { cabinetDomainApi } from "../domain/cabinet.js";
 import { composeModeApi } from "../runtime/composeMode.js";
 import { frameDomainApi } from "../domain/frame.js";
@@ -203,15 +203,15 @@ export function insertCabinet(cabinetModel) {
   var app = getApp();
   var graph = app.ctx.graph;
   var model = app.ctx.model;
-  var state = app.ctx.state;
-  state.updatingModel = true;
+
+  // 不再设 state.updatingModel：配电柜的改动必须进增量变更记录。
+  // 重排只会改动绑定图元的位置而不改宽高，不会触发 handleModelChange 的递归刷新。
   model.beginUpdate();
 
   try {
     cabinetDomainApi.relayoutCabinetByModel(cabinetModel);
   } finally {
     model.endUpdate();
-    state.updatingModel = false;
   }
 
   var segments = cabinetDomainApi.findCabinetSegments(cabinetModel.logicalCabinetId);
@@ -225,22 +225,118 @@ export function insertCabinet(cabinetModel) {
   setCanvasStatus("已插入配电柜");
 }
 
-export function updateCabinetGap(cabinetModel) {
+/**
+ * 在参照块下方插入一个新块。
+ *
+ * @param {Object} blockCell 参照块
+ * @param {Object} blockInit 新块的初始属性
+ * @returns {boolean} 是否真的插入了
+ */
+export function insertCabinetBlock(blockCell, blockInit) {
+  var app = getApp();
+  var graph = app.ctx.graph;
+  var model = app.ctx.model;
+  var segments;
+
+  model.beginUpdate();
+
+  try {
+    segments = cabinetDomainApi.insertCabinetBlockAfter(blockCell, blockInit);
+  } finally {
+    model.endUpdate();
+  }
+
+  if (segments == null) {
+    showStatus("未找到要插入的位置", true);
+    return false;
+  }
+
+  if (segments.length > 0) {
+    graph.scrollCellToVisible(segments[0]);
+  }
+
+  showStatus("已插入配电柜块", false);
+  setCanvasStatus("已插入配电柜块");
+  return true;
+}
+
+/**
+ * 给块绑定一个开关。已有绑定会被替换掉，不留孤儿图元。
+ *
+ * @param {Object} blockCell 目标块
+ * @param {Object} spec      已经 buildInstanceSpec 过的图元 spec
+ * @returns {boolean} 是否绑定成功
+ */
+export function bindCabinetSwitch(blockCell, spec) {
+  var app = getApp();
+  var graph = app.ctx.graph;
+  var model = app.ctx.model;
+  var result;
+
+  model.beginUpdate();
+
+  try {
+    result = cabinetDomainApi.bindSwitchToBlock(blockCell, spec);
+  } finally {
+    model.endUpdate();
+  }
+
+  if (result == null) {
+    showStatus("未找到要绑定的配电柜块", true);
+    return false;
+  }
+
+  if (result.switchCell != null) {
+    graph.setSelectionCell(result.switchCell);
+    graph.scrollCellToVisible(result.switchCell);
+  }
+
+  showStatus("已绑定开关", false);
+  setCanvasStatus("已绑定开关");
+  return true;
+}
+
+/**
+ * 解除块与开关的绑定。
+ *
+ * @param {Object}  blockCell    目标块
+ * @param {boolean} removeSwitch 是否连开关图元一起删掉
+ */
+export function unbindCabinetSwitch(blockCell, removeSwitch) {
   var app = getApp();
   var model = app.ctx.model;
-  var state = app.ctx.state;
-  state.updatingModel = true;
+
+  model.beginUpdate();
+
+  try {
+    cabinetDomainApi.unbindSwitchFromBlock(blockCell, removeSwitch === true, false);
+  } finally {
+    model.endUpdate();
+  }
+
+  showStatus(removeSwitch === true ? "已删除开关" : "已解除开关绑定", false);
+  setCanvasStatus("已更新开关绑定");
+  return true;
+}
+
+/**
+ * 配电柜模型改动后统一重排。块高、柜宽、块增删都走这里。
+ */
+export function updateCabinetModel(cabinetModel, statusText) {
+  var app = getApp();
+  var model = app.ctx.model;
+  var label = statusText || "已更新配电柜";
+
   model.beginUpdate();
 
   try {
     cabinetDomainApi.relayoutCabinetByModel(cabinetModel);
   } finally {
     model.endUpdate();
-    state.updatingModel = false;
   }
 
-  showStatus("已更新端子间距", false);
-  setCanvasStatus("已更新端子间距");
+  showStatus(label, false);
+  setCanvasStatus(label);
 }
 
 export function applyInstanceSpec(root, spec) {
@@ -285,8 +381,7 @@ export function clearCurrentPage() {
     return;
   }
 
-  cabinetDialogsApi.closeGapDialogWindow();
-  cabinetDomainApi.setSelectedCabinetGap(null, null);
+  cabinetBlockDialogApi.closeCabinetBlockDialog();
 
   portSwapModeApi.exitPortSwapMode(false);
 
@@ -352,9 +447,12 @@ export var commandApi = {
     clearCurrentPage,
     forceDeleteSelection,
     insertCabinet,
+    insertCabinetBlock,
+    bindCabinetSwitch,
+    unbindCabinetSwitch,
     insertFrame,
     insertIntoGraph,
     insertIntoGraphAt,
     refreshSelection,
-    updateCabinetGap,
+    updateCabinetModel,
 };

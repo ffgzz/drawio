@@ -51,7 +51,16 @@ export function createFrameDomain() {
   var graph = deps.graph;
   var model = deps.model;
 
+  /**
+   * 顺着父链找所属图框；父链上没有图框时退回几何命中。
+   *
+   * 几何兜底是为了读旧图纸——历史数据里有大量"画在图框上但没有真正挂进去"的
+   * 图元。兜底只读不写，不会在打开图纸时凭空产生变更提交。
+   * 绑定正常的图纸走不到兜底分支（第一层父节点就是图框），零额外开销。
+   */
   function findDrawingFrame(cell) {
+    var origin = cell;
+
     while (cell != null) {
       if (deps.isDrawingFrame(cell)) {
         return cell;
@@ -60,7 +69,101 @@ export function createFrameDomain() {
       cell = model.getParent(cell);
     }
 
+    return findFrameByGeometry(origin);
+  }
+
+  /**
+   * 顶点在画布坐标系里的绝对原点（父链上各级图框原点之和）。
+   * 实际结构里父链最多一层图框，所以这个循环几乎总是走 0~1 次。
+   */
+  function getAbsoluteOrigin(cell) {
+    var x = 0;
+    var y = 0;
+    var parent = model.getParent(cell);
+
+    while (parent != null && model.isVertex(parent)) {
+      var geometry = model.getGeometry(parent);
+
+      if (geometry != null && !geometry.relative) {
+        x += geometry.x;
+        y += geometry.y;
+      }
+
+      parent = model.getParent(parent);
+    }
+
+    return { x: x, y: y };
+  }
+
+  /**
+   * 顶点包围盒中心的绝对坐标。归属判定统一用中心点：跨到图框边界上的图元
+   * 不会在两个框之间来回摇摆，行为可预测。
+   */
+  function getAbsoluteCenter(cell) {
+    if (cell == null || !model.isVertex(cell)) {
+      return null;
+    }
+
+    var geometry = model.getGeometry(cell);
+
+    if (geometry == null || geometry.relative) {
+      return null;
+    }
+
+    var origin = getAbsoluteOrigin(cell);
+
+    return {
+      x: origin.x + geometry.x + geometry.width / 2,
+      y: origin.y + geometry.y + geometry.height / 2,
+    };
+  }
+
+  /**
+   * 找出包含给定画布坐标的图框。
+   *
+   * 图框都是 defaultParent 的直接子节点，这里直接遍历，不建索引也不分配数组：
+   * F（页数）通常是个位到几十，单次判定就是几十次浮点比较。图框规模真的涨到
+   * 几百页时再考虑按 y 排序做二分。
+   */
+  function findFrameContainingPoint(x, y) {
+    var parent = graph.getDefaultParent();
+    var count = model.getChildCount(parent);
+    var i;
+
+    for (i = 0; i < count; i++) {
+      var child = model.getChildAt(parent, i);
+
+      if (!deps.isDrawingFrame(child)) {
+        continue;
+      }
+
+      var geometry = model.getGeometry(child);
+
+      if (geometry == null) {
+        continue;
+      }
+
+      if (
+        x >= geometry.x &&
+        x <= geometry.x + geometry.width &&
+        y >= geometry.y &&
+        y <= geometry.y + geometry.height
+      ) {
+        return child;
+      }
+    }
+
     return null;
+  }
+
+  function findFrameByGeometry(cell) {
+    var center = getAbsoluteCenter(cell);
+
+    if (center == null) {
+      return null;
+    }
+
+    return findFrameContainingPoint(center.x, center.y);
   }
 
   function getFrameConfig(frame) {
@@ -320,6 +423,10 @@ export function createFrameDomain() {
     addTopLevelCell,
     createDrawingFrameCell,
     findDrawingFrame,
+    findFrameByGeometry,
+    findFrameContainingPoint,
+    getAbsoluteCenter,
+    getAbsoluteOrigin,
     findFrameById,
     getActiveFrame,
     getAllDrawingFrames,

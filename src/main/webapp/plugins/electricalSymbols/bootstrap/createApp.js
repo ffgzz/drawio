@@ -2,15 +2,16 @@
  * 应用装配入口。
  * 现在这里只创建运行时容器本身，普通模块能力全部走静态 import/export。
  */
-import { isCabinetGap, setCanvasStatus } from "../core/runtimeHelpers.js";
-import { cabinetDomainApi } from "../domain/cabinet.js";
+import { setCanvasStatus } from "../core/runtimeHelpers.js";
 import { connectionConstraintsApi } from "../runtime/connectionConstraints.js";
 import { installCanvasFeatures, ACTION_ITEMS } from "../runtime/canvasFeatures.js";
+import { installCabinetOverlays } from "../runtime/cabinetOverlays.js";
+import { installPrintMode } from "../runtime/printMode.js";
 import { installClipboardOverride } from "../runtime/clipboardOverride.js";
+import { installFrameBinding } from "../runtime/frameBinding.js";
 import { installHostBridge } from "../runtime/hostBridge.js";
 import { installViewportVirtualization } from "../runtime/viewportVirtualization.js";
 import { portSwapModeApi } from "../runtime/portSwapMode.js";
-import { cabinetDialogsApi } from "../ui/cabinetDialog.js";
 
 function applyEmbeddedEditorLayout(ui) {
   if (ui == null) {
@@ -242,18 +243,16 @@ export function activateAppRuntime(app) {
   applyEmbeddedEditorLayout(ui);
   installHostBridge(app.ctx);
 
-  portSwapModeApi.installGraphClickBehavior({
-    isCabinetGap,
-    openCabinetGapDialog: cabinetDialogsApi.openCabinetGapDialog,
-    closeGapDialogWindow: cabinetDialogsApi.closeGapDialogWindow,
-    setSelectedCabinetGap: cabinetDomainApi.setSelectedCabinetGap,
-  });
+  portSwapModeApi.installGraphClickBehavior();
 
   connectionConstraintsApi.installGraphBehavior({
     applyEdgePortConstraintMetadata:
       portSwapModeApi.applyEdgePortConstraintMetadata,
     setCanvasStatus,
   });
+
+  // 图框绑定：图元新增/移动/缩放后自动重算它属于哪个图框
+  installFrameBinding(app.ctx);
 
   installCanvasFeatures(app.ctx);
 
@@ -262,6 +261,12 @@ export function activateAppRuntime(app) {
 
   // 视口虚拟化：对远离视口的图框做虚拟折叠以减少 SVG DOM 节点
   installViewportVirtualization(app.ctx);
+
+  // 出图模式：导出时把编辑辅助元素藏掉（要在浮层安装之前挂好覆写）
+  installPrintMode(app.ctx);
+
+  // 配电柜块的加号浮层（依赖上面的 LOD 与出图模式：两者都要摘掉浮层）
+  installCabinetOverlays(app.ctx);
 
   // 隐藏不需要的原生工具栏按钮
   pruneToolbarButtons(ui);

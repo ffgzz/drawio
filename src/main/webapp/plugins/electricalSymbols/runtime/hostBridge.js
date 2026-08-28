@@ -9,11 +9,15 @@ import { frameDomainApi } from "../domain/frame.js";
 import { snapshotDomainApi } from "../domain/snapshot.js";
 import { makeFrameLabelStyle } from "../domain/frameCore.js";
 import { clearEdgePoints, getPortMetaById } from "./connectionConstraints.js";
-import { findPortHostRoot } from "../core/runtimeHelpers.js";
+import {
+  FRAME_DECORATION_STYLE_FLAG,
+  findPortHostRoot,
+} from "../core/runtimeHelpers.js";
 import { createMetaCell } from "../utils/xml.js";
 import { getAttr } from "../utils/xml.js";
 import { openBackendSaveDialog, openBackendRollbackDialog } from "../ui/backendDialogs.js";
 import { withAllFramesExpanded } from "./viewportVirtualization.js";
+import { bindCellsToFrame, syncFrameBinding } from "./frameBinding.js";
 
 function parseHostMessage(data) {
   if (data === null) {
@@ -452,6 +456,27 @@ export function installHostBridge(ctx) {
     }
   }
 
+  /**
+   * 图框模板装饰件（标题栏线条、方框等）没有 value 节点，无法像其他插件 cell
+   * 那样靠 esKind 识别。这里在样式里打一个标记，剪贴板保护据此把它们
+   * 视作图框的组成部分，不允许单独复制。
+   */
+  function withFrameDecorationFlag(style) {
+    var text = style != null ? String(style) : "";
+
+    if (text.indexOf(FRAME_DECORATION_STYLE_FLAG) >= 0) {
+      return text;
+    }
+
+    if (text.length === 0) {
+      return FRAME_DECORATION_STYLE_FLAG + ";";
+    }
+
+    return text.charAt(text.length - 1) === ";"
+      ? text + FRAME_DECORATION_STYLE_FLAG + ";"
+      : text + ";" + FRAME_DECORATION_STYLE_FLAG + ";";
+  }
+
   function createFrameTemplateLabelCell(frame, label) {
     var frameConfig = frameDomainApi.getFrameConfig(frame);
     var width = Math.max(40, Math.round(Number(label.width) || 120));
@@ -794,10 +819,6 @@ export function installHostBridge(ctx) {
 
     ownerFrame = frameDomainApi.findDrawingFrame(cell);
 
-    if (ownerFrame == null) {
-      return true;
-    }
-
     return ownerFrame === frame;
   }
 
@@ -963,6 +984,10 @@ export function installHostBridge(ctx) {
                   insertedIds.push(String(cells[ci].id));
                 }
               }
+
+              // importGraphModel 内部触发的绑定是按 (0,0) 算的，
+              // 这里位置定下来之后再按最终几何重算一次
+              syncFrameBinding(cells);
             } finally {
               model.endUpdate();
             }
@@ -1110,7 +1135,7 @@ export function installHostBridge(ctx) {
                 var decoCell = new mxCell(
                   deco.label || "",
                   decoGeo,
-                  deco.style || "",
+                  withFrameDecorationFlag(deco.style),
                 );
                 decoCell.vertex = true;
                 decoCell.setConnectable(false);
@@ -1168,7 +1193,7 @@ export function installHostBridge(ctx) {
                 var edgeCell = new mxCell(
                   edgeDeco.label || "",
                   edgeGeo,
-                  edgeDeco.style || "",
+                  withFrameDecorationFlag(edgeDeco.style),
                 );
                 edgeCell.edge = true;
                 edgeCell.setConnectable(false);
@@ -1400,6 +1425,8 @@ export function installHostBridge(ctx) {
                 }
               }
             }
+
+            bindCellsToFrame(movedCells, frame);
 
             for (var edgeId in edgeMap) {
               if (edgeMap.hasOwnProperty(edgeId)) {

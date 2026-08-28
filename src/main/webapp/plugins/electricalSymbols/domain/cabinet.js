@@ -53,12 +53,40 @@ export function restoreCabinetAttachments() {
   return getCabinetDomain().restoreCabinetAttachments.apply(null, arguments);
 }
 
-export function setSelectedCabinetGap() {
-  return getCabinetDomain().setSelectedCabinetGap.apply(null, arguments);
+export function applyCabinetBlockHeight() {
+  return getCabinetDomain().applyCabinetBlockHeight.apply(null, arguments);
+}
+
+export function applyCabinetWidth() {
+  return getCabinetDomain().applyCabinetWidth.apply(null, arguments);
+}
+
+export function bindSwitchToBlock() {
+  return getCabinetDomain().bindSwitchToBlock.apply(null, arguments);
+}
+
+export function unbindSwitchFromBlock() {
+  return getCabinetDomain().unbindSwitchFromBlock.apply(null, arguments);
+}
+
+export function findSwitchCellByInstanceId() {
+  return getCabinetDomain().findSwitchCellByInstanceId.apply(null, arguments);
+}
+
+export function insertCabinetBlockAfter() {
+  return getCabinetDomain().insertCabinetBlockAfter.apply(null, arguments);
+}
+
+export function getSegmentBlocks() {
+  return getCabinetDomain().getSegmentBlocks.apply(null, arguments);
 }
 
 export var cabinetDomainApi = {
+  applyCabinetBlockHeight,
+  applyCabinetWidth,
+  bindSwitchToBlock,
   buildCabinetPageDescriptors,
+  findSwitchCellByInstanceId,
   buildCabinetPortMap,
   buildCabinetSegmentCell,
   collectCabinetAttachments,
@@ -67,10 +95,12 @@ export var cabinetDomainApi = {
   findCabinetSegments,
   getCellAbsoluteGeometry,
   getPortAbsolutePosition,
+  getSegmentBlocks,
+  insertCabinetBlockAfter,
+  unbindSwitchFromBlock,
   normalizeCabinetModel,
   relayoutCabinetByModel,
   restoreCabinetAttachments,
-  setSelectedCabinetGap,
 };
 
 export { normalizeCabinetModel };

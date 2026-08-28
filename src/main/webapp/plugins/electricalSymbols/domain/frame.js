@@ -21,8 +21,24 @@ export function findDrawingFrame() {
   return getFrameDomain().findDrawingFrame.apply(null, arguments);
 }
 
+export function findFrameByGeometry() {
+  return getFrameDomain().findFrameByGeometry.apply(null, arguments);
+}
+
 export function findFrameById() {
   return getFrameDomain().findFrameById.apply(null, arguments);
+}
+
+export function findFrameContainingPoint() {
+  return getFrameDomain().findFrameContainingPoint.apply(null, arguments);
+}
+
+export function getAbsoluteCenter() {
+  return getFrameDomain().getAbsoluteCenter.apply(null, arguments);
+}
+
+export function getAbsoluteOrigin() {
+  return getFrameDomain().getAbsoluteOrigin.apply(null, arguments);
 }
 
 export function getActiveFrame() {
@@ -69,7 +85,11 @@ export var frameDomainApi = {
   addTopLevelCell,
   createDrawingFrameCell,
   findDrawingFrame,
+  findFrameByGeometry,
   findFrameById,
+  findFrameContainingPoint,
+  getAbsoluteCenter,
+  getAbsoluteOrigin,
   getActiveFrame,
   getAllDrawingFrames,
   getBottommostFrame,

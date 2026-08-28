@@ -1,8 +1,8 @@
 /**
  * 配电柜相关对话框。
- * 负责插入配电柜窗口，以及配电柜 gap 比例编辑窗口。
+ * 负责插入配电柜窗口。端子间距的编辑已被"可独立调高的块"取代。
  */
-// 由于 gap 对话框是悬浮在画布附近的小窗，所以这里还负责计算弹窗位置。
+// getCabinetPopupPosition 供块参数弹窗使用：贴着画布上的触发点定位。
 import { getApp } from "../core/appRuntime.js";
 import { clamp, toFloat, toInt, trim } from "../utils/base.js";
 import { getAttr } from "../utils/xml.js";
@@ -31,7 +31,6 @@ function buildCabinetDialogDeps() {
     normalizeCabinetModel: cabinetDomainApi.normalizeCabinetModel,
     generateLogicalCabinetId,
     insertCabinet: commandApi.insertCabinet,
-    updateCabinetGap: commandApi.updateCabinetGap,
     showStatus,
     setCanvasStatus,
     findCabinetSegment: cabinetDomainApi.findCabinetSegment,
@@ -43,7 +42,7 @@ function getCabinetDialogDeps() {
   return buildCabinetDialogDeps();
 }
 
-export function getGapDialogPosition(nativeEvent, width, height) {
+export function getCabinetPopupPosition(nativeEvent, width, height) {
   var deps = getCabinetDialogDeps();
   var fallback = { x: 220, y: 180 };
 
@@ -92,16 +91,23 @@ export function getGapDialogPosition(nativeEvent, width, height) {
   };
 }
 
-export function closeGapDialogWindow() {
-  var deps = getCabinetDialogDeps();
-  var ctx = deps.ctx;
-  var state = ctx.state;
+/**
+ * 按"块数 + 统一块高"生成初始块列表。id 交给 normalizeCabinetBlock 生成。
+ */
+function buildInitialBlocks(rawCount, rawHeight, constants) {
+  var count = Math.max(1, parseInt(rawCount, 10) || constants.CABINET_DEFAULT_BLOCK_COUNT);
+  var height = Math.max(
+    constants.CABINET_BLOCK_MIN_HEIGHT,
+    parseInt(rawHeight, 10) || constants.CABINET_BLOCK_DEFAULT_HEIGHT,
+  );
+  var blocks = [];
+  var i;
 
-  if (state.gapDialogWindow != null) {
-    var wnd = state.gapDialogWindow;
-    state.gapDialogWindow = null;
-    wnd.destroy();
+  for (i = 0; i < count; i++) {
+    blocks.push({ height: height });
   }
+
+  return blocks;
 }
 
 export function openInsertCabinetDialog() {
@@ -124,25 +130,42 @@ export function openInsertCabinetDialog() {
   div.style.width = "100%";
   div.style.height = "100%";
 
-  var nameRow = document.createElement("div");
-  nameRow.style.display = "grid";
-  nameRow.style.gridTemplateColumns = "90px 1fr";
-  nameRow.style.alignItems = "center";
-  nameRow.style.gap = "8px";
-  div.appendChild(nameRow);
+  // 这几项都是要画到图上的文字：名称/编号/电压拼成柜内的纵向标注，
+  // 位置两行画在柜体上方，柜内编号画在柜体顶部。
+  function addTextRow(label, initial, placeholder) {
+    var row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "90px 1fr";
+    row.style.alignItems = "center";
+    row.style.gap = "8px";
+    div.appendChild(row);
 
-  var nameLabel = document.createElement("div");
-  nameLabel.innerText = "名称";
-  nameRow.appendChild(nameLabel);
+    var caption = document.createElement("div");
+    caption.innerText = label;
+    row.appendChild(caption);
 
-  var nameInput = document.createElement("input");
-  nameInput.setAttribute("type", "text");
-  nameInput.value = "配电柜";
-  nameRow.appendChild(nameInput);
+    var input = document.createElement("input");
+    input.setAttribute("type", "text");
+    input.value = initial || "";
+
+    if (placeholder != null) {
+      input.setAttribute("placeholder", placeholder);
+    }
+
+    row.appendChild(input);
+    return input;
+  }
+
+  var nameInput = addTextRow("名称", "配电柜", "GALLEY MAIN SWITCHBOARD");
+  var codeInput = addTextRow("编号", "", "GB11");
+  var voltageInput = addTextRow("电压", "", "230VAC");
+  var designationInput = addTextRow("柜内编号", "", "875.022 / GB11");
+  var locationNoteInput = addTextRow("位置说明", "", "10甲板处227点，电气设备间");
+  var locationInput = addTextRow("位置代号", "", "Fr227P DECK 10, EL. EQ.");
 
   var configRow = document.createElement("div");
   configRow.style.display = "grid";
-  configRow.style.gridTemplateColumns = "90px 120px 90px 120px";
+  configRow.style.gridTemplateColumns = "90px 100px 60px 80px 60px 80px";
   configRow.style.alignItems = "center";
   configRow.style.gap = "8px";
   div.appendChild(configRow);
@@ -158,25 +181,36 @@ export function openInsertCabinetDialog() {
   configRow.appendChild(widthInput);
 
   var countLabel = document.createElement("div");
-  countLabel.innerText = "右侧端子数";
+  countLabel.innerText = "块数";
   configRow.appendChild(countLabel);
 
   var countInput = document.createElement("input");
   countInput.setAttribute("type", "number");
-  countInput.setAttribute("min", "2");
-  countInput.value = String(constants.CABINET_DEFAULT_PORT_COUNT);
+  countInput.setAttribute("min", "1");
+  countInput.value = String(constants.CABINET_DEFAULT_BLOCK_COUNT);
   configRow.appendChild(countInput);
+
+  var heightLabel = document.createElement("div");
+  heightLabel.innerText = "块高";
+  configRow.appendChild(heightLabel);
+
+  var heightInput = document.createElement("input");
+  heightInput.setAttribute("type", "number");
+  heightInput.setAttribute("min", String(constants.CABINET_BLOCK_MIN_HEIGHT));
+  heightInput.value = String(constants.CABINET_BLOCK_DEFAULT_HEIGHT);
+  configRow.appendChild(heightInput);
 
   var hint = document.createElement("div");
   hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
   hint.style.fontSize = "12px";
-  hint.innerText = "仅生成专用配电柜主体和右侧连接点，间距后续通过右侧热点编辑。";
+  hint.innerText =
+    "每块在母线上派生一个出线端口。插入后可直接拖块的上下边框改高度，拖柜体左右边框改柜宽。";
   div.appendChild(hint);
 
   var buttons = document.createElement("div");
   div.appendChild(buttons);
 
-  var wnd = new mxWindow("插入配电柜", div, 200, 160, 460, 190, true, true);
+  var wnd = new mxWindow("插入配电柜", div, 200, 120, 560, 400, true, true);
   wnd.destroyOnClose = true;
   wnd.setClosable(true);
   wnd.setMaximizable(false);
@@ -188,8 +222,14 @@ export function openInsertCabinetDialog() {
       logicalCabinetId: deps.generateLogicalCabinetId(),
       originFrameId: trim(deps.getAttr(frame, "frameId")),
       title: trim(nameInput.value) || "配电柜",
+      code: trim(codeInput.value),
+      voltage: trim(voltageInput.value),
+      designation: trim(designationInput.value),
+      locationNote: trim(locationNoteInput.value),
+      location: trim(locationInput.value),
       cabinetWidth: widthInput.value,
-      portCount: countInput.value,
+      blockCount: countInput.value,
+      blocks: buildInitialBlocks(countInput.value, heightInput.value, constants),
     });
 
     try {
@@ -207,102 +247,7 @@ export function openInsertCabinetDialog() {
   wnd.setVisible(true);
 }
 
-export function openCabinetGapDialog(gapCell, nativeEvent) {
-  var deps = getCabinetDialogDeps();
-  var ctx = deps.ctx;
-  var state = ctx.state;
-  var segment = deps.findCabinetSegment(gapCell);
-  var gapIndex = deps.toInt(deps.getAttr(gapCell, "gapIndex"), -1);
-
-  if (segment == null || gapIndex < 0) {
-    return;
-  }
-
-  closeGapDialogWindow();
-
-  var cabinetModel = deps.extractCabinetModel(segment);
-  var div = document.createElement("div");
-  div.style.padding = "12px";
-  div.style.display = "flex";
-  div.style.flexDirection = "column";
-  div.style.gap = "10px";
-  div.style.width = "100%";
-  div.style.height = "100%";
-  div.style.boxSizing = "border-box";
-
-  var label = document.createElement("div");
-  label.innerText = "输入 0 到 1 之间的比例值";
-  div.appendChild(label);
-
-  var input = document.createElement("input");
-  input.setAttribute("type", "number");
-  input.setAttribute("min", "0");
-  input.setAttribute("max", "1");
-  input.setAttribute("step", "0.01");
-  input.value = String(cabinetModel.gapRatios[gapIndex] || 0);
-  div.appendChild(input);
-
-  var error = document.createElement("div");
-  error.style.minHeight = "18px";
-  error.style.fontSize = "12px";
-  error.style.color = "#b3261e";
-  div.appendChild(error);
-
-  var buttons = document.createElement("div");
-  div.appendChild(buttons);
-
-  var dialogWidth = 320;
-  var dialogHeight = 170;
-  var dialogPosition = getGapDialogPosition(nativeEvent, dialogWidth, dialogHeight);
-  var wnd = new mxWindow(
-    "设置端子间距",
-    div,
-    dialogPosition.x,
-    dialogPosition.y,
-    dialogWidth,
-    dialogHeight,
-    true,
-    true,
-  );
-  wnd.destroyOnClose = true;
-  wnd.setClosable(true);
-  wnd.setMaximizable(false);
-  wnd.setResizable(false);
-  wnd.setScrollable(false);
-  wnd.addListener(mxEvent.DESTROY, function () {
-    if (state.gapDialogWindow == wnd) {
-      state.gapDialogWindow = null;
-    }
-  });
-  state.gapDialogWindow = wnd;
-
-  var saveButton = deps.createButton("保存", function () {
-    var ratio = deps.toFloat(input.value, NaN);
-
-    if (isNaN(ratio) || ratio < 0 || ratio > 1) {
-      error.innerText = "请输入 0 到 1 之间的数值";
-      return;
-    }
-
-    cabinetModel.gapRatios[gapIndex] = ratio;
-
-    try {
-      deps.updateCabinetGap(cabinetModel);
-    } catch (e) {
-      error.innerText = e.message || String(e);
-      return;
-    }
-    wnd.destroy();
-  });
-  saveButton.style.marginTop = "0";
-  buttons.appendChild(saveButton);
-
-  wnd.setVisible(true);
-}
-
 export var cabinetDialogsApi = {
-  closeGapDialogWindow,
-  getGapDialogPosition,
-  openCabinetGapDialog,
+  getCabinetPopupPosition,
   openInsertCabinetDialog,
 };

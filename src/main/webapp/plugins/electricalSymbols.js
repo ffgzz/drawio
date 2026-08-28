@@ -10,6 +10,10 @@
     FRAME_LABEL_TAG: "DrawingFrameLabel",
     CABINET_TAG: "CabinetSegment",
     CABINET_BODY_TAG: "CabinetBody",
+    CABINET_BLOCK_TAG: "CabinetBlock",
+    CABINET_SWITCH_LINK_TAG: "CabinetSwitchLink",
+    CABINET_BUSBAR_TAG: "CabinetBusbar",
+    CABINET_TEXT_TAG: "CabinetText",
     CABINET_GAP_TAG: "CabinetGap",
     ROOT_TYPE: "electricalSymbol",
     FRAME_TYPE: "drawingFrame",
@@ -19,6 +23,12 @@
     LABEL_KIND: "label",
     FRAME_LABEL_KIND: "pageLabel",
     CABINET_BODY_KIND: "cabinetBody",
+    CABINET_BLOCK_KIND: "cabinetBlock",
+    CABINET_SWITCH_LINK_KIND: "cabinetSwitchLink",
+    CABINET_BUSBAR_KIND: "cabinetBusbar",
+    CABINET_NAME_LABEL_KIND: "cabinetNameLabel",
+    CABINET_LOCATION_LABEL_KIND: "cabinetLocationLabel",
+    CABINET_DESIGNATION_LABEL_KIND: "cabinetDesignationLabel",
     CABINET_GAP_KIND: "cabinetGap",
     PORT_EDGE_SNAP_THRESHOLD_PX: 14,
     TEMPLATE_DRAFT_STORAGE_KEY: "electrical-symbol-template-draft",
@@ -28,11 +38,35 @@
     FRAME_VERTICAL_GAP: 56,
     FRAME_CONTENT_RATIO: 0.8,
     FRAME_MARGIN_RATIO: 0.1,
-    CABINET_DEFAULT_WIDTH: 86,
-    CABINET_DEFAULT_PORT_COUNT: 4,
+    // 柜宽要放得下：左壁留白 + 纵向名称文字 + 母线 + 引出线段 + 开关
+    CABINET_DEFAULT_WIDTH: 180,
+    CABINET_MIN_WIDTH: 90,
+    // 母线距左壁占柜宽的比例；纵向名称文字摆在左壁与母线之间
+    // 配电柜可以比普通图元占得更高一些：图框内容区是 0.8，柜体给到 0.86
+    CABINET_CONTENT_RATIO: 0.86,
+    CABINET_BUSBAR_RATIO: 0.28,
+    // 母线上下不到顶不到底的留白
+    CABINET_BUSBAR_INSET_Y: 34,
+    // 母线到开关左端的引出线长度
+    CABINET_SWITCH_LEAD: 52,
+    // 柜体首块之上、末块之下的留白（编号文字要占顶部这一段）
+    CABINET_HEAD_PADDING: 44,
+    // 换页折断标识的深度
+    CABINET_BREAK_DEPTH: 22,
+    // 折断边左右两段各占柜宽的比例。两段之和超过 1，重叠区里的斜线才连成反 Z
+    CABINET_BREAK_SEGMENT_RATIO: 0.6,
+    // 柜体文字的默认值：不强制用户填，插入时先按这套渲染，再由参数导入覆盖
+    CABINET_DEFAULT_CODE: "GB01",
+    CABINET_DEFAULT_VOLTAGE: "230VAC",
+    CABINET_DEFAULT_LOCATION: "DECK / EL. EQ.",
+    // 母线线宽
+    CABINET_BUSBAR_WIDTH: 4,
+    CABINET_DEFAULT_BLOCK_COUNT: 4,
+    CABINET_BLOCK_DEFAULT_HEIGHT: 150,
+    CABINET_BLOCK_MIN_HEIGHT: 24,
+    CABINET_BLOCK_MAX_HEIGHT: 4e3,
     CABINET_DEFAULT_X: 72,
-    CABINET_TAIL_PADDING: 24,
-    CABINET_MIN_PORT_FOLLOW_SPACE_RATIO: 0.24,
+    CABINET_TAIL_PADDING: 40,
     BACKEND_SESSION_STORAGE_KEY: "electrical-symbol-backend-session",
     BACKEND_DEFAULT_BASE_URL: "/api",
     INSTANCE_COMPOSE_ZONE_PADDING: 80,
@@ -84,7 +118,8 @@
         templateEditor: null,
         templateBrowser: null,
         instanceEditor: null,
-        cabinetGapDialog: null
+        cabinetBlockDialog: null,
+        switchPicker: null
       },
       library: {
         images: []
@@ -117,8 +152,7 @@
         overlay: null
       },
       cabinet: {
-        frameConfig: null,
-        selectedGap: null
+        frameConfig: null
       }
     };
     defineAlias(state, "libraryImages", "library", "images");
@@ -166,8 +200,8 @@
     defineAlias(state, "variantItems", "editor", "variantItems");
     defineAlias(state, "draftSaveTimer", "editor", "draftSaveTimer");
     defineAlias(state, "frameConfig", "cabinet", "frameConfig");
-    defineAlias(state, "selectedCabinetGap", "cabinet", "selectedGap");
-    defineAlias(state, "gapDialogWindow", "windows", "cabinetGapDialog");
+    defineAlias(state, "cabinetBlockDialogWindow", "windows", "cabinetBlockDialog");
+    defineAlias(state, "switchPickerWindow", "windows", "switchPicker");
     defineAlias(state, "portSwapSession", "portSwap", "session");
     defineAlias(state, "portSwapOverlay", "portSwap", "overlay");
     defineAlias(state, "allowProtectedDelete", "canvas", "allowProtectedDelete");
@@ -405,11 +439,17 @@
   function isCabinetGap(cell) {
     return getAttr(cell, "pluginType") == getConstants().CABINET_GAP_TYPE;
   }
+  function isCabinetBlock(cell) {
+    return getAttr(cell, "esKind") == getConstants().CABINET_BLOCK_KIND;
+  }
+  function isCabinetSwitchLink(cell) {
+    return getAttr(cell, "esKind") == getConstants().CABINET_SWITCH_LINK_KIND;
+  }
   function isGenericPortHost(cell) {
     return getAttr(cell, "eidGenericPortHost") == "1";
   }
   function isPortHostRoot(cell) {
-    return isElectricalRoot(cell) || isCabinetSegment(cell) || isGenericPortHost(cell);
+    return isElectricalRoot(cell) || isCabinetBlock(cell) || isCabinetSegment(cell) || isGenericPortHost(cell);
   }
   function findPortHostRoot(cell) {
     var model = getGraphApi().model;
@@ -424,10 +464,15 @@
     }
     return null;
   }
+  var FRAME_DECORATION_STYLE_FLAG = "eidFrameDeco=1";
+  function isFrameDecorationCell(cell) {
+    var style = cell != null && cell.style != null ? String(cell.style) : "";
+    return style.indexOf(FRAME_DECORATION_STYLE_FLAG) >= 0;
+  }
   function isPluginInternalCell(cell) {
     var constants = getConstants();
     var kind = trim(getAttr(cell, "esKind"));
-    return isCabinetGap(cell) || kind == constants.BODY_KIND || kind == constants.LABEL_KIND || kind == constants.FRAME_LABEL_KIND || kind == constants.CABINET_BODY_KIND || kind == constants.CABINET_GAP_KIND;
+    return isCabinetGap(cell) || kind == constants.CABINET_BLOCK_KIND || kind == constants.CABINET_SWITCH_LINK_KIND || kind == constants.CABINET_BUSBAR_KIND || kind == constants.CABINET_NAME_LABEL_KIND || kind == constants.CABINET_LOCATION_LABEL_KIND || kind == constants.CABINET_DESIGNATION_LABEL_KIND || kind == constants.BODY_KIND || kind == constants.LABEL_KIND || kind == constants.FRAME_LABEL_KIND || kind == constants.CABINET_BODY_KIND || kind == constants.CABINET_GAP_KIND;
   }
   function shouldExportGenericObject(cell) {
     var model = getGraphApi().model;
@@ -488,145 +533,6 @@
     return id;
   }
 
-  // domain/specPorts.js
-  function normalizePortMarker(marker) {
-    marker = trim(marker).toLowerCase();
-    return marker == "circle" || marker == "hidden" ? marker : "cross";
-  }
-  function normalizePortDirection(direction) {
-    direction = trim(direction).toLowerCase();
-    return direction == "left" || direction == "right" || direction == "up" || direction == "down" ? direction : "any";
-  }
-  function normalizePortIoMode(mode) {
-    mode = trim(mode).toLowerCase();
-    return mode == "in" || mode == "out" ? mode : "both";
-  }
-  function defaultPortPosition(index, count) {
-    return count <= 0 ? 0.5 : (index + 1) / (count + 1);
-  }
-  function normalizePortPoint(raw, fallbackId, fallbackX, fallbackY) {
-    var id = fallbackId;
-    var x = fallbackX;
-    var y = fallbackY;
-    var name = "";
-    var marker = "cross";
-    var direction = "any";
-    var ioMode = "both";
-    if (isObject(raw)) {
-      id = trim(raw.id || raw.key || raw.name) || fallbackId;
-      x = toFloat(raw.x, fallbackX);
-      y = toFloat(raw.y, fallbackY);
-      name = trim(raw.name || raw.label || "");
-      marker = normalizePortMarker(raw.marker || raw.style);
-      direction = normalizePortDirection(raw.direction || raw.side);
-      ioMode = normalizePortIoMode(raw.ioMode || raw.io || raw.mode);
-    } else if (typeof raw == "number") {
-      y = raw;
-    }
-    return {
-      id,
-      x: clamp(x, 0, 1),
-      y: clamp(y, 0, 1),
-      name,
-      marker,
-      direction,
-      ioMode
-    };
-  }
-  function normalizePortLayout(rawPorts) {
-    var points = [];
-    var i;
-    if (Array.isArray(rawPorts)) {
-      for (i = 0; i < rawPorts.length; i++) {
-        points.push(
-          normalizePortPoint(
-            rawPorts[i],
-            "port:" + i,
-            0.5,
-            (i + 1) / (rawPorts.length + 1)
-          )
-        );
-      }
-      return points;
-    }
-    if (!isObject(rawPorts)) {
-      return points;
-    }
-    if (Array.isArray(rawPorts.items)) {
-      for (i = 0; i < rawPorts.items.length; i++) {
-        points.push(
-          normalizePortPoint(
-            rawPorts.items[i],
-            "port:" + i,
-            0.5,
-            (i + 1) / (rawPorts.items.length + 1)
-          )
-        );
-      }
-      return points;
-    }
-    if (Array.isArray(rawPorts.left) || Array.isArray(rawPorts.right)) {
-      var left = Array.isArray(rawPorts.left) ? rawPorts.left : [];
-      var right = Array.isArray(rawPorts.right) ? rawPorts.right : [];
-      for (i = 0; i < left.length; i++) {
-        points.push(
-          normalizePortPoint(
-            { id: "left:" + i, x: 0, y: left[i] },
-            "left:" + i,
-            0,
-            defaultPortPosition(i, left.length)
-          )
-        );
-      }
-      for (i = 0; i < right.length; i++) {
-        points.push(
-          normalizePortPoint(
-            { id: "right:" + i, x: 1, y: right[i] },
-            "right:" + i,
-            1,
-            defaultPortPosition(i, right.length)
-          )
-        );
-      }
-      return points;
-    }
-    var leftCount = Math.max(0, toInt(rawPorts.leftCount, 0));
-    var rightCount = Math.max(0, toInt(rawPorts.rightCount, 0));
-    for (i = 0; i < leftCount; i++) {
-      points.push({
-        id: "left:" + i,
-        x: 0,
-        y: defaultPortPosition(i, leftCount)
-      });
-    }
-    for (i = 0; i < rightCount; i++) {
-      points.push({
-        id: "right:" + i,
-        x: 1,
-        y: defaultPortPosition(i, rightCount)
-      });
-    }
-    return points;
-  }
-  function parsePortLayout(raw) {
-    if (raw == null || raw.length == 0) {
-      return [];
-    }
-    try {
-      return normalizePortLayout(JSON.parse(raw));
-    } catch (e) {
-      return [];
-    }
-  }
-  function buildPortLayout(spec, base) {
-    var current = normalizePortLayout(spec.ports);
-    var fallback = normalizePortLayout(base);
-    return current.length > 0 ? current : fallback;
-  }
-  function serializePortLayout(layout) {
-    return JSON.stringify(normalizePortLayout(layout));
-  }
-
   // domain/frameCore.js
   function makeFrameStyle() {
     return "shape=rectangle;fillColor=none;strokeColor=#6b7280;strokeWidth=2;rounded=0;html=1;whiteSpace=wrap;connectable=0;container=1;dropTarget=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;deletable=0;";
@@ -664,212 +570,376 @@
   }
 
   // domain/cabinetCore.js
-  function makeCabinetRootStyle() {
-    return "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;";
-  }
-  function createCabinetBodySvg(descriptor) {
+  function createCabinetOutlineSvg(descriptor) {
     var width = Math.max(20, Math.round(descriptor.width));
     var height = Math.max(20, Math.round(descriptor.height));
-    var strokeWidth = 4;
+    var strokeWidth = 2;
     var inset = strokeWidth / 2;
-    var notchLeft = Math.max(14, Math.round(width * 0.16));
-    var notchWidth = Math.max(18, Math.round(width * 0.16));
-    var notchDepth = Math.max(8, Math.round(Math.min(height, 80) * 0.12));
+    var depth = Math.max(
+      8,
+      Math.min(ELECTRICAL_CONSTANTS.CABINET_BREAK_DEPTH, Math.round(height / 4))
+    );
+    var left = inset;
+    var right = width - inset;
+    var top = inset;
+    var bottom = height - inset;
+    var ratio = ELECTRICAL_CONSTANTS.CABINET_BREAK_SEGMENT_RATIO;
+    var segmentEnd = Math.round(width * ratio);
+    var segmentStart = Math.round(width * (1 - ratio));
     var path;
-    if (!descriptor.continuesFromPrev && !descriptor.continuesToNext) {
-      path = "M " + inset + " " + inset + " L " + (width - inset) + " " + inset + " L " + (width - inset) + " " + (height - inset) + " L " + inset + " " + (height - inset) + " Z";
+    var topLeftY = descriptor.continuesFromPrev ? top + depth : top;
+    var bottomRightY = descriptor.continuesToNext ? bottom - depth : bottom;
+    if (descriptor.continuesFromPrev) {
+      path = "M " + left + " " + topLeftY + " L " + segmentEnd + " " + topLeftY + " L " + segmentStart + " " + top + " L " + right + " " + top;
     } else {
-      var topY = descriptor.continuesFromPrev ? inset + notchDepth : inset;
-      var bottomY = descriptor.continuesToNext ? height - inset - notchDepth : height - inset;
-      path = "M " + inset + " " + topY + " L " + notchLeft + " " + topY + " " + (descriptor.continuesFromPrev ? "L " + (notchLeft + notchWidth) + " " + inset + " " : "") + "L " + (width - inset) + " " + inset + " L " + (width - inset) + " " + (height - inset) + " " + (descriptor.continuesToNext ? "L " + (notchLeft + notchWidth) + " " + (height - inset) + " L " + notchLeft + " " + bottomY + " " : "") + "L " + inset + " " + bottomY + " Z";
+      path = "M " + left + " " + top + " L " + right + " " + top;
     }
-    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + " " + height + '"><path d="' + path + '" fill="none" stroke="#111111" stroke-width="' + strokeWidth + '" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+    path += " L " + right + " " + bottomRightY;
+    if (descriptor.continuesToNext) {
+      path += " L " + segmentStart + " " + bottomRightY + " L " + segmentEnd + " " + bottom + " L " + left + " " + bottom;
+    } else {
+      path += " L " + left + " " + bottom;
+    }
+    path += " Z";
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + " " + height + '"><path d="' + path + '" fill="none" stroke="#111111" stroke-width="' + strokeWidth + '" stroke-linejoin="miter" stroke-linecap="square"/></svg>';
   }
-  function makeCabinetBodyStyle(descriptor) {
-    return "shape=image;image=data:image/svg+xml," + encodeURIComponent(createCabinetBodySvg(descriptor)) + ";imageAspect=0;aspect=fixed;html=1;strokeColor=none;fillColor=none;part=1;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;cloneable=0;deletable=0;pointerEvents=0;";
+  function makeCabinetRootStyle(descriptor) {
+    return "shape=image;image=data:image/svg+xml," + encodeURIComponent(createCabinetOutlineSvg(descriptor)) + ";imageAspect=0;html=1;fillColor=none;strokeColor=none;connectable=0;container=1;collapsible=0;foldable=0;rotatable=0;recursiveResize=1;resizable=1;movable=1;";
   }
-  function makeCabinetGapStyle(selected) {
-    return "shape=rectangle;fillColor=#4dabf7;gradientColor=none;fillOpacity=" + (selected ? "38" : "14") + ";strokeColor=" + (selected ? "#1d4ed8" : "none") + ";strokeWidth=" + (selected ? "2" : "0") + ";connectable=0;editable=0;movable=0;resizable=0;rotatable=0;";
+  function makeCabinetBlockStyle() {
+    return "shape=rectangle;fillColor=none;strokeColor=#c8ccd2;strokeWidth=1;dashed=1;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;spacingLeft=8;connectable=1;movable=0;resizable=1;rotatable=0;editable=0;deletable=0;resizeWidth=1;resizeHeight=0;";
   }
-  function normalizeGapRatio(value, fallbackValue) {
-    return clamp(toFloat(value, fallbackValue != null ? fallbackValue : 0.12), 0, 1);
+  function makeCabinetSwitchLinkStyle() {
+    return "edgeStyle=none;html=1;strokeColor=#111111;strokeWidth=1;endArrow=none;startArrow=none;noEdgeStyle=1;rounded=0;movable=0;editable=0;deletable=0;bendable=0;";
   }
-  function normalizeCabinetPort(raw, index) {
-    var base = normalizePortPoint(
-      raw,
-      trim(raw != null ? raw.id : "") || "cabinet-port:" + index,
-      1,
-      0
+  function makeCabinetBusbarStyle() {
+    return "shape=rectangle;fillColor=#00b7c3;strokeColor=none;html=1;connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;";
+  }
+  function makeCabinetNameLabelStyle() {
+    return "text;html=1;horizontal=0;align=center;verticalAlign=middle;fontSize=11;fontColor=#111111;whiteSpace=nowrap;overflow=visible;connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;";
+  }
+  function makeCabinetLocationLabelStyle() {
+    return "text;html=1;align=left;verticalAlign=bottom;fontSize=10;fontColor=#111111;whiteSpace=nowrap;overflow=visible;connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;";
+  }
+  function makeCabinetDesignationLabelStyle() {
+    return "text;html=1;align=center;verticalAlign=middle;fontSize=11;fontColor=#111111;whiteSpace=nowrap;overflow=visible;connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;";
+  }
+  function generateCabinetBlockId() {
+    return "cabinet-block:" + generateUuid().split("-")[0];
+  }
+  function normalizeCabinetBlock(raw, index) {
+    raw = isObject(raw) ? raw : {};
+    var id = trim(raw.id) || generateCabinetBlockId();
+    return {
+      id,
+      title: trim(raw.title),
+      height: clamp(
+        toInt(raw.height, ELECTRICAL_CONSTANTS.CABINET_BLOCK_DEFAULT_HEIGHT),
+        ELECTRICAL_CONSTANTS.CABINET_BLOCK_MIN_HEIGHT,
+        ELECTRICAL_CONSTANTS.CABINET_BLOCK_MAX_HEIGHT
+      ),
+      portId: trim(raw.portId) || id + ":out",
+      switchInstanceId: trim(raw.switchInstanceId),
+      switchSymbolId: trim(raw.switchSymbolId),
+      params: isObject(raw.params) ? cloneJson(raw.params) : {},
+      order: index
+    };
+  }
+  function migrateLegacyBlocks(raw, usableHeight) {
+    var ports = Array.isArray(raw.ports) ? raw.ports : [];
+    var gapRatios = Array.isArray(raw.gapRatios) ? raw.gapRatios : [];
+    var tailPadding = Math.max(
+      8,
+      toInt(raw.tailPadding, ELECTRICAL_CONSTANTS.CABINET_TAIL_PADDING)
     );
-    base.direction = "right";
-    base.ioMode = "out";
-    base.order = index;
-    return base;
-  }
-  function normalizeCabinetModel(raw) {
-    raw = isObject(raw) ? cloneJson(raw) : {};
-    var portCount = Math.max(
-      2,
-      Array.isArray(raw.ports) ? raw.ports.length : toInt(raw.portCount, ELECTRICAL_CONSTANTS.CABINET_DEFAULT_PORT_COUNT)
-    );
-    var ports = [];
+    var offsets = [];
+    var cursor = tailPadding;
+    var blocks = [];
     var i;
-    var gapRatios = [];
-    if (Array.isArray(raw.ports) && raw.ports.length > 0) {
-      for (i = 0; i < raw.ports.length; i++) {
-        ports.push(normalizeCabinetPort(raw.ports[i], i));
+    for (i = 0; i < ports.length; i++) {
+      if (i > 0) {
+        cursor += clamp(Number(gapRatios[i - 1]) || 0.12, 0, 1) * usableHeight;
       }
-    } else {
-      for (i = 0; i < portCount; i++) {
-        ports.push(
-          normalizeCabinetPort(
-            {
-              id: "cabinet-port:" + i,
-              x: 1,
-              y: 0,
-              marker: "cross",
-              direction: "right",
-              ioMode: "out"
-            },
-            i
-          )
-        );
-      }
+      offsets.push(cursor);
     }
-    for (i = 0; i < Math.max(0, ports.length - 1); i++) {
-      gapRatios.push(
-        normalizeGapRatio(Array.isArray(raw.gapRatios) ? raw.gapRatios[i] : null, 0.12)
+    for (i = 0; i < offsets.length; i++) {
+      var prevGap = i > 0 ? offsets[i] - offsets[i - 1] : 0;
+      var nextGap = i + 1 < offsets.length ? offsets[i + 1] - offsets[i] : 0;
+      var upper = i > 0 ? prevGap / 2 : nextGap > 0 ? nextGap / 2 : tailPadding;
+      var lower = i + 1 < offsets.length ? nextGap / 2 : prevGap > 0 ? prevGap / 2 : tailPadding;
+      blocks.push(
+        normalizeCabinetBlock(
+          {
+            id: trim(ports[i] != null ? ports[i].id : "") || generateCabinetBlockId(),
+            portId: trim(ports[i] != null ? ports[i].id : ""),
+            height: Math.round(upper + lower)
+          },
+          i
+        )
       );
+    }
+    return blocks;
+  }
+  function buildDefaultBlocks(count) {
+    var blocks = [];
+    var i;
+    for (i = 0; i < count; i++) {
+      blocks.push(normalizeCabinetBlock({}, i));
+    }
+    return blocks;
+  }
+  function normalizeCabinetModel(raw, frameConfig) {
+    raw = isObject(raw) ? cloneJson(raw) : {};
+    var config = normalizeFrameConfig(frameConfig);
+    var usableHeight = config.height * ELECTRICAL_CONSTANTS.FRAME_CONTENT_RATIO;
+    var blocks;
+    var i;
+    if (Array.isArray(raw.blocks) && raw.blocks.length > 0) {
+      blocks = [];
+      for (i = 0; i < raw.blocks.length; i++) {
+        blocks.push(normalizeCabinetBlock(raw.blocks[i], i));
+      }
+    } else if (Array.isArray(raw.ports) && raw.ports.length > 0) {
+      blocks = migrateLegacyBlocks(raw, usableHeight);
+    } else {
+      blocks = buildDefaultBlocks(
+        Math.max(
+          1,
+          toInt(
+            raw.blockCount != null ? raw.blockCount : raw.portCount,
+            ELECTRICAL_CONSTANTS.CABINET_DEFAULT_BLOCK_COUNT
+          )
+        )
+      );
+    }
+    if (blocks.length == 0) {
+      blocks = buildDefaultBlocks(ELECTRICAL_CONSTANTS.CABINET_DEFAULT_BLOCK_COUNT);
     }
     return {
       logicalCabinetId: trim(raw.logicalCabinetId) || generateUuid(),
       originFrameId: trim(raw.originFrameId),
+      // title / code / voltage 拼起来就是柜内那行纵向文字
       title: trim(raw.title) || "\u914D\u7535\u67DC",
+      // 这几项都有默认值：插入时不必手填也能画成图纸的样子，参数导入时再覆盖
+      code: trim(raw.code) || ELECTRICAL_CONSTANTS.CABINET_DEFAULT_CODE,
+      voltage: trim(raw.voltage) || ELECTRICAL_CONSTANTS.CABINET_DEFAULT_VOLTAGE,
+      // 柜体上方的位置标注，两行
+      location: trim(raw.location) || ELECTRICAL_CONSTANTS.CABINET_DEFAULT_LOCATION,
+      locationNote: trim(raw.locationNote),
+      // 柜内靠上的编号；没给就跟着柜体编号走
+      designation: trim(raw.designation) || trim(raw.code) || ELECTRICAL_CONSTANTS.CABINET_DEFAULT_CODE,
       cabinetWidth: Math.max(
-        30,
+        ELECTRICAL_CONSTANTS.CABINET_MIN_WIDTH,
         toInt(raw.cabinetWidth, ELECTRICAL_CONSTANTS.CABINET_DEFAULT_WIDTH)
       ),
       cabinetX: Math.max(20, toInt(raw.cabinetX, ELECTRICAL_CONSTANTS.CABINET_DEFAULT_X)),
+      headPadding: Math.max(
+        0,
+        toInt(raw.headPadding, ELECTRICAL_CONSTANTS.CABINET_HEAD_PADDING)
+      ),
       tailPadding: Math.max(
-        8,
+        0,
         toInt(raw.tailPadding, ELECTRICAL_CONSTANTS.CABINET_TAIL_PADDING)
       ),
-      ports,
-      gapRatios
+      busbarRatio: clamp(
+        toFloat(raw.busbarRatio, ELECTRICAL_CONSTANTS.CABINET_BUSBAR_RATIO),
+        0.05,
+        0.6
+      ),
+      busbarInsetY: Math.max(
+        0,
+        toInt(raw.busbarInsetY, ELECTRICAL_CONSTANTS.CABINET_BUSBAR_INSET_Y)
+      ),
+      switchLead: Math.max(
+        8,
+        toInt(raw.switchLead, ELECTRICAL_CONSTANTS.CABINET_SWITCH_LEAD)
+      ),
+      blocks
     };
   }
-  function buildCabinetOffsets(cabinetModel, frameConfig) {
-    var config = normalizeFrameConfig(frameConfig);
+  function buildCabinetNameLabel(cabinetModel) {
+    var parts = [];
+    if (trim(cabinetModel.title).length > 0) {
+      parts.push(trim(cabinetModel.title));
+    }
+    if (trim(cabinetModel.code).length > 0) {
+      parts.push(trim(cabinetModel.code));
+    }
+    if (trim(cabinetModel.voltage).length > 0) {
+      parts.push(trim(cabinetModel.voltage));
+    }
+    return parts.join(", ");
+  }
+  function insertBlockAfter(cabinetModel, blockId, blockInit) {
     var modelData = normalizeCabinetModel(cabinetModel);
-    var usableHeight = config.height * ELECTRICAL_CONSTANTS.FRAME_CONTENT_RATIO;
-    var topMargin = config.height * ELECTRICAL_CONSTANTS.FRAME_MARGIN_RATIO;
-    var offsets = [];
-    var minFollowSpace = Math.max(
-      modelData.tailPadding * 2,
-      usableHeight * ELECTRICAL_CONSTANTS.CABINET_MIN_PORT_FOLLOW_SPACE_RATIO
-    );
-    var currentOffset = modelData.tailPadding;
+    var target = trim(blockId);
+    var index = -1;
     var i;
-    if (modelData.ports.length == 0) {
-      modelData.ports = normalizeCabinetModel({ portCount: 2 }).ports;
-      modelData.gapRatios = [0.12];
-    }
-    for (i = 0; i < modelData.ports.length; i++) {
-      if (i > 0) {
-        var previousGap = modelData.gapRatios[i - 1] * usableHeight;
-        var nextGap = i < modelData.gapRatios.length ? modelData.gapRatios[i] * usableHeight : 0;
-        var candidateOffset = currentOffset + previousGap;
-        var candidatePage = Math.floor(Math.max(0, candidateOffset - 1e-4) / usableHeight);
-        var candidateLocalOffset = candidateOffset - candidatePage * usableHeight;
-        var remainingLocalSpace = usableHeight - candidateLocalOffset;
-        if (i < modelData.gapRatios.length && previousGap + nextGap > usableHeight && candidateLocalOffset > modelData.tailPadding) {
-          currentOffset = (candidatePage + 1) * usableHeight + modelData.tailPadding;
-        } else if (remainingLocalSpace < minFollowSpace && candidateLocalOffset > modelData.tailPadding) {
-          currentOffset = (candidatePage + 1) * usableHeight + modelData.tailPadding;
-        } else {
-          currentOffset = candidateOffset;
-        }
+    for (i = 0; i < modelData.blocks.length; i++) {
+      if (modelData.blocks[i].id == target) {
+        index = i;
+        break;
       }
-      offsets.push(currentOffset);
     }
-    return {
-      frameConfig: config,
-      cabinetModel: modelData,
-      usableHeight,
-      topMargin,
-      offsets,
-      totalLogicalHeight: (offsets.length > 0 ? offsets[offsets.length - 1] : modelData.tailPadding) + modelData.tailPadding
-    };
+    if (index < 0) {
+      return null;
+    }
+    var blocks = modelData.blocks.slice(0, index + 1).concat([normalizeCabinetBlock(blockInit || {}, index + 1)]).concat(modelData.blocks.slice(index + 1));
+    for (i = 0; i < blocks.length; i++) {
+      blocks[i].order = i;
+    }
+    var next = cloneJson(modelData);
+    next.blocks = blocks;
+    return next;
   }
-  function getPageIndexForOffset(offset, usableHeight, pageCount) {
-    if (pageCount <= 1 || offset <= 0) {
-      return 0;
+  function setBlockSwitchBinding(cabinetModel, blockId, binding) {
+    var modelData = normalizeCabinetModel(cabinetModel);
+    var target = trim(blockId);
+    var found = false;
+    var blocks = [];
+    var i;
+    for (i = 0; i < modelData.blocks.length; i++) {
+      var block = cloneJson(modelData.blocks[i]);
+      if (block.id == target) {
+        found = true;
+        block.switchInstanceId = binding != null ? trim(binding.instanceId) : "";
+        block.switchSymbolId = binding != null ? trim(binding.symbolId) : "";
+      }
+      blocks.push(block);
     }
-    return clamp(Math.floor((offset - 1e-4) / usableHeight), 0, pageCount - 1);
+    if (!found) {
+      return null;
+    }
+    var next = cloneJson(modelData);
+    next.blocks = blocks;
+    return next;
+  }
+  function computeSwitchPlacementInBlock(blockRect, switchSize, options) {
+    var busbarX = options != null ? toInt(options.busbarX, 0) : 0;
+    var lead = options != null ? Math.max(0, toInt(options.switchLead, 0)) : 0;
+    var available = Math.max(8, blockRect.width - busbarX - lead);
+    var width = Math.max(8, Math.min(switchSize.width, available));
+    var height = Math.max(8, switchSize.height);
+    return {
+      x: busbarX + lead,
+      y: (blockRect.height - height) / 2,
+      width,
+      height
+    };
   }
   function buildCabinetPageDescriptors(cabinetModel, frameConfig) {
-    var layout = buildCabinetOffsets(cabinetModel, frameConfig);
-    var pageCount = Math.max(1, Math.ceil(layout.totalLogicalHeight / layout.usableHeight));
+    var config = normalizeFrameConfig(frameConfig);
+    var modelData = normalizeCabinetModel(cabinetModel, config);
+    var usableHeight = config.height * ELECTRICAL_CONSTANTS.CABINET_CONTENT_RATIO;
+    var topMargin = config.height * ELECTRICAL_CONSTANTS.FRAME_MARGIN_RATIO;
+    var padding = modelData.headPadding + modelData.tailPadding;
+    var blockCapacity = Math.max(
+      ELECTRICAL_CONSTANTS.CABINET_BLOCK_MIN_HEIGHT,
+      usableHeight - padding
+    );
+    var pages = [];
+    var current = [];
+    var used = 0;
+    var i;
+    for (i = 0; i < modelData.blocks.length; i++) {
+      var block = modelData.blocks[i];
+      var height = Math.min(block.height, Math.floor(blockCapacity));
+      if (current.length > 0 && used + height > blockCapacity) {
+        pages.push({ blocks: current, height: used });
+        current = [];
+        used = 0;
+      }
+      current.push({ block, localY: used, height });
+      used += height;
+    }
+    pages.push({ blocks: current, height: used });
     var descriptors = [];
     var pageIndex;
-    var i;
-    for (pageIndex = 0; pageIndex < pageCount; pageIndex++) {
-      var pageStart = pageIndex * layout.usableHeight;
-      var remaining = Math.max(0, layout.totalLogicalHeight - pageStart);
-      var segmentHeight = pageCount > 1 ? layout.usableHeight : Math.max(
-        layout.cabinetModel.tailPadding,
-        Math.min(layout.usableHeight, remaining)
+    for (pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+      var page = pages[pageIndex];
+      var continuesToNext = pageIndex < pages.length - 1;
+      var continuesFromPrev = pageIndex > 0;
+      var segmentHeight = continuesToNext ? Math.round(usableHeight) : Math.max(
+        ELECTRICAL_CONSTANTS.CABINET_BLOCK_MIN_HEIGHT,
+        modelData.headPadding + page.height + modelData.tailPadding
       );
-      var ports = [];
-      var gaps = [];
-      for (i = 0; i < layout.cabinetModel.ports.length; i++) {
-        if (getPageIndexForOffset(layout.offsets[i], layout.usableHeight, pageCount) == pageIndex) {
-          var localOffset = layout.offsets[i] - pageStart;
-          var port = cloneJson(layout.cabinetModel.ports[i]);
-          port.x = 1;
-          port.y = segmentHeight > 0 ? clamp(localOffset / segmentHeight, 0, 1) : 0;
-          port.order = i;
-          port.logicalOffset = layout.offsets[i];
-          ports.push(port);
-        }
-      }
-      for (i = 0; i < layout.cabinetModel.gapRatios.length; i++) {
-        var gapAbsoluteStart = layout.offsets[i];
-        var gapAbsoluteEnd = i + 1 < layout.offsets.length ? layout.offsets[i + 1] : gapAbsoluteStart;
-        var visibleStart = Math.max(gapAbsoluteStart, pageStart);
-        var visibleEnd = Math.min(gapAbsoluteEnd, pageStart + segmentHeight);
-        if (visibleEnd > visibleStart) {
-          var gapStart = clamp(visibleStart - pageStart, 0, segmentHeight);
-          var gapEnd = clamp(visibleEnd - pageStart, gapStart, segmentHeight);
-          if (gapEnd - gapStart < 12) {
-            gapEnd = Math.min(segmentHeight, gapStart + 12);
-          }
-          gaps.push({
-            id: "cabinet-gap:" + i + ":" + pageIndex,
-            gapIndex: i,
-            y: segmentHeight > 0 ? clamp(gapStart / segmentHeight, 0, 1) : 0,
-            height: Math.max(12, gapEnd - gapStart)
-          });
-        }
+      var topBreakDepth = continuesFromPrev ? Math.max(
+        8,
+        Math.min(
+          ELECTRICAL_CONSTANTS.CABINET_BREAK_DEPTH,
+          Math.round(segmentHeight / 4)
+        )
+      ) : 0;
+      var busbarX = Math.round(modelData.cabinetWidth * modelData.busbarRatio);
+      var blocks = [];
+      var j;
+      for (j = 0; j < page.blocks.length; j++) {
+        var entry = page.blocks[j];
+        var localY = topBreakDepth + modelData.headPadding + entry.localY;
+        blocks.push({
+          id: entry.block.id,
+          title: entry.block.title,
+          portId: entry.block.portId,
+          switchInstanceId: entry.block.switchInstanceId,
+          switchSymbolId: entry.block.switchSymbolId,
+          params: cloneJson(entry.block.params),
+          order: entry.block.order,
+          localY,
+          height: entry.height,
+          width: modelData.cabinetWidth,
+          // 出线接口在母线上，不在柜壁上
+          portX: modelData.cabinetWidth > 0 ? busbarX / modelData.cabinetWidth : 0,
+          portY: segmentHeight > 0 ? clamp((localY + entry.height / 2) / segmentHeight, 0, 1) : 0.5
+        });
       }
       descriptors.push({
         segmentIndex: pageIndex,
-        pageCount,
-        continuesFromPrev: pageIndex > 0,
-        continuesToNext: pageIndex < pageCount - 1,
-        x: layout.cabinetModel.cabinetX,
-        y: layout.topMargin,
-        width: layout.cabinetModel.cabinetWidth,
+        pageCount: pages.length,
+        // 换页折断标识画在柜体外框上，不再由块承担
+        continuesFromPrev,
+        continuesToNext,
+        topBreakDepth,
+        x: modelData.cabinetX,
+        y: topMargin,
+        width: modelData.cabinetWidth,
         height: segmentHeight,
-        segmentStartOffset: pageStart,
-        segmentEndOffset: pageStart + segmentHeight,
-        ports,
-        gaps,
-        frameConfig: layout.frameConfig,
-        cabinetModel: layout.cabinetModel
+        blocks,
+        // 母线：靠左纵向贯穿，上下各留 busbarInsetY
+        busbar: {
+          x: busbarX,
+          y: topBreakDepth + Math.min(modelData.busbarInsetY, segmentHeight / 3),
+          width: ELECTRICAL_CONSTANTS.CABINET_BUSBAR_WIDTH,
+          height: Math.max(
+            8,
+            segmentHeight - topBreakDepth - 2 * Math.min(modelData.busbarInsetY, segmentHeight / 3)
+          )
+        },
+        switchLead: modelData.switchLead,
+        // 位置标注只画在第一段上，续接段不重复
+        showLocation: pageIndex == 0,
+        frameConfig: config,
+        cabinetModel: modelData
       });
     }
     return descriptors;
+  }
+  function buildSegmentPortLayout(descriptor) {
+    var result = [];
+    var i;
+    for (i = 0; i < descriptor.blocks.length; i++) {
+      var block = descriptor.blocks[i];
+      result.push({
+        id: block.portId,
+        x: block.portX,
+        y: block.portY,
+        marker: "cross",
+        direction: "right",
+        ioMode: "out",
+        order: block.order,
+        blockId: block.id
+      });
+    }
+    return result;
   }
 
   // domain/frameGraph.js
@@ -905,13 +975,68 @@
     var graph = deps.graph;
     var model = deps.model;
     function findDrawingFrame2(cell) {
+      var origin = cell;
       while (cell != null) {
         if (deps.isDrawingFrame(cell)) {
           return cell;
         }
         cell = model.getParent(cell);
       }
+      return findFrameByGeometry2(origin);
+    }
+    function getAbsoluteOrigin2(cell) {
+      var x = 0;
+      var y = 0;
+      var parent = model.getParent(cell);
+      while (parent != null && model.isVertex(parent)) {
+        var geometry = model.getGeometry(parent);
+        if (geometry != null && !geometry.relative) {
+          x += geometry.x;
+          y += geometry.y;
+        }
+        parent = model.getParent(parent);
+      }
+      return { x, y };
+    }
+    function getAbsoluteCenter2(cell) {
+      if (cell == null || !model.isVertex(cell)) {
+        return null;
+      }
+      var geometry = model.getGeometry(cell);
+      if (geometry == null || geometry.relative) {
+        return null;
+      }
+      var origin = getAbsoluteOrigin2(cell);
+      return {
+        x: origin.x + geometry.x + geometry.width / 2,
+        y: origin.y + geometry.y + geometry.height / 2
+      };
+    }
+    function findFrameContainingPoint2(x, y) {
+      var parent = graph.getDefaultParent();
+      var count = model.getChildCount(parent);
+      var i;
+      for (i = 0; i < count; i++) {
+        var child = model.getChildAt(parent, i);
+        if (!deps.isDrawingFrame(child)) {
+          continue;
+        }
+        var geometry = model.getGeometry(child);
+        if (geometry == null) {
+          continue;
+        }
+        if (x >= geometry.x && x <= geometry.x + geometry.width && y >= geometry.y && y <= geometry.y + geometry.height) {
+          return child;
+        }
+      }
       return null;
+    }
+    function findFrameByGeometry2(cell) {
+      var center = getAbsoluteCenter2(cell);
+      if (center == null) {
+        return null;
+      }
+      return findFrameContainingPoint2(center.x, center.y);
     }
     function getFrameConfig2(frame) {
       var raw = deps.getAttr(frame, "frameConfigJson");
@@ -1102,6 +1227,10 @@
       addTopLevelCell: addTopLevelCell2,
       createDrawingFrameCell: createDrawingFrameCell2,
       findDrawingFrame: findDrawingFrame2,
+      findFrameByGeometry: findFrameByGeometry2,
+      findFrameContainingPoint: findFrameContainingPoint2,
+      getAbsoluteCenter: getAbsoluteCenter2,
+      getAbsoluteOrigin: getAbsoluteOrigin2,
       findFrameById: findFrameById2,
       getActiveFrame: getActiveFrame2,
       getAllDrawingFrames: getAllDrawingFrames2,
@@ -1130,8 +1259,20 @@
   function findDrawingFrame() {
     return getFrameDomain().findDrawingFrame.apply(null, arguments);
   }
+  function findFrameByGeometry() {
+    return getFrameDomain().findFrameByGeometry.apply(null, arguments);
+  }
   function findFrameById() {
     return getFrameDomain().findFrameById.apply(null, arguments);
+  }
+  function findFrameContainingPoint() {
+    return getFrameDomain().findFrameContainingPoint.apply(null, arguments);
+  }
+  function getAbsoluteCenter() {
+    return getFrameDomain().getAbsoluteCenter.apply(null, arguments);
+  }
+  function getAbsoluteOrigin() {
+    return getFrameDomain().getAbsoluteOrigin.apply(null, arguments);
   }
   function getActiveFrame() {
     return getFrameDomain().getActiveFrame.apply(null, arguments);
@@ -1167,7 +1308,11 @@
     addTopLevelCell,
     createDrawingFrameCell,
     findDrawingFrame,
+    findFrameByGeometry,
     findFrameById,
+    findFrameContainingPoint,
+    getAbsoluteCenter,
+    getAbsoluteOrigin,
     getActiveFrame,
     getAllDrawingFrames,
     getBottommostFrame,
@@ -1179,938 +1324,6 @@
     getMaxFramePageNumberInGroup,
     getRightmostFrameInGroup,
     normalizeFrameConfig
-  };
-
-  // domain/specSchema.js
-  function isSchemaLeafDescriptor(value) {
-    return isObject(value) && typeof value.type === "string" && trim(value.type).length > 0;
-  }
-  function normalizeSchemaType(type) {
-    type = trim(type).toLowerCase();
-    return type == "number" || type == "boolean" || type == "enum" ? type : "string";
-  }
-  function normalizeEnumOptions(options) {
-    var list = Array.isArray(options) ? options : String(options || "").split(",");
-    var result = [];
-    var seen = {};
-    var i;
-    for (i = 0; i < list.length; i++) {
-      var value = trim(list[i]);
-      if (value.length > 0 && seen[value] == null) {
-        seen[value] = true;
-        result.push(value);
-      }
-    }
-    return result;
-  }
-  function normalizeSchemaField(raw, nextItemId2) {
-    var field = isObject(raw) ? cloneJson(raw) : {};
-    field.id = trim(field.id) || (typeof nextItemId2 === "function" ? nextItemId2("field") : "");
-    field.path = trim(field.path);
-    field.type = normalizeSchemaType(field.type);
-    field.required = !!field.required;
-    field.enumValues = normalizeEnumOptions(field.enumValues);
-    return field;
-  }
-  function getDefaultSchemaFields(nextItemId2) {
-    return [
-      normalizeSchemaField({ path: "title", type: "string" }, nextItemId2),
-      normalizeSchemaField({ path: "name", type: "string" }, nextItemId2),
-      normalizeSchemaField({ path: "code", type: "string" }, nextItemId2),
-      normalizeSchemaField({ path: "power", type: "string" }, nextItemId2)
-    ];
-  }
-  function hasSchemaPath(schema, path) {
-    var parts = trim(path).split(".");
-    var current = schema;
-    var i;
-    if (!isObject(schema) || trim(path).length == 0) {
-      return false;
-    }
-    for (i = 0; i < parts.length; i++) {
-      if (!isObject(current) || !current.hasOwnProperty(parts[i])) {
-        return false;
-      }
-      current = current[parts[i]];
-    }
-    return true;
-  }
-  function isValidFieldPath(path) {
-    var parts = trim(path).split(".");
-    var i;
-    if (trim(path).length == 0) {
-      return false;
-    }
-    for (i = 0; i < parts.length; i++) {
-      if (!/^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(parts[i])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  function setValueByPath(target, path, value) {
-    var parts = trim(path).split(".");
-    var current = target;
-    var i;
-    for (i = 0; i < parts.length - 1; i++) {
-      if (!isObject(current[parts[i]])) {
-        current[parts[i]] = {};
-      }
-      current = current[parts[i]];
-    }
-    current[parts[parts.length - 1]] = value;
-  }
-  function buildSchemaFromFields(fields, nextItemId2) {
-    var schema = {};
-    var seen = {};
-    var i;
-    for (i = 0; i < fields.length; i++) {
-      var field = normalizeSchemaField(fields[i], nextItemId2);
-      var path = trim(field.path);
-      if (path.length == 0) {
-        continue;
-      }
-      if (!isValidFieldPath(path)) {
-        throw new Error("\u5B57\u6BB5\u8DEF\u5F84\u683C\u5F0F\u4E0D\u6B63\u786E");
-      }
-      if (seen[path]) {
-        throw new Error("\u5B57\u6BB5\u8DEF\u5F84\u4E0D\u80FD\u91CD\u590D");
-      }
-      if (field.type == "enum" && field.enumValues.length == 0) {
-        throw new Error("\u679A\u4E3E\u7C7B\u578B\u5FC5\u987B\u81F3\u5C11\u63D0\u4F9B\u4E00\u4E2A\u53EF\u9009\u503C");
-      }
-      seen[path] = true;
-      setValueByPath(schema, path, {
-        type: field.type,
-        required: !!field.required,
-        enumValues: field.enumValues
-      });
-    }
-    return schema;
-  }
-  function flattenSchemaFields(schema, prefix, result, nextItemId2) {
-    var nextPrefix = trim(prefix);
-    var key;
-    if (!isObject(schema)) {
-      return result;
-    }
-    for (key in schema) {
-      if (schema.hasOwnProperty(key)) {
-        var path = nextPrefix.length > 0 ? nextPrefix + "." + key : key;
-        var value = schema[key];
-        if (isSchemaLeafDescriptor(value)) {
-          result.push(
-            normalizeSchemaField(
-              {
-                path,
-                type: value.type,
-                required: value.required,
-                enumValues: value.enumValues
-              },
-              nextItemId2
-            )
-          );
-        } else if (isObject(value)) {
-          flattenSchemaFields(value, path, result, nextItemId2);
-        }
-      }
-    }
-    return result;
-  }
-  function buildEmptyValueFromSchema(schema) {
-    var key;
-    if (Array.isArray(schema)) {
-      return [];
-    }
-    if (isObject(schema)) {
-      if (isSchemaLeafDescriptor(schema)) {
-        switch (normalizeSchemaType(schema.type)) {
-          case "number":
-            return null;
-          case "boolean":
-            return null;
-          case "enum":
-            return "";
-          default:
-            return "";
-        }
-      }
-      var result = {};
-      for (key in schema) {
-        if (schema.hasOwnProperty(key)) {
-          result[key] = buildEmptyValueFromSchema(schema[key]);
-        }
-      }
-      return result;
-    }
-    return null;
-  }
-  function getValueByPath(obj, path) {
-    var current = obj;
-    var parts = trim(path).split(".");
-    var i;
-    if (trim(path).length == 0) {
-      return null;
-    }
-    for (i = 0; i < parts.length; i++) {
-      if (current == null) {
-        return null;
-      }
-      current = current[parts[i]];
-    }
-    return current;
-  }
-
-  // domain/specLabels.js
-  function normalizeLabelAlign(align) {
-    align = trim(align).toLowerCase();
-    return align == "left" || align == "right" ? align : "center";
-  }
-  function normalizeLabelItem(raw, fallbackId, fallbackText) {
-    var text = fallbackText;
-    var id = fallbackId;
-    var binding = "";
-    var x = 0.5;
-    var y = -0.18;
-    var width = 120;
-    var height = 26;
-    var align = "center";
-    if (isObject(raw)) {
-      text = trim(raw.text || raw.label) || fallbackText;
-      id = trim(raw.id || raw.key || raw.name) || fallbackId;
-      binding = trim(raw.binding || raw.field || raw.prop);
-      x = toFloat(raw.x, x);
-      y = toFloat(raw.y, y);
-      width = Math.max(40, toInt(raw.width, width));
-      height = Math.max(20, toInt(raw.height, height));
-      align = normalizeLabelAlign(raw.align);
-    } else {
-      text = trim(raw) || fallbackText;
-    }
-    return {
-      id,
-      text,
-      binding,
-      x: clamp(x, -1.5, 2.5),
-      y: clamp(y, -1.5, 2.5),
-      width,
-      height,
-      align
-    };
-  }
-  function normalizeLabels(rawLabels) {
-    var labels = [];
-    var i;
-    if (!Array.isArray(rawLabels)) {
-      return labels;
-    }
-    for (i = 0; i < rawLabels.length; i++) {
-      labels.push(normalizeLabelItem(rawLabels[i], "label:" + i, "\u6587\u672C" + (i + 1)));
-    }
-    return labels;
-  }
-  function buildResolvedLabels(labels, instance, getValueByPath2) {
-    var result = [];
-    var i;
-    for (i = 0; i < labels.length; i++) {
-      var item = cloneJson(labels[i]);
-      var value = typeof getValueByPath2 === "function" ? getValueByPath2(instance, item.binding) : null;
-      item.text = trim(item.binding).length > 0 ? value != null ? String(value) : "" : item.text || "";
-      result.push(item);
-    }
-    return result;
-  }
-
-  // domain/spec.js
-  function getSpecDeps() {
-    var app = getApp();
-    return {
-      trim,
-      isObject,
-      cloneJson,
-      validateSvg,
-      generateSymbolId,
-      toInt,
-      nextItemId,
-      normalizeMode,
-      deepMerge,
-      generateInstanceId
-    };
-  }
-  function getVariantLayout(spec, variantKey) {
-    var deps = getSpecDeps();
-    var layouts = normalizeVariantLayouts(spec.variantLayouts);
-    var key = deps.trim(variantKey);
-    if (key.length > 0 && layouts[key] != null) {
-      return {
-        ports: normalizePortLayout(layouts[key].ports),
-        labels: normalizeLabels(layouts[key].labels)
-      };
-    }
-    return {
-      ports: normalizePortLayout(spec.ports),
-      labels: normalizeLabels(spec.labels)
-    };
-  }
-  function getActiveVariantKey(spec) {
-    var deps = getSpecDeps();
-    var field = deps.trim(spec.variantField || "");
-    var value = deps.trim(getValueByPath(spec.data, field));
-    if (value.length == 0 && field == "mode") {
-      value = deps.trim(spec.device.mode);
-    }
-    return value;
-  }
-  function getActiveSvg(spec) {
-    var variantKey = getActiveVariantKey(spec);
-    if (variantKey.length > 0 && spec.svgVariants[variantKey] != null) {
-      return spec.svgVariants[variantKey];
-    }
-    return spec.svg;
-  }
-  function toSvgDataUri(spec) {
-    return "data:image/svg+xml," + encodeURIComponent(getActiveSvg(spec));
-  }
-  function toStyleImageUri(spec) {
-    return "data:image/svg+xml," + encodeURIComponent(getActiveSvg(spec));
-  }
-  function normalizeVariantLayouts(raw) {
-    var deps = getSpecDeps();
-    var result = {};
-    var key;
-    if (!deps.isObject(raw)) {
-      return result;
-    }
-    for (key in raw) {
-      if (raw.hasOwnProperty(key) && deps.trim(key).length > 0) {
-        var entry = deps.isObject(raw[key]) ? raw[key] : {};
-        result[deps.trim(key)] = {
-          ports: normalizePortLayout(entry.ports),
-          labels: normalizeLabels(entry.labels)
-        };
-      }
-    }
-    return result;
-  }
-  function normalizeSpec(raw) {
-    var deps = getSpecDeps();
-    if (!deps.isObject(raw)) {
-      throw new Error("JSON \u6839\u8282\u70B9\u5FC5\u987B\u662F\u5BF9\u8C61");
-    }
-    var device = deps.isObject(raw.device) ? raw.device : {};
-    var ports = raw.ports;
-    var variants = deps.isObject(raw.svgVariants) ? raw.svgVariants : {};
-    var size = deps.isObject(raw.size) ? raw.size : {};
-    var params = deps.isObject(device.params) ? deps.cloneJson(device.params) : {};
-    var schema = deps.isObject(raw.schema) ? deps.cloneJson(raw.schema) : {};
-    var data = deps.isObject(raw.data) ? deps.cloneJson(raw.data) : {};
-    var variantField = deps.trim(raw.variantField || "");
-    var spec = {
-      symbolId: deps.trim(raw.symbolId) || deps.generateSymbolId("symbol"),
-      templateName: deps.trim(raw.templateName) || deps.trim(raw.title) || deps.trim(device.name) || "\u7535\u6C14\u56FE\u5143",
-      title: deps.trim(raw.title) || deps.trim(device.name) || "\u7535\u6C14\u56FE\u5143",
-      svg: deps.validateSvg(raw.svg),
-      size: {
-        width: Math.max(20, deps.toInt(size.width, 120)),
-        height: Math.max(20, deps.toInt(size.height, 80))
-      },
-      device: {
-        name: deps.trim(device.name),
-        code: deps.trim(device.code),
-        power: deps.trim(device.power),
-        mode: deps.normalizeMode(device.mode),
-        params
-      },
-      ports: normalizePortLayout(ports),
-      labels: normalizeLabels(raw.labels),
-      schema,
-      data,
-      variantField,
-      svgVariants: {},
-      variantLayouts: normalizeVariantLayouts(raw.variantLayouts)
-    };
-    for (var variantKey in variants) {
-      if (variants.hasOwnProperty(variantKey) && deps.trim(variantKey).length > 0 && variants[variantKey] != null && deps.trim(variants[variantKey]).length > 0) {
-        spec.svgVariants[deps.trim(variantKey)] = deps.validateSvg(variants[variantKey]);
-      }
-    }
-    return spec;
-  }
-  function createEmptyTemplateSpec() {
-    var deps = getSpecDeps();
-    return normalizeSpec({
-      symbolId: deps.generateSymbolId("symbol"),
-      templateName: "\u7535\u6C14\u56FE\u5143",
-      title: "\u7535\u6C14\u56FE\u5143",
-      svg: '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80"></svg>',
-      size: {
-        width: 120,
-        height: 80
-      },
-      device: {},
-      ports: [],
-      labels: [],
-      schema: {},
-      data: {},
-      variantField: "",
-      svgVariants: {},
-      variantLayouts: {}
-    });
-  }
-  function buildInstanceSpec(instanceData, template, sizeOverride) {
-    var deps = getSpecDeps();
-    template = template != null ? normalizeSpec(deps.cloneJson(template)) : createEmptyTemplateSpec();
-    var mergedData = deps.deepMerge(
-      buildEmptyValueFromSchema(template.schema),
-      instanceData
-    );
-    var spec = deps.cloneJson(template);
-    var nameValue = getValueByPath(mergedData, "name") || getValueByPath(mergedData, "device.name");
-    var codeValue = getValueByPath(mergedData, "code") || getValueByPath(mergedData, "device.code");
-    var powerValue = getValueByPath(mergedData, "power") || getValueByPath(mergedData, "device.power");
-    var modeValue = getValueByPath(mergedData, "mode") || getValueByPath(mergedData, "device.mode");
-    var titleValue = getValueByPath(mergedData, "title");
-    var variantKey;
-    var layout;
-    spec.data = mergedData;
-    spec.symbolId = template.symbolId;
-    spec.instanceId = deps.generateInstanceId();
-    spec.title = deps.trim(titleValue) || deps.trim(nameValue) || template.title;
-    spec.size = {
-      width: Math.max(
-        20,
-        deps.toInt(
-          sizeOverride != null ? sizeOverride.width : null,
-          template.size.width
-        )
-      ),
-      height: Math.max(
-        20,
-        deps.toInt(
-          sizeOverride != null ? sizeOverride.height : null,
-          template.size.height
-        )
-      )
-    };
-    spec.device.name = deps.trim(nameValue);
-    spec.device.code = deps.trim(codeValue);
-    spec.device.power = deps.trim(powerValue);
-    spec.device.mode = deps.normalizeMode(modeValue);
-    variantKey = getActiveVariantKey(spec);
-    layout = getVariantLayout(template, variantKey);
-    spec.ports = layout.ports;
-    spec.labels = buildResolvedLabels(layout.labels, mergedData, getValueByPath);
-    return normalizeSpec(spec);
-  }
-  function buildResolvedLabels2(labels, instance) {
-    return buildResolvedLabels(labels, instance, getValueByPath);
-  }
-  function buildSchemaFromFields2(fields) {
-    var deps = getSpecDeps();
-    return buildSchemaFromFields(fields, deps.nextItemId);
-  }
-  function flattenSchemaFields2(schema, prefix, result) {
-    var deps = getSpecDeps();
-    return flattenSchemaFields(schema, prefix, result, deps.nextItemId);
-  }
-  function getDefaultSchemaFields2() {
-    var deps = getSpecDeps();
-    return getDefaultSchemaFields(deps.nextItemId);
-  }
-  function normalizeSchemaField2(raw) {
-    var deps = getSpecDeps();
-    return normalizeSchemaField(raw, deps.nextItemId);
-  }
-  var specDomainApi = {
-    buildEmptyValueFromSchema,
-    buildInstanceSpec,
-    buildPortLayout,
-    buildResolvedLabels: buildResolvedLabels2,
-    buildSchemaFromFields: buildSchemaFromFields2,
-    createEmptyTemplateSpec,
-    flattenSchemaFields: flattenSchemaFields2,
-    getActiveSvg,
-    getActiveVariantKey,
-    getDefaultSchemaFields: getDefaultSchemaFields2,
-    getValueByPath,
-    getVariantLayout,
-    hasSchemaPath,
-    isSchemaLeafDescriptor,
-    isValidFieldPath,
-    normalizeEnumOptions,
-    normalizeLabelAlign,
-    normalizeLabelItem,
-    normalizeLabels,
-    normalizePortDirection,
-    normalizePortIoMode,
-    normalizePortLayout,
-    normalizePortMarker,
-    normalizePortPoint,
-    normalizeSchemaField: normalizeSchemaField2,
-    normalizeSchemaType,
-    normalizeSpec,
-    normalizeVariantLayouts,
-    parsePortLayout,
-    serializePortLayout,
-    setValueByPath,
-    toStyleImageUri,
-    toSvgDataUri
-  };
-
-  // runtime/connectionConstraints.js
-  function getConstraintDeps() {
-    var app = getApp();
-    var ctx = app.ctx;
-    return {
-      ctx,
-      trim,
-      clamp,
-      parsePortLayout: specDomainApi.parsePortLayout,
-      getAttr,
-      buildPortLayout: specDomainApi.buildPortLayout,
-      findPortHostRoot,
-      normalizePortDirection: specDomainApi.normalizePortDirection,
-      normalizePortIoMode: specDomainApi.normalizePortIoMode,
-      isDrawingFrame,
-      isCabinetSegment,
-      isCabinetGap,
-      findDrawingFrame: frameDomainApi.findDrawingFrame,
-      getCellAbsoluteGeometry: function(cell) {
-        return cabinetDomainApi.getCellAbsoluteGeometry(cell);
-      },
-      getPortAbsolutePosition: function(root, port) {
-        return cabinetDomainApi.getPortAbsolutePosition(root, port);
-      }
-    };
-  }
-  function getConstraintRuntime() {
-    var deps = getConstraintDeps();
-    var ctx = deps.ctx;
-    var graph = ctx.graph;
-    return {
-      deps,
-      graph,
-      model: ctx.model,
-      state: ctx.state,
-      oldGetAllConnectionConstraints: graph.getAllConnectionConstraints,
-      oldSetConnectionConstraint: graph.setConnectionConstraint,
-      oldValidateConnection: graph.connectionHandler.validateConnection
-    };
-  }
-  function getElectricalConstraints(cell) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var root = deps.findPortHostRoot(cell);
-    var layout;
-    var constraints = [];
-    var i;
-    if (root == null) {
-      return null;
-    }
-    layout = deps.buildPortLayout(
-      { ports: deps.parsePortLayout(deps.getAttr(root, "portsJson")) },
-      deps.parsePortLayout(deps.getAttr(root, "portLayout"))
-    );
-    for (i = 0; i < layout.length; i++) {
-      var point = layout[i];
-      constraints.push(
-        new mxConnectionConstraint(
-          new mxPoint(point.x, point.y),
-          false,
-          point.id || "port:" + i
-        )
-      );
-    }
-    return constraints;
-  }
-  function getPortMetaByConstraint(root, constraint) {
-    var deps = getConstraintRuntime().deps;
-    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
-    var name = constraint != null ? deps.trim(constraint.name) : "";
-    var i;
-    for (i = 0; i < ports.length; i++) {
-      if (deps.trim(ports[i].id) == name) {
-        return ports[i];
-      }
-    }
-    return null;
-  }
-  function getPortMetaById(root, portId) {
-    var deps = getConstraintRuntime().deps;
-    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
-    var target = deps.trim(portId);
-    var i;
-    for (i = 0; i < ports.length; i++) {
-      if (deps.trim(ports[i].id) == target) {
-        return ports[i];
-      }
-    }
-    return null;
-  }
-  function mapPortDirectionToConstraint(direction) {
-    var normalizePortDirection2 = getConstraintRuntime().deps.normalizePortDirection;
-    switch (normalizePortDirection2(direction)) {
-      case "left":
-        return "west";
-      case "right":
-        return "east";
-      case "up":
-        return "north";
-      case "down":
-        return "south";
-      default:
-        return "";
-    }
-  }
-  function validatePortIoMode(sourcePort, targetPort) {
-    var normalizePortIoMode2 = getConstraintRuntime().deps.normalizePortIoMode;
-    if (sourcePort != null && normalizePortIoMode2(sourcePort.ioMode) == "in") {
-      return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u5165\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u8D77\u70B9";
-    }
-    if (targetPort != null && normalizePortIoMode2(targetPort.ioMode) == "out") {
-      return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u51FA\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u7EC8\u70B9";
-    }
-    return null;
-  }
-  function applyNativeConnectionConstraint(edge, terminal, source, constraint) {
-    var runtime = getConstraintRuntime();
-    runtime.oldSetConnectionConstraint.call(
-      runtime.graph,
-      edge,
-      terminal,
-      source,
-      constraint
-    );
-  }
-  function isMovableConnectedTerminal(cell) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    return cell != null && model.isVertex(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isCabinetGap(cell);
-  }
-  function clampCellGeometryToFrame(geometry, frame) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    var frameGeometry = model.getGeometry(frame);
-    var nextGeometry = geometry.clone();
-    var padding = 12;
-    var minX = padding;
-    var minY = padding;
-    var maxX = Math.max(minX, frameGeometry.width - geometry.width - padding);
-    var maxY = Math.max(minY, frameGeometry.height - geometry.height - padding);
-    nextGeometry.x = deps.clamp(nextGeometry.x, minX, maxX);
-    nextGeometry.y = deps.clamp(nextGeometry.y, minY, maxY);
-    return nextGeometry;
-  }
-  function moveCellToFrameByDelta(cell, targetFrame, deltaX, deltaY) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    if (!isMovableConnectedTerminal(cell) || targetFrame == null) {
-      return;
-    }
-    var geometry = model.getGeometry(cell);
-    if (geometry == null) {
-      return;
-    }
-    var currentFrame = deps.findDrawingFrame(cell);
-    var absolute = deps.getCellAbsoluteGeometry(cell);
-    var targetFrameGeometry = model.getGeometry(targetFrame);
-    var nextGeometry = geometry.clone();
-    var nextAbsoluteX = absolute.x + deltaX;
-    var nextAbsoluteY = absolute.y + deltaY;
-    if (currentFrame != targetFrame) {
-      model.add(targetFrame, cell);
-    }
-    nextGeometry.x = nextAbsoluteX - targetFrameGeometry.x;
-    nextGeometry.y = nextAbsoluteY - targetFrameGeometry.y;
-    nextGeometry = clampCellGeometryToFrame(nextGeometry, targetFrame);
-    model.setGeometry(cell, nextGeometry);
-  }
-  function collectConnectedMovableGroup(startCell) {
-    var model = getConstraintRuntime().model;
-    var queue = [];
-    var vertexMap = {};
-    var edgeMap = {};
-    var vertices = [];
-    var edges = [];
-    var i;
-    if (!isMovableConnectedTerminal(startCell)) {
-      return {
-        vertices,
-        edges
-      };
-    }
-    queue.push(startCell);
-    while (queue.length > 0) {
-      var cell = queue.shift();
-      var cellId = mxObjectIdentity.get(cell);
-      if (vertexMap[cellId]) {
-        continue;
-      }
-      vertexMap[cellId] = true;
-      vertices.push(cell);
-      for (i = 0; i < model.getEdgeCount(cell); i++) {
-        var edge = model.getEdgeAt(cell, i);
-        var edgeId = mxObjectIdentity.get(edge);
-        var source = model.getTerminal(edge, true);
-        var target = model.getTerminal(edge, false);
-        var other = source == cell ? target : source;
-        if (!edgeMap[edgeId]) {
-          edgeMap[edgeId] = true;
-          edges.push(edge);
-        }
-        if (isMovableConnectedTerminal(other)) {
-          queue.push(other);
-        }
-      }
-    }
-    return {
-      vertices,
-      edges
-    };
-  }
-  function getCellsAbsoluteBounds(cells) {
-    var getCellAbsoluteGeometry2 = getConstraintRuntime().deps.getCellAbsoluteGeometry;
-    var bounds = null;
-    var i;
-    for (i = 0; i < cells.length; i++) {
-      var geometry = getCellAbsoluteGeometry2(cells[i]);
-      if (bounds == null) {
-        bounds = {
-          x: geometry.x,
-          y: geometry.y,
-          width: geometry.width,
-          height: geometry.height
-        };
-      } else {
-        var minX = Math.min(bounds.x, geometry.x);
-        var minY = Math.min(bounds.y, geometry.y);
-        var maxX = Math.max(
-          bounds.x + bounds.width,
-          geometry.x + geometry.width
-        );
-        var maxY = Math.max(
-          bounds.y + bounds.height,
-          geometry.y + geometry.height
-        );
-        bounds.x = minX;
-        bounds.y = minY;
-        bounds.width = maxX - minX;
-        bounds.height = maxY - minY;
-      }
-    }
-    return bounds;
-  }
-  function adjustGroupDeltaToFrame(vertices, targetFrame, deltaX, deltaY) {
-    var model = getConstraintRuntime().model;
-    var bounds = getCellsAbsoluteBounds(vertices);
-    var frameGeometry = model.getGeometry(targetFrame);
-    var padding = 12;
-    if (bounds == null || frameGeometry == null) {
-      return {
-        x: deltaX,
-        y: deltaY
-      };
-    }
-    var nextX = bounds.x + deltaX;
-    var nextY = bounds.y + deltaY;
-    var minX = frameGeometry.x + padding;
-    var minY = frameGeometry.y + padding;
-    var maxX = frameGeometry.x + frameGeometry.width - padding;
-    var maxY = frameGeometry.y + frameGeometry.height - padding;
-    if (nextX < minX) {
-      deltaX += minX - nextX;
-      nextX = minX;
-    }
-    if (nextY < minY) {
-      deltaY += minY - nextY;
-      nextY = minY;
-    }
-    if (nextX + bounds.width > maxX) {
-      deltaX -= nextX + bounds.width - maxX;
-    }
-    if (nextY + bounds.height > maxY) {
-      deltaY -= nextY + bounds.height - maxY;
-    }
-    return {
-      x: deltaX,
-      y: deltaY
-    };
-  }
-  function shiftEdgePointsByDelta(edge, deltaX, deltaY) {
-    var model = getConstraintRuntime().model;
-    var geometry = model.getGeometry(edge);
-    var points;
-    var i;
-    if (geometry == null || geometry.points == null || geometry.points.length == 0) {
-      return;
-    }
-    geometry = geometry.clone();
-    points = [];
-    for (i = 0; i < geometry.points.length; i++) {
-      points.push(
-        new mxPoint(
-          geometry.points[i].x + deltaX,
-          geometry.points[i].y + deltaY
-        )
-      );
-    }
-    geometry.points = points;
-    model.setGeometry(edge, geometry);
-  }
-  function clearEdgePoints(edge) {
-    var model = getConstraintRuntime().model;
-    var geometry = model.getGeometry(edge);
-    if (geometry != null && geometry.points != null && geometry.points.length > 0) {
-      geometry = geometry.clone();
-      geometry.points = null;
-      model.setGeometry(edge, geometry);
-    }
-  }
-  function moveConnectedGroupToCabinetPort(edge, source, oldRoot, oldPortId, newRoot, newPort) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    var state = runtime.state;
-    var otherTerminal = model.getTerminal(edge, !source);
-    var oldPort = getPortMetaById(oldRoot, oldPortId);
-    var targetFrame = deps.findDrawingFrame(newRoot);
-    var group;
-    var delta;
-    var movedMap = {};
-    var i;
-    if (state.updatingModel || !deps.isCabinetSegment(oldRoot) || !deps.isCabinetSegment(newRoot) || oldPort == null || newPort == null || !isMovableConnectedTerminal(otherTerminal) || targetFrame == null) {
-      return;
-    }
-    group = collectConnectedMovableGroup(otherTerminal);
-    if (group.vertices.length == 0) {
-      return;
-    }
-    delta = adjustGroupDeltaToFrame(
-      group.vertices,
-      targetFrame,
-      deps.getPortAbsolutePosition(newRoot, newPort).x - deps.getPortAbsolutePosition(oldRoot, oldPort).x,
-      deps.getPortAbsolutePosition(newRoot, newPort).y - deps.getPortAbsolutePosition(oldRoot, oldPort).y
-    );
-    if (Math.abs(delta.x) < 1e-4 && Math.abs(delta.y) < 1e-4) {
-      return;
-    }
-    state.updatingModel = true;
-    model.beginUpdate();
-    try {
-      for (i = 0; i < group.vertices.length; i++) {
-        var vertex = group.vertices[i];
-        var key = mxObjectIdentity.get(vertex);
-        if (!movedMap[key]) {
-          movedMap[key] = true;
-          moveCellToFrameByDelta(vertex, targetFrame, delta.x, delta.y);
-        }
-      }
-      for (i = 0; i < group.edges.length; i++) {
-        var groupEdge = group.edges[i];
-        var sourceTerminal = model.getTerminal(groupEdge, true);
-        var targetTerminal = model.getTerminal(groupEdge, false);
-        var sourceMoved = movedMap[mxObjectIdentity.get(sourceTerminal)] === true;
-        var targetMoved = movedMap[mxObjectIdentity.get(targetTerminal)] === true;
-        if (sourceMoved && targetMoved) {
-          shiftEdgePointsByDelta(groupEdge, delta.x, delta.y);
-        } else {
-          clearEdgePoints(groupEdge);
-        }
-      }
-    } finally {
-      model.endUpdate();
-      state.updatingModel = false;
-    }
-  }
-  function installGraphBehavior(extraDeps) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var graph = runtime.graph;
-    var model = runtime.model;
-    graph.getAllConnectionConstraints = function(terminal, source) {
-      var root = deps.findPortHostRoot(terminal != null ? terminal.cell : null);
-      if (root != null) {
-        return getElectricalConstraints(root);
-      }
-      return runtime.oldGetAllConnectionConstraints.apply(this, arguments);
-    };
-    graph.setConnectionConstraint = function(edge, terminal, source, constraint) {
-      if (edge == null) {
-        runtime.oldSetConnectionConstraint.apply(this, arguments);
-        return;
-      }
-      var previousStyle = model.getStyle(edge) || "";
-      var previousPortId = deps.trim(
-        mxUtils.getValue(
-          previousStyle,
-          source ? "sourcePortId" : "targetPortId",
-          ""
-        )
-      );
-      var previousRoot = deps.findPortHostRoot(model.getTerminal(edge, source));
-      runtime.oldSetConnectionConstraint.apply(this, arguments);
-      var root = deps.findPortHostRoot(terminal);
-      if (root == null || edge == null) {
-        return;
-      }
-      var port = getPortMetaByConstraint(root, constraint);
-      extraDeps.applyEdgePortConstraintMetadata(edge, root, source, constraint);
-      if (previousRoot != null && root != null && previousPortId.length > 0 && port != null && deps.trim(port.id).length > 0 && (previousRoot != root || previousPortId != deps.trim(port.id))) {
-        moveConnectedGroupToCabinetPort(
-          edge,
-          source,
-          previousRoot,
-          previousPortId,
-          root,
-          port
-        );
-      }
-    };
-    graph.connectionHandler.validateConnection = function(source, target) {
-      var error = runtime.oldValidateConnection.apply(this, arguments);
-      var sourceRoot;
-      var targetRoot;
-      var sourcePort;
-      var targetPort;
-      if (error != null) {
-        extraDeps.setCanvasStatus(error);
-        return error;
-      }
-      sourceRoot = deps.findPortHostRoot(source);
-      targetRoot = deps.findPortHostRoot(target);
-      if (sourceRoot == null && targetRoot == null) {
-        return null;
-      }
-      sourcePort = getPortMetaByConstraint(sourceRoot, this.sourceConstraint);
-      targetPort = getPortMetaByConstraint(
-        targetRoot,
-        this.constraintHandler != null ? this.constraintHandler.currentConstraint : null
-      );
-      error = validatePortIoMode(sourcePort, targetPort);
-      extraDeps.setCanvasStatus(error);
-      return error;
-    };
-    graph.connectionHandler.addListener(mxEvent.RESET, function() {
-      extraDeps.setCanvasStatus("");
-    });
-    graph.connectionHandler.addListener(mxEvent.CONNECT, function() {
-      extraDeps.setCanvasStatus("");
-    });
-  }
-  var connectionConstraintsApi = {
-    applyNativeConnectionConstraint,
-    clearEdgePoints,
-    getElectricalConstraints,
-    getPortMetaByConstraint,
-    getPortMetaById,
-    isMovableConnectedTerminal,
-    installGraphBehavior,
-    mapPortDirectionToConstraint,
-    moveCellToFrameByDelta,
-    moveConnectedGroupToCabinetPort
   };
 
   // domain/snapshotCore.js
@@ -2417,6 +1630,621 @@
     };
   }
 
+  // domain/specSchema.js
+  function isSchemaLeafDescriptor(value) {
+    return isObject(value) && typeof value.type === "string" && trim(value.type).length > 0;
+  }
+  function normalizeSchemaType(type) {
+    type = trim(type).toLowerCase();
+    return type == "number" || type == "boolean" || type == "enum" ? type : "string";
+  }
+  function normalizeEnumOptions(options) {
+    var list = Array.isArray(options) ? options : String(options || "").split(",");
+    var result = [];
+    var seen = {};
+    var i;
+    for (i = 0; i < list.length; i++) {
+      var value = trim(list[i]);
+      if (value.length > 0 && seen[value] == null) {
+        seen[value] = true;
+        result.push(value);
+      }
+    }
+    return result;
+  }
+  function normalizeSchemaField(raw, nextItemId2) {
+    var field = isObject(raw) ? cloneJson(raw) : {};
+    field.id = trim(field.id) || (typeof nextItemId2 === "function" ? nextItemId2("field") : "");
+    field.path = trim(field.path);
+    field.type = normalizeSchemaType(field.type);
+    field.required = !!field.required;
+    field.enumValues = normalizeEnumOptions(field.enumValues);
+    return field;
+  }
+  function getDefaultSchemaFields(nextItemId2) {
+    return [
+      normalizeSchemaField({ path: "title", type: "string" }, nextItemId2),
+      normalizeSchemaField({ path: "name", type: "string" }, nextItemId2),
+      normalizeSchemaField({ path: "code", type: "string" }, nextItemId2),
+      normalizeSchemaField({ path: "power", type: "string" }, nextItemId2)
+    ];
+  }
+  function hasSchemaPath(schema, path) {
+    var parts = trim(path).split(".");
+    var current = schema;
+    var i;
+    if (!isObject(schema) || trim(path).length == 0) {
+      return false;
+    }
+    for (i = 0; i < parts.length; i++) {
+      if (!isObject(current) || !current.hasOwnProperty(parts[i])) {
+        return false;
+      }
+      current = current[parts[i]];
+    }
+    return true;
+  }
+  function isValidFieldPath(path) {
+    var parts = trim(path).split(".");
+    var i;
+    if (trim(path).length == 0) {
+      return false;
+    }
+    for (i = 0; i < parts.length; i++) {
+      if (!/^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(parts[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function setValueByPath(target, path, value) {
+    var parts = trim(path).split(".");
+    var current = target;
+    var i;
+    for (i = 0; i < parts.length - 1; i++) {
+      if (!isObject(current[parts[i]])) {
+        current[parts[i]] = {};
+      }
+      current = current[parts[i]];
+    }
+    current[parts[parts.length - 1]] = value;
+  }
+  function buildSchemaFromFields(fields, nextItemId2) {
+    var schema = {};
+    var seen = {};
+    var i;
+    for (i = 0; i < fields.length; i++) {
+      var field = normalizeSchemaField(fields[i], nextItemId2);
+      var path = trim(field.path);
+      if (path.length == 0) {
+        continue;
+      }
+      if (!isValidFieldPath(path)) {
+        throw new Error("\u5B57\u6BB5\u8DEF\u5F84\u683C\u5F0F\u4E0D\u6B63\u786E");
+      }
+      if (seen[path]) {
+        throw new Error("\u5B57\u6BB5\u8DEF\u5F84\u4E0D\u80FD\u91CD\u590D");
+      }
+      if (field.type == "enum" && field.enumValues.length == 0) {
+        throw new Error("\u679A\u4E3E\u7C7B\u578B\u5FC5\u987B\u81F3\u5C11\u63D0\u4F9B\u4E00\u4E2A\u53EF\u9009\u503C");
+      }
+      seen[path] = true;
+      setValueByPath(schema, path, {
+        type: field.type,
+        required: !!field.required,
+        enumValues: field.enumValues
+      });
+    }
+    return schema;
+  }
+  function flattenSchemaFields(schema, prefix, result, nextItemId2) {
+    var nextPrefix = trim(prefix);
+    var key;
+    if (!isObject(schema)) {
+      return result;
+    }
+    for (key in schema) {
+      if (schema.hasOwnProperty(key)) {
+        var path = nextPrefix.length > 0 ? nextPrefix + "." + key : key;
+        var value = schema[key];
+        if (isSchemaLeafDescriptor(value)) {
+          result.push(
+            normalizeSchemaField(
+              {
+                path,
+                type: value.type,
+                required: value.required,
+                enumValues: value.enumValues
+              },
+              nextItemId2
+            )
+          );
+        } else if (isObject(value)) {
+          flattenSchemaFields(value, path, result, nextItemId2);
+        }
+      }
+    }
+    return result;
+  }
+  function buildEmptyValueFromSchema(schema) {
+    var key;
+    if (Array.isArray(schema)) {
+      return [];
+    }
+    if (isObject(schema)) {
+      if (isSchemaLeafDescriptor(schema)) {
+        switch (normalizeSchemaType(schema.type)) {
+          case "number":
+            return null;
+          case "boolean":
+            return null;
+          case "enum":
+            return "";
+          default:
+            return "";
+        }
+      }
+      var result = {};
+      for (key in schema) {
+        if (schema.hasOwnProperty(key)) {
+          result[key] = buildEmptyValueFromSchema(schema[key]);
+        }
+      }
+      return result;
+    }
+    return null;
+  }
+  function getValueByPath(obj, path) {
+    var current = obj;
+    var parts = trim(path).split(".");
+    var i;
+    if (trim(path).length == 0) {
+      return null;
+    }
+    for (i = 0; i < parts.length; i++) {
+      if (current == null) {
+        return null;
+      }
+      current = current[parts[i]];
+    }
+    return current;
+  }
+
+  // domain/specPorts.js
+  function normalizePortMarker(marker) {
+    marker = trim(marker).toLowerCase();
+    return marker == "circle" || marker == "hidden" ? marker : "cross";
+  }
+  function normalizePortDirection(direction) {
+    direction = trim(direction).toLowerCase();
+    return direction == "left" || direction == "right" || direction == "up" || direction == "down" ? direction : "any";
+  }
+  function normalizePortIoMode(mode) {
+    mode = trim(mode).toLowerCase();
+    return mode == "in" || mode == "out" ? mode : "both";
+  }
+  function defaultPortPosition(index, count) {
+    return count <= 0 ? 0.5 : (index + 1) / (count + 1);
+  }
+  function normalizePortPoint(raw, fallbackId, fallbackX, fallbackY) {
+    var id = fallbackId;
+    var x = fallbackX;
+    var y = fallbackY;
+    var name = "";
+    var marker = "cross";
+    var direction = "any";
+    var ioMode = "both";
+    if (isObject(raw)) {
+      id = trim(raw.id || raw.key || raw.name) || fallbackId;
+      x = toFloat(raw.x, fallbackX);
+      y = toFloat(raw.y, fallbackY);
+      name = trim(raw.name || raw.label || "");
+      marker = normalizePortMarker(raw.marker || raw.style);
+      direction = normalizePortDirection(raw.direction || raw.side);
+      ioMode = normalizePortIoMode(raw.ioMode || raw.io || raw.mode);
+    } else if (typeof raw == "number") {
+      y = raw;
+    }
+    return {
+      id,
+      x: clamp(x, 0, 1),
+      y: clamp(y, 0, 1),
+      name,
+      marker,
+      direction,
+      ioMode
+    };
+  }
+  function normalizePortLayout(rawPorts) {
+    var points = [];
+    var i;
+    if (Array.isArray(rawPorts)) {
+      for (i = 0; i < rawPorts.length; i++) {
+        points.push(
+          normalizePortPoint(
+            rawPorts[i],
+            "port:" + i,
+            0.5,
+            (i + 1) / (rawPorts.length + 1)
+          )
+        );
+      }
+      return points;
+    }
+    if (!isObject(rawPorts)) {
+      return points;
+    }
+    if (Array.isArray(rawPorts.items)) {
+      for (i = 0; i < rawPorts.items.length; i++) {
+        points.push(
+          normalizePortPoint(
+            rawPorts.items[i],
+            "port:" + i,
+            0.5,
+            (i + 1) / (rawPorts.items.length + 1)
+          )
+        );
+      }
+      return points;
+    }
+    if (Array.isArray(rawPorts.left) || Array.isArray(rawPorts.right)) {
+      var left = Array.isArray(rawPorts.left) ? rawPorts.left : [];
+      var right = Array.isArray(rawPorts.right) ? rawPorts.right : [];
+      for (i = 0; i < left.length; i++) {
+        points.push(
+          normalizePortPoint(
+            { id: "left:" + i, x: 0, y: left[i] },
+            "left:" + i,
+            0,
+            defaultPortPosition(i, left.length)
+          )
+        );
+      }
+      for (i = 0; i < right.length; i++) {
+        points.push(
+          normalizePortPoint(
+            { id: "right:" + i, x: 1, y: right[i] },
+            "right:" + i,
+            1,
+            defaultPortPosition(i, right.length)
+          )
+        );
+      }
+      return points;
+    }
+    var leftCount = Math.max(0, toInt(rawPorts.leftCount, 0));
+    var rightCount = Math.max(0, toInt(rawPorts.rightCount, 0));
+    for (i = 0; i < leftCount; i++) {
+      points.push({
+        id: "left:" + i,
+        x: 0,
+        y: defaultPortPosition(i, leftCount)
+      });
+    }
+    for (i = 0; i < rightCount; i++) {
+      points.push({
+        id: "right:" + i,
+        x: 1,
+        y: defaultPortPosition(i, rightCount)
+      });
+    }
+    return points;
+  }
+  function parsePortLayout(raw) {
+    if (raw == null || raw.length == 0) {
+      return [];
+    }
+    try {
+      return normalizePortLayout(JSON.parse(raw));
+    } catch (e) {
+      return [];
+    }
+  }
+  function buildPortLayout(spec, base) {
+    var current = normalizePortLayout(spec.ports);
+    var fallback = normalizePortLayout(base);
+    return current.length > 0 ? current : fallback;
+  }
+  function serializePortLayout(layout) {
+    return JSON.stringify(normalizePortLayout(layout));
+  }
+
+  // domain/specLabels.js
+  function normalizeLabelAlign(align) {
+    align = trim(align).toLowerCase();
+    return align == "left" || align == "right" ? align : "center";
+  }
+  function normalizeLabelItem(raw, fallbackId, fallbackText) {
+    var text = fallbackText;
+    var id = fallbackId;
+    var binding = "";
+    var x = 0.5;
+    var y = -0.18;
+    var width = 120;
+    var height = 26;
+    var align = "center";
+    if (isObject(raw)) {
+      text = trim(raw.text || raw.label) || fallbackText;
+      id = trim(raw.id || raw.key || raw.name) || fallbackId;
+      binding = trim(raw.binding || raw.field || raw.prop);
+      x = toFloat(raw.x, x);
+      y = toFloat(raw.y, y);
+      width = Math.max(40, toInt(raw.width, width));
+      height = Math.max(20, toInt(raw.height, height));
+      align = normalizeLabelAlign(raw.align);
+    } else {
+      text = trim(raw) || fallbackText;
+    }
+    return {
+      id,
+      text,
+      binding,
+      x: clamp(x, -1.5, 2.5),
+      y: clamp(y, -1.5, 2.5),
+      width,
+      height,
+      align
+    };
+  }
+  function normalizeLabels(rawLabels) {
+    var labels = [];
+    var i;
+    if (!Array.isArray(rawLabels)) {
+      return labels;
+    }
+    for (i = 0; i < rawLabels.length; i++) {
+      labels.push(normalizeLabelItem(rawLabels[i], "label:" + i, "\u6587\u672C" + (i + 1)));
+    }
+    return labels;
+  }
+  function buildResolvedLabels(labels, instance, getValueByPath2) {
+    var result = [];
+    var i;
+    for (i = 0; i < labels.length; i++) {
+      var item = cloneJson(labels[i]);
+      var value = typeof getValueByPath2 === "function" ? getValueByPath2(instance, item.binding) : null;
+      item.text = trim(item.binding).length > 0 ? value != null ? String(value) : "" : item.text || "";
+      result.push(item);
+    }
+    return result;
+  }
+
+  // domain/spec.js
+  function getSpecDeps() {
+    var app = getApp();
+    return {
+      trim,
+      isObject,
+      cloneJson,
+      validateSvg,
+      generateSymbolId,
+      toInt,
+      nextItemId,
+      normalizeMode,
+      deepMerge,
+      generateInstanceId
+    };
+  }
+  function getVariantLayout(spec, variantKey) {
+    var deps = getSpecDeps();
+    var layouts = normalizeVariantLayouts(spec.variantLayouts);
+    var key = deps.trim(variantKey);
+    if (key.length > 0 && layouts[key] != null) {
+      return {
+        ports: normalizePortLayout(layouts[key].ports),
+        labels: normalizeLabels(layouts[key].labels)
+      };
+    }
+    return {
+      ports: normalizePortLayout(spec.ports),
+      labels: normalizeLabels(spec.labels)
+    };
+  }
+  function getActiveVariantKey(spec) {
+    var deps = getSpecDeps();
+    var field = deps.trim(spec.variantField || "");
+    var value = deps.trim(getValueByPath(spec.data, field));
+    if (value.length == 0 && field == "mode") {
+      value = deps.trim(spec.device.mode);
+    }
+    return value;
+  }
+  function getActiveSvg(spec) {
+    var variantKey = getActiveVariantKey(spec);
+    if (variantKey.length > 0 && spec.svgVariants[variantKey] != null) {
+      return spec.svgVariants[variantKey];
+    }
+    return spec.svg;
+  }
+  function toSvgDataUri(spec) {
+    return "data:image/svg+xml," + encodeURIComponent(getActiveSvg(spec));
+  }
+  function toStyleImageUri(spec) {
+    return "data:image/svg+xml," + encodeURIComponent(getActiveSvg(spec));
+  }
+  function normalizeVariantLayouts(raw) {
+    var deps = getSpecDeps();
+    var result = {};
+    var key;
+    if (!deps.isObject(raw)) {
+      return result;
+    }
+    for (key in raw) {
+      if (raw.hasOwnProperty(key) && deps.trim(key).length > 0) {
+        var entry = deps.isObject(raw[key]) ? raw[key] : {};
+        result[deps.trim(key)] = {
+          ports: normalizePortLayout(entry.ports),
+          labels: normalizeLabels(entry.labels)
+        };
+      }
+    }
+    return result;
+  }
+  function normalizeSpec(raw) {
+    var deps = getSpecDeps();
+    if (!deps.isObject(raw)) {
+      throw new Error("JSON \u6839\u8282\u70B9\u5FC5\u987B\u662F\u5BF9\u8C61");
+    }
+    var device = deps.isObject(raw.device) ? raw.device : {};
+    var ports = raw.ports;
+    var variants = deps.isObject(raw.svgVariants) ? raw.svgVariants : {};
+    var size = deps.isObject(raw.size) ? raw.size : {};
+    var params = deps.isObject(device.params) ? deps.cloneJson(device.params) : {};
+    var schema = deps.isObject(raw.schema) ? deps.cloneJson(raw.schema) : {};
+    var data = deps.isObject(raw.data) ? deps.cloneJson(raw.data) : {};
+    var variantField = deps.trim(raw.variantField || "");
+    var spec = {
+      symbolId: deps.trim(raw.symbolId) || deps.generateSymbolId("symbol"),
+      templateName: deps.trim(raw.templateName) || deps.trim(raw.title) || deps.trim(device.name) || "\u7535\u6C14\u56FE\u5143",
+      title: deps.trim(raw.title) || deps.trim(device.name) || "\u7535\u6C14\u56FE\u5143",
+      svg: deps.validateSvg(raw.svg),
+      size: {
+        width: Math.max(20, deps.toInt(size.width, 120)),
+        height: Math.max(20, deps.toInt(size.height, 80))
+      },
+      device: {
+        name: deps.trim(device.name),
+        code: deps.trim(device.code),
+        power: deps.trim(device.power),
+        mode: deps.normalizeMode(device.mode),
+        params
+      },
+      ports: normalizePortLayout(ports),
+      labels: normalizeLabels(raw.labels),
+      schema,
+      data,
+      variantField,
+      svgVariants: {},
+      variantLayouts: normalizeVariantLayouts(raw.variantLayouts)
+    };
+    for (var variantKey in variants) {
+      if (variants.hasOwnProperty(variantKey) && deps.trim(variantKey).length > 0 && variants[variantKey] != null && deps.trim(variants[variantKey]).length > 0) {
+        spec.svgVariants[deps.trim(variantKey)] = deps.validateSvg(variants[variantKey]);
+      }
+    }
+    return spec;
+  }
+  function createEmptyTemplateSpec() {
+    var deps = getSpecDeps();
+    return normalizeSpec({
+      symbolId: deps.generateSymbolId("symbol"),
+      templateName: "\u7535\u6C14\u56FE\u5143",
+      title: "\u7535\u6C14\u56FE\u5143",
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80"></svg>',
+      size: {
+        width: 120,
+        height: 80
+      },
+      device: {},
+      ports: [],
+      labels: [],
+      schema: {},
+      data: {},
+      variantField: "",
+      svgVariants: {},
+      variantLayouts: {}
+    });
+  }
+  function buildInstanceSpec(instanceData, template, sizeOverride) {
+    var deps = getSpecDeps();
+    template = template != null ? normalizeSpec(deps.cloneJson(template)) : createEmptyTemplateSpec();
+    var mergedData = deps.deepMerge(
+      buildEmptyValueFromSchema(template.schema),
+      instanceData
+    );
+    var spec = deps.cloneJson(template);
+    var nameValue = getValueByPath(mergedData, "name") || getValueByPath(mergedData, "device.name");
+    var codeValue = getValueByPath(mergedData, "code") || getValueByPath(mergedData, "device.code");
+    var powerValue = getValueByPath(mergedData, "power") || getValueByPath(mergedData, "device.power");
+    var modeValue = getValueByPath(mergedData, "mode") || getValueByPath(mergedData, "device.mode");
+    var titleValue = getValueByPath(mergedData, "title");
+    var variantKey;
+    var layout;
+    spec.data = mergedData;
+    spec.symbolId = template.symbolId;
+    spec.instanceId = deps.generateInstanceId();
+    spec.title = deps.trim(titleValue) || deps.trim(nameValue) || template.title;
+    spec.size = {
+      width: Math.max(
+        20,
+        deps.toInt(
+          sizeOverride != null ? sizeOverride.width : null,
+          template.size.width
+        )
+      ),
+      height: Math.max(
+        20,
+        deps.toInt(
+          sizeOverride != null ? sizeOverride.height : null,
+          template.size.height
+        )
+      )
+    };
+    spec.device.name = deps.trim(nameValue);
+    spec.device.code = deps.trim(codeValue);
+    spec.device.power = deps.trim(powerValue);
+    spec.device.mode = deps.normalizeMode(modeValue);
+    variantKey = getActiveVariantKey(spec);
+    layout = getVariantLayout(template, variantKey);
+    spec.ports = layout.ports;
+    spec.labels = buildResolvedLabels(layout.labels, mergedData, getValueByPath);
+    return normalizeSpec(spec);
+  }
+  function buildResolvedLabels2(labels, instance) {
+    return buildResolvedLabels(labels, instance, getValueByPath);
+  }
+  function buildSchemaFromFields2(fields) {
+    var deps = getSpecDeps();
+    return buildSchemaFromFields(fields, deps.nextItemId);
+  }
+  function flattenSchemaFields2(schema, prefix, result) {
+    var deps = getSpecDeps();
+    return flattenSchemaFields(schema, prefix, result, deps.nextItemId);
+  }
+  function getDefaultSchemaFields2() {
+    var deps = getSpecDeps();
+    return getDefaultSchemaFields(deps.nextItemId);
+  }
+  function normalizeSchemaField2(raw) {
+    var deps = getSpecDeps();
+    return normalizeSchemaField(raw, deps.nextItemId);
+  }
+  var specDomainApi = {
+    buildEmptyValueFromSchema,
+    buildInstanceSpec,
+    buildPortLayout,
+    buildResolvedLabels: buildResolvedLabels2,
+    buildSchemaFromFields: buildSchemaFromFields2,
+    createEmptyTemplateSpec,
+    flattenSchemaFields: flattenSchemaFields2,
+    getActiveSvg,
+    getActiveVariantKey,
+    getDefaultSchemaFields: getDefaultSchemaFields2,
+    getValueByPath,
+    getVariantLayout,
+    hasSchemaPath,
+    isSchemaLeafDescriptor,
+    isValidFieldPath,
+    normalizeEnumOptions,
+    normalizeLabelAlign,
+    normalizeLabelItem,
+    normalizeLabels,
+    normalizePortDirection,
+    normalizePortIoMode,
+    normalizePortLayout,
+    normalizePortMarker,
+    normalizePortPoint,
+    normalizeSchemaField: normalizeSchemaField2,
+    normalizeSchemaType,
+    normalizeSpec,
+    normalizeVariantLayouts,
+    parsePortLayout,
+    serializePortLayout,
+    setValueByPath,
+    toStyleImageUri,
+    toSvgDataUri
+  };
+
   // runtime/portSwapMode.js
   function getPortSwapDeps() {
     var app = getApp();
@@ -2431,10 +2259,9 @@
       findPortHostRoot,
       isCabinetSegment,
       isMovableConnectedTerminal: connectionConstraintsApi.isMovableConnectedTerminal,
-      closeGapDialogWindow: function() {
-        return cabinetDialogsApi.closeGapDialogWindow();
+      closeCabinetBlockDialog: function() {
+        return cabinetBlockDialogApi.closeCabinetBlockDialog();
       },
-      setSelectedCabinetGap: cabinetDomainApi.setSelectedCabinetGap,
       showStatus,
       setCanvasStatus,
       getPortAbsolutePosition: cabinetDomainApi.getPortAbsolutePosition,
@@ -2625,7 +2452,7 @@
     }
     return false;
   }
-  function installGraphClickBehavior(extraDeps) {
+  function installGraphClickBehavior() {
     var runtime = getPortSwapRuntime();
     var deps = runtime.deps;
     var graph = runtime.graph;
@@ -2651,17 +2478,6 @@
           evt.consume();
           return;
         }
-      }
-      if (extraDeps.isCabinetGap(cell)) {
-        extraDeps.setSelectedCabinetGap(
-          deps.getAttr(cell, "logicalCabinetId"),
-          deps.getAttr(cell, "gapIndex")
-        );
-        extraDeps.openCabinetGapDialog(cell, mouseEvent);
-        evt.consume();
-      } else if (state.selectedCabinetGap != null) {
-        extraDeps.closeGapDialogWindow();
-        extraDeps.setSelectedCabinetGap(null, null);
       }
     });
   }
@@ -2770,8 +2586,7 @@
       exitPortSwapMode();
       return;
     }
-    deps.closeGapDialogWindow();
-    deps.setSelectedCabinetGap(null, null);
+    deps.closeCabinetBlockDialog();
     var context = getPortSwapContextFromSelection();
     if (context == null) {
       deps.showStatus("\u8BF7\u5148\u9009\u4E2D\u4E0E\u914D\u7535\u67DC\u76F4\u63A5\u76F8\u8FDE\u7684\u7B2C\u4E00\u6761\u8FB9\u6216\u7B2C\u4E00\u4E2A\u56FE\u5143", true);
@@ -2815,8 +2630,8 @@
       minHeight: ctx.constants.INSTANCE_COMPOSE_ZONE_MIN_HEIGHT,
       showStatus,
       setCanvasStatus,
-      closeGapDialogWindow: function() {
-        return cabinetDialogsApi.closeGapDialogWindow();
+      closeCabinetBlockDialog: function() {
+        return cabinetBlockDialogApi.closeCabinetBlockDialog();
       },
       exitPortSwapMode: function(clearStatus) {
         return portSwapModeApi.exitPortSwapMode(clearStatus);
@@ -3334,7 +3149,7 @@
       zoneBounds: null,
       initialZoneCellIds: {}
     };
-    deps.closeGapDialogWindow();
+    deps.closeCabinetBlockDialog();
     deps.exitPortSwapMode(false);
     graph.clearSelection();
     if (graph.selectionCellsHandler != null && typeof graph.selectionCellsHandler.clear === "function") {
@@ -3778,6 +3593,7 @@
   var culledFrameSet = /* @__PURE__ */ new Set();
   var installed = false;
   var throttleTimer = null;
+  var lodListeners = [];
   var _graph = null;
   function isOrphanTopLevelCell(cell) {
     if (cell == null || isDrawingFrame(cell)) {
@@ -3942,6 +3758,7 @@
       clearInvalidSelection(graph);
       graph.view.revalidate();
       graph.view.validate();
+      notifyLodChanged();
     }
   }
   function scheduleThrottledCulling(graph) {
@@ -3952,6 +3769,24 @@
       throttleTimer = null;
       runCullingPass(graph);
     }, THROTTLE_MS);
+  }
+  function onLodChanged(listener) {
+    if (typeof listener === "function") {
+      lodListeners.push(listener);
+    }
+  }
+  function notifyLodChanged() {
+    var i;
+    for (i = 0; i < lodListeners.length; i++) {
+      try {
+        lodListeners[i]();
+      } catch (e) {
+        debugLog("lod listener failed", e);
+      }
+    }
+  }
+  function isOverviewMode() {
+    return overviewMode;
   }
   function withAllFramesExpanded(fn) {
     var graph = getApp().ctx.graph;
@@ -4271,14 +4106,11 @@
     var app = getApp();
     var graph = app.ctx.graph;
     var model = app.ctx.model;
-    var state = app.ctx.state;
-    state.updatingModel = true;
     model.beginUpdate();
     try {
       cabinetDomainApi.relayoutCabinetByModel(cabinetModel);
     } finally {
       model.endUpdate();
-      state.updatingModel = false;
     }
     var segments = cabinetDomainApi.findCabinetSegments(cabinetModel.logicalCabinetId);
     if (segments.length > 0) {
@@ -4288,20 +4120,76 @@
     showStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC", false);
     setCanvasStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC");
   }
-  function updateCabinetGap(cabinetModel) {
+  function insertCabinetBlock(blockCell, blockInit) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var model = app.ctx.model;
+    var segments;
+    model.beginUpdate();
+    try {
+      segments = cabinetDomainApi.insertCabinetBlockAfter(blockCell, blockInit);
+    } finally {
+      model.endUpdate();
+    }
+    if (segments == null) {
+      showStatus("\u672A\u627E\u5230\u8981\u63D2\u5165\u7684\u4F4D\u7F6E", true);
+      return false;
+    }
+    if (segments.length > 0) {
+      graph.scrollCellToVisible(segments[0]);
+    }
+    showStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC\u5757", false);
+    setCanvasStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC\u5757");
+    return true;
+  }
+  function bindCabinetSwitch(blockCell, spec) {
+    var app = getApp();
+    var graph = app.ctx.graph;
+    var model = app.ctx.model;
+    var result;
+    model.beginUpdate();
+    try {
+      result = cabinetDomainApi.bindSwitchToBlock(blockCell, spec);
+    } finally {
+      model.endUpdate();
+    }
+    if (result == null) {
+      showStatus("\u672A\u627E\u5230\u8981\u7ED1\u5B9A\u7684\u914D\u7535\u67DC\u5757", true);
+      return false;
+    }
+    if (result.switchCell != null) {
+      graph.setSelectionCell(result.switchCell);
+      graph.scrollCellToVisible(result.switchCell);
+    }
+    showStatus("\u5DF2\u7ED1\u5B9A\u5F00\u5173", false);
+    setCanvasStatus("\u5DF2\u7ED1\u5B9A\u5F00\u5173");
+    return true;
+  }
+  function unbindCabinetSwitch(blockCell, removeSwitch) {
     var app = getApp();
     var model = app.ctx.model;
-    var state = app.ctx.state;
-    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      cabinetDomainApi.unbindSwitchFromBlock(blockCell, removeSwitch === true, false);
+    } finally {
+      model.endUpdate();
+    }
+    showStatus(removeSwitch === true ? "\u5DF2\u5220\u9664\u5F00\u5173" : "\u5DF2\u89E3\u9664\u5F00\u5173\u7ED1\u5B9A", false);
+    setCanvasStatus("\u5DF2\u66F4\u65B0\u5F00\u5173\u7ED1\u5B9A");
+    return true;
+  }
+  function updateCabinetModel(cabinetModel, statusText) {
+    var app = getApp();
+    var model = app.ctx.model;
+    var label = statusText || "\u5DF2\u66F4\u65B0\u914D\u7535\u67DC";
     model.beginUpdate();
     try {
       cabinetDomainApi.relayoutCabinetByModel(cabinetModel);
     } finally {
       model.endUpdate();
-      state.updatingModel = false;
     }
-    showStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD", false);
-    setCanvasStatus("\u5DF2\u66F4\u65B0\u7AEF\u5B50\u95F4\u8DDD");
+    showStatus(label, false);
+    setCanvasStatus(label);
   }
   function applyInstanceSpec(root, spec) {
     var app = getApp();
@@ -4337,8 +4225,7 @@
     if (!mxUtils.confirm("\u6B64\u64CD\u4F5C\u4E0D\u53EF\u6062\u590D\uFF0C\u786E\u5B9A\u7EE7\u7EED\u6E05\u9664\u5417\uFF1F")) {
       return;
     }
-    cabinetDialogsApi.closeGapDialogWindow();
-    cabinetDomainApi.setSelectedCabinetGap(null, null);
+    cabinetBlockDialogApi.closeCabinetBlockDialog();
     portSwapModeApi.exitPortSwapMode(false);
     composeModeApi.exitInstanceComposeMode(false);
     state.allowProtectedDelete = true;
@@ -4388,11 +4275,14 @@
     clearCurrentPage,
     forceDeleteSelection,
     insertCabinet,
+    insertCabinetBlock,
+    bindCabinetSwitch,
+    unbindCabinetSwitch,
     insertFrame,
     insertIntoGraph,
     insertIntoGraphAt,
     refreshSelection,
-    updateCabinetGap
+    updateCabinetModel
   };
 
   // ui/shared/buttonFactory.js
@@ -4419,7 +4309,6 @@
       normalizeCabinetModel: cabinetDomainApi.normalizeCabinetModel,
       generateLogicalCabinetId,
       insertCabinet: commandApi.insertCabinet,
-      updateCabinetGap: commandApi.updateCabinetGap,
       showStatus,
       setCanvasStatus,
       findCabinetSegment: cabinetDomainApi.findCabinetSegment,
@@ -4429,7 +4318,7 @@
   function getCabinetDialogDeps() {
     return buildCabinetDialogDeps();
   }
-  function getGapDialogPosition(nativeEvent, width, height) {
+  function getCabinetPopupPosition(nativeEvent, width, height) {
     var deps = getCabinetDialogDeps();
     var fallback = { x: 220, y: 180 };
     if (nativeEvent == null) {
@@ -4459,15 +4348,18 @@
       y: deps.clamp(y, minY, Math.max(minY, maxY))
     };
   }
-  function closeGapDialogWindow() {
-    var deps = getCabinetDialogDeps();
-    var ctx = deps.ctx;
-    var state = ctx.state;
-    if (state.gapDialogWindow != null) {
-      var wnd = state.gapDialogWindow;
-      state.gapDialogWindow = null;
-      wnd.destroy();
+  function buildInitialBlocks(rawCount, rawHeight, constants) {
+    var count = Math.max(1, parseInt(rawCount, 10) || constants.CABINET_DEFAULT_BLOCK_COUNT);
+    var height = Math.max(
+      constants.CABINET_BLOCK_MIN_HEIGHT,
+      parseInt(rawHeight, 10) || constants.CABINET_BLOCK_DEFAULT_HEIGHT
+    );
+    var blocks = [];
+    var i;
+    for (i = 0; i < count; i++) {
+      blocks.push({ height });
     }
+    return blocks;
   }
   function openInsertCabinetDialog() {
     var deps = getCabinetDialogDeps();
@@ -4486,22 +4378,34 @@
     div.style.boxSizing = "border-box";
     div.style.width = "100%";
     div.style.height = "100%";
-    var nameRow = document.createElement("div");
-    nameRow.style.display = "grid";
-    nameRow.style.gridTemplateColumns = "90px 1fr";
-    nameRow.style.alignItems = "center";
-    nameRow.style.gap = "8px";
-    div.appendChild(nameRow);
-    var nameLabel = document.createElement("div");
-    nameLabel.innerText = "\u540D\u79F0";
-    nameRow.appendChild(nameLabel);
-    var nameInput = document.createElement("input");
-    nameInput.setAttribute("type", "text");
-    nameInput.value = "\u914D\u7535\u67DC";
-    nameRow.appendChild(nameInput);
+    function addTextRow(label, initial, placeholder) {
+      var row = document.createElement("div");
+      row.style.display = "grid";
+      row.style.gridTemplateColumns = "90px 1fr";
+      row.style.alignItems = "center";
+      row.style.gap = "8px";
+      div.appendChild(row);
+      var caption = document.createElement("div");
+      caption.innerText = label;
+      row.appendChild(caption);
+      var input = document.createElement("input");
+      input.setAttribute("type", "text");
+      input.value = initial || "";
+      if (placeholder != null) {
+        input.setAttribute("placeholder", placeholder);
+      }
+      row.appendChild(input);
+      return input;
+    }
+    var nameInput = addTextRow("\u540D\u79F0", "\u914D\u7535\u67DC", "GALLEY MAIN SWITCHBOARD");
+    var codeInput = addTextRow("\u7F16\u53F7", "", "GB11");
+    var voltageInput = addTextRow("\u7535\u538B", "", "230VAC");
+    var designationInput = addTextRow("\u67DC\u5185\u7F16\u53F7", "", "875.022 / GB11");
+    var locationNoteInput = addTextRow("\u4F4D\u7F6E\u8BF4\u660E", "", "10\u7532\u677F\u5904227\u70B9\uFF0C\u7535\u6C14\u8BBE\u5907\u95F4");
+    var locationInput = addTextRow("\u4F4D\u7F6E\u4EE3\u53F7", "", "Fr227P DECK 10, EL. EQ.");
     var configRow = document.createElement("div");
     configRow.style.display = "grid";
-    configRow.style.gridTemplateColumns = "90px 120px 90px 120px";
+    configRow.style.gridTemplateColumns = "90px 100px 60px 80px 60px 80px";
     configRow.style.alignItems = "center";
     configRow.style.gap = "8px";
     div.appendChild(configRow);
@@ -4514,21 +4418,29 @@
     widthInput.value = String(constants.CABINET_DEFAULT_WIDTH);
     configRow.appendChild(widthInput);
     var countLabel = document.createElement("div");
-    countLabel.innerText = "\u53F3\u4FA7\u7AEF\u5B50\u6570";
+    countLabel.innerText = "\u5757\u6570";
     configRow.appendChild(countLabel);
     var countInput = document.createElement("input");
     countInput.setAttribute("type", "number");
-    countInput.setAttribute("min", "2");
-    countInput.value = String(constants.CABINET_DEFAULT_PORT_COUNT);
+    countInput.setAttribute("min", "1");
+    countInput.value = String(constants.CABINET_DEFAULT_BLOCK_COUNT);
     configRow.appendChild(countInput);
+    var heightLabel = document.createElement("div");
+    heightLabel.innerText = "\u5757\u9AD8";
+    configRow.appendChild(heightLabel);
+    var heightInput = document.createElement("input");
+    heightInput.setAttribute("type", "number");
+    heightInput.setAttribute("min", String(constants.CABINET_BLOCK_MIN_HEIGHT));
+    heightInput.value = String(constants.CABINET_BLOCK_DEFAULT_HEIGHT);
+    configRow.appendChild(heightInput);
     var hint = document.createElement("div");
     hint.style.color = Editor.isDarkMode() ? "#c0c4cc" : "#57606a";
     hint.style.fontSize = "12px";
-    hint.innerText = "\u4EC5\u751F\u6210\u4E13\u7528\u914D\u7535\u67DC\u4E3B\u4F53\u548C\u53F3\u4FA7\u8FDE\u63A5\u70B9\uFF0C\u95F4\u8DDD\u540E\u7EED\u901A\u8FC7\u53F3\u4FA7\u70ED\u70B9\u7F16\u8F91\u3002";
+    hint.innerText = "\u6BCF\u5757\u5728\u6BCD\u7EBF\u4E0A\u6D3E\u751F\u4E00\u4E2A\u51FA\u7EBF\u7AEF\u53E3\u3002\u63D2\u5165\u540E\u53EF\u76F4\u63A5\u62D6\u5757\u7684\u4E0A\u4E0B\u8FB9\u6846\u6539\u9AD8\u5EA6\uFF0C\u62D6\u67DC\u4F53\u5DE6\u53F3\u8FB9\u6846\u6539\u67DC\u5BBD\u3002";
     div.appendChild(hint);
     var buttons = document.createElement("div");
     div.appendChild(buttons);
-    var wnd = new mxWindow("\u63D2\u5165\u914D\u7535\u67DC", div, 200, 160, 460, 190, true, true);
+    var wnd = new mxWindow("\u63D2\u5165\u914D\u7535\u67DC", div, 200, 120, 560, 400, true, true);
     wnd.destroyOnClose = true;
     wnd.setClosable(true);
     wnd.setMaximizable(false);
@@ -4539,8 +4451,14 @@
         logicalCabinetId: deps.generateLogicalCabinetId(),
         originFrameId: trim2(deps.getAttr(frame, "frameId")),
         title: trim2(nameInput.value) || "\u914D\u7535\u67DC",
+        code: trim2(codeInput.value),
+        voltage: trim2(voltageInput.value),
+        designation: trim2(designationInput.value),
+        locationNote: trim2(locationNoteInput.value),
+        location: trim2(locationInput.value),
         cabinetWidth: widthInput.value,
-        portCount: countInput.value
+        blockCount: countInput.value,
+        blocks: buildInitialBlocks(countInput.value, heightInput.value, constants)
       });
       try {
         deps.insertCabinet(cabinetModel);
@@ -4555,52 +4473,82 @@
     buttons.appendChild(submitButton);
     wnd.setVisible(true);
   }
-  function openCabinetGapDialog(gapCell, nativeEvent) {
-    var deps = getCabinetDialogDeps();
-    var ctx = deps.ctx;
-    var state = ctx.state;
-    var segment = deps.findCabinetSegment(gapCell);
-    var gapIndex = deps.toInt(deps.getAttr(gapCell, "gapIndex"), -1);
-    if (segment == null || gapIndex < 0) {
+  var cabinetDialogsApi = {
+    getCabinetPopupPosition,
+    openInsertCabinetDialog
+  };
+
+  // ui/cabinetBlockDialog.js
+  var DIALOG_WIDTH = 320;
+  var DIALOG_HEIGHT = 186;
+  function getState2() {
+    return getApp().ctx.state;
+  }
+  function closeCabinetBlockDialog() {
+    var state = getState2();
+    if (state.cabinetBlockDialogWindow != null) {
+      var wnd = state.cabinetBlockDialogWindow;
+      state.cabinetBlockDialogWindow = null;
+      wnd.destroy();
+    }
+  }
+  function createFieldRow(labelText) {
+    var row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "72px 1fr";
+    row.style.alignItems = "center";
+    row.style.gap = "8px";
+    var label = document.createElement("div");
+    label.innerText = labelText;
+    row.appendChild(label);
+    return row;
+  }
+  function openCabinetBlockDialog(blockCell, nativeEvent) {
+    if (blockCell == null) {
       return;
     }
-    closeGapDialogWindow();
-    var cabinetModel = deps.extractCabinetModel(segment);
+    closeCabinetBlockDialog();
+    var constants = getApp().ctx.constants;
+    var referenceHeight = toInt(
+      getAttr(blockCell, "blockHeight"),
+      constants.CABINET_BLOCK_DEFAULT_HEIGHT
+    );
     var div = document.createElement("div");
     div.style.padding = "12px";
     div.style.display = "flex";
     div.style.flexDirection = "column";
     div.style.gap = "10px";
+    div.style.boxSizing = "border-box";
     div.style.width = "100%";
     div.style.height = "100%";
-    div.style.boxSizing = "border-box";
-    var label = document.createElement("div");
-    label.innerText = "\u8F93\u5165 0 \u5230 1 \u4E4B\u95F4\u7684\u6BD4\u4F8B\u503C";
-    div.appendChild(label);
-    var input = document.createElement("input");
-    input.setAttribute("type", "number");
-    input.setAttribute("min", "0");
-    input.setAttribute("max", "1");
-    input.setAttribute("step", "0.01");
-    input.value = String(cabinetModel.gapRatios[gapIndex] || 0);
-    div.appendChild(input);
+    var titleRow = createFieldRow("\u56DE\u8DEF\u7F16\u53F7");
+    var titleInput = document.createElement("input");
+    titleInput.setAttribute("type", "text");
+    titleInput.value = "";
+    titleRow.appendChild(titleInput);
+    div.appendChild(titleRow);
+    var heightRow = createFieldRow("\u5757\u9AD8");
+    var heightInput = document.createElement("input");
+    heightInput.setAttribute("type", "number");
+    heightInput.setAttribute("min", String(constants.CABINET_BLOCK_MIN_HEIGHT));
+    heightInput.value = String(referenceHeight);
+    heightRow.appendChild(heightInput);
+    div.appendChild(heightRow);
     var error = document.createElement("div");
-    error.style.minHeight = "18px";
+    error.style.color = "#d64545";
     error.style.fontSize = "12px";
-    error.style.color = "#b3261e";
+    error.style.minHeight = "16px";
     div.appendChild(error);
     var buttons = document.createElement("div");
     div.appendChild(buttons);
-    var dialogWidth = 320;
-    var dialogHeight = 170;
-    var dialogPosition = getGapDialogPosition(nativeEvent, dialogWidth, dialogHeight);
+    var position = getCabinetPopupPosition(nativeEvent, DIALOG_WIDTH, DIALOG_HEIGHT);
     var wnd = new mxWindow(
-      "\u8BBE\u7F6E\u7AEF\u5B50\u95F4\u8DDD",
+      "\u63D2\u5165\u5757",
       div,
-      dialogPosition.x,
-      dialogPosition.y,
-      dialogWidth,
-      dialogHeight,
+      position.x,
+      position.y,
+      DIALOG_WIDTH,
+      DIALOG_HEIGHT,
       true,
       true
     );
@@ -4610,35 +4558,37 @@
     wnd.setResizable(false);
     wnd.setScrollable(false);
     wnd.addListener(mxEvent.DESTROY, function() {
-      if (state.gapDialogWindow == wnd) {
-        state.gapDialogWindow = null;
-      }
+      getState2().cabinetBlockDialogWindow = null;
     });
-    state.gapDialogWindow = wnd;
-    var saveButton = deps.createButton("\u4FDD\u5B58", function() {
-      var ratio = deps.toFloat(input.value, NaN);
-      if (isNaN(ratio) || ratio < 0 || ratio > 1) {
-        error.innerText = "\u8BF7\u8F93\u5165 0 \u5230 1 \u4E4B\u95F4\u7684\u6570\u503C";
+    var submitButton = createPluginButton("\u63D2\u5165", function() {
+      var height = toInt(heightInput.value, NaN);
+      if (!isFinite(height) || height < constants.CABINET_BLOCK_MIN_HEIGHT) {
+        error.innerText = "\u5757\u9AD8\u81F3\u5C11 " + constants.CABINET_BLOCK_MIN_HEIGHT;
         return;
       }
-      cabinetModel.gapRatios[gapIndex] = ratio;
       try {
-        deps.updateCabinetGap(cabinetModel);
+        commandApi.insertCabinetBlock(blockCell, {
+          title: trim(titleInput.value),
+          height
+        });
       } catch (e) {
-        error.innerText = e.message || String(e);
+        var message = e.message || String(e);
+        error.innerText = message;
+        showStatus(message, true);
+        setCanvasStatus(message);
         return;
       }
-      wnd.destroy();
+      closeCabinetBlockDialog();
     });
-    saveButton.style.marginTop = "0";
-    buttons.appendChild(saveButton);
+    submitButton.style.marginTop = "0";
+    buttons.appendChild(submitButton);
+    getState2().cabinetBlockDialogWindow = wnd;
     wnd.setVisible(true);
+    titleInput.focus();
   }
-  var cabinetDialogsApi = {
-    closeGapDialogWindow,
-    getGapDialogPosition,
-    openCabinetGapDialog,
-    openInsertCabinetDialog
+  var cabinetBlockDialogApi = {
+    closeCabinetBlockDialog,
+    openCabinetBlockDialog
   };
 
   // domain/snapshotGraph.js
@@ -4682,11 +4632,8 @@
       exitInstanceComposeMode: function(clearStatus) {
         return composeModeApi.exitInstanceComposeMode(clearStatus);
       },
-      closeGapDialogWindow: function() {
-        return cabinetDialogsApi.closeGapDialogWindow();
-      },
-      setSelectedCabinetGap: function(logicalCabinetId, gapIndex) {
-        return cabinetDomainApi.setSelectedCabinetGap(logicalCabinetId, gapIndex);
+      closeCabinetBlockDialog: function() {
+        return cabinetBlockDialogApi.closeCabinetBlockDialog();
       },
       exitPortSwapMode: function(clearStatus) {
         return portSwapModeApi.exitPortSwapMode(clearStatus);
@@ -4706,6 +4653,7 @@
     var state = deps.state;
     var ui = deps.ui;
     var currentDuplicateSymbolInstanceIds = null;
+    var currentDuplicateFrameIds = null;
     function belongsToCurrentDefaultParent(cell) {
       var parent = cell != null ? model.getParent(cell) : null;
       var defaultParent = graph.getDefaultParent();
@@ -4736,6 +4684,31 @@
       }
       var spec = deps.extractSpec(cell);
       return deps.trim(spec != null ? spec.instanceId : "");
+    }
+    function collectDuplicateFrameIds(frames) {
+      var counts = {};
+      var duplicates = {};
+      var i;
+      for (i = 0; i < frames.length; i++) {
+        var frameId = deps.trim(deps.getAttr(frames[i], "frameId"));
+        if (frameId.length == 0) {
+          continue;
+        }
+        counts[frameId] = (counts[frameId] || 0) + 1;
+      }
+      for (var key in counts) {
+        if (Object.prototype.hasOwnProperty.call(counts, key) && counts[key] > 1) {
+          duplicates[key] = true;
+        }
+      }
+      return duplicates;
+    }
+    function getFrameObjectId(frame, duplicateFrameIds) {
+      var frameId = deps.trim(deps.getAttr(frame, "frameId"));
+      if (frameId.length > 0 && !(duplicateFrameIds != null && duplicateFrameIds[frameId] === true)) {
+        return frameId;
+      }
+      return deps.trim(frame != null && frame.id != null ? String(frame.id) : "");
     }
     function collectDuplicateSymbolInstanceIds(cells) {
       var counts = {};
@@ -4855,8 +4828,7 @@
       for (i = 0; i < model.getChildCount(parent); i++) {
         cells.push(model.getChildAt(parent, i));
       }
-      deps.closeGapDialogWindow();
-      deps.setSelectedCabinetGap(null, null);
+      deps.closeCabinetBlockDialog();
       deps.exitPortSwapMode(false);
       if (cells.length == 0) {
         return;
@@ -4873,7 +4845,7 @@
         return null;
       }
       if (deps.isDrawingFrame(cell)) {
-        return deps.trim(deps.getAttr(cell, "frameId")) || null;
+        return getFrameObjectId(cell, currentDuplicateFrameIds) || null;
       }
       if (deps.isCabinetSegment(cell)) {
         return deps.trim(cell.id != null ? String(cell.id) : "") || deps.trim(deps.getAttr(cell, "logicalCabinetId")) || null;
@@ -4967,10 +4939,9 @@
     }
     function exportFrameObject(frame) {
       var geometry = model.getGeometry(frame);
-      var frameId = deps.trim(deps.getAttr(frame, "frameId"));
       var frameConfig = deps.getFrameConfig(frame);
       return {
-        id: frameId,
+        id: getFrameObjectId(frame, currentDuplicateFrameIds),
         kind: "frame",
         parentId: null,
         groupId: deps.getFrameGroupId(frame) || null,
@@ -4998,10 +4969,11 @@
       var logicalCabinetId = deps.trim(cabinetModel.logicalCabinetId);
       var segmentObjectId = deps.trim(segment != null && segment.id != null ? String(segment.id) : "") || logicalCabinetId;
       var currentFrameId = currentFrame != null ? deps.trim(deps.getAttr(currentFrame, "frameId")) : "";
+      var currentFrameObjectId = currentFrame != null ? getFrameObjectId(currentFrame, currentDuplicateFrameIds) : "";
       return {
         id: segmentObjectId,
         kind: "cabinet",
-        parentId: currentFrameId || deps.trim(cabinetModel.originFrameId) || null,
+        parentId: currentFrameObjectId || deps.trim(cabinetModel.originFrameId) || null,
         groupId: currentFrame != null ? deps.getFrameGroupId(currentFrame) : null,
         geometry: {
           x: geometry != null ? geometry.x : cabinetModel.cabinetX,
@@ -5072,6 +5044,8 @@
           portId: deps.trim(targetPortId) || null
         },
         props: {
+          // 托管连线（块↔开关）带 esKind，消费方据此把它与用户画的电缆区分开
+          esKind: deps.trim(deps.getAttr(edge, "esKind")) || null,
           parentId: parent != null && parent != graph.getDefaultParent() ? resolveSnapshotObjectId(parent) : null,
           style: {
             raw: style,
@@ -5138,6 +5112,7 @@
       var duplicateSymbolInstanceIds = collectDuplicateSymbolInstanceIds(allCells);
       var i;
       currentDuplicateSymbolInstanceIds = duplicateSymbolInstanceIds;
+      currentDuplicateFrameIds = collectDuplicateFrameIds(frames);
       for (i = 0; i < frames.length; i++) {
         frameObjects.push(exportFrameObject(frames[i]));
       }
@@ -5165,6 +5140,7 @@
         };
       } finally {
         currentDuplicateSymbolInstanceIds = null;
+        currentDuplicateFrameIds = null;
       }
     }
     function findCabinetSegmentForPort(logicalCabinetId, portId) {
@@ -5614,6 +5590,17 @@
       cabinetType: constants.CABINET_TYPE,
       cabinetBodyTag: constants.CABINET_BODY_TAG,
       cabinetBodyKind: constants.CABINET_BODY_KIND,
+      cabinetBlockTag: constants.CABINET_BLOCK_TAG,
+      cabinetBlockKind: constants.CABINET_BLOCK_KIND,
+      cabinetBusbarTag: constants.CABINET_BUSBAR_TAG,
+      cabinetBusbarKind: constants.CABINET_BUSBAR_KIND,
+      cabinetTextTag: constants.CABINET_TEXT_TAG,
+      cabinetNameLabelKind: constants.CABINET_NAME_LABEL_KIND,
+      cabinetLocationLabelKind: constants.CABINET_LOCATION_LABEL_KIND,
+      cabinetDesignationLabelKind: constants.CABINET_DESIGNATION_LABEL_KIND,
+      busbarWidth: constants.CABINET_BUSBAR_WIDTH,
+      cabinetSwitchLinkTag: constants.CABINET_SWITCH_LINK_TAG,
+      cabinetSwitchLinkKind: constants.CABINET_SWITCH_LINK_KIND,
       cabinetGapTag: constants.CABINET_GAP_TAG,
       cabinetGapType: constants.CABINET_GAP_TYPE,
       cabinetGapKind: constants.CABINET_GAP_KIND,
@@ -5623,7 +5610,10 @@
       frameHorizontalGap: constants.FRAME_HORIZONTAL_GAP,
       minPortFollowSpaceRatio: constants.CABINET_MIN_PORT_FOLLOW_SPACE_RATIO,
       defaultWidth: constants.CABINET_DEFAULT_WIDTH,
-      defaultPortCount: constants.CABINET_DEFAULT_PORT_COUNT,
+      minWidth: constants.CABINET_MIN_WIDTH,
+      defaultBlockCount: constants.CABINET_DEFAULT_BLOCK_COUNT,
+      blockMinHeight: constants.CABINET_BLOCK_MIN_HEIGHT,
+      blockMaxHeight: constants.CABINET_BLOCK_MAX_HEIGHT,
       defaultX: constants.CABINET_DEFAULT_X,
       tailPadding: constants.CABINET_TAIL_PADDING,
       trim,
@@ -5639,7 +5629,13 @@
       serializePortLayout: specDomainApi.serializePortLayout,
       getAttr,
       isCabinetSegment,
+      isCabinetBlock,
       isCabinetGap,
+      isCabinetSwitchLink,
+      isElectricalRoot,
+      buildSymbolCell: function(spec) {
+        return symbolDomainApi.buildSymbolCell(spec);
+      },
       getNormalizedFrameConfig: frameDomainApi.normalizeFrameConfig,
       getAllDrawingFrames: frameDomainApi.getAllDrawingFrames,
       getFrameConfig: frameDomainApi.getFrameConfig,
@@ -5694,53 +5690,137 @@
         String(Math.round(descriptor.segmentEndOffset * 1e3) / 1e3)
       );
       node.setAttribute("cabinetModelJson", JSON.stringify(cabinetModel));
-      node.setAttribute("gapRatiosJson", JSON.stringify(cabinetModel.gapRatios));
-      node.setAttribute("portsJson", deps.serializePortLayout(descriptor.ports));
-      node.setAttribute("portLayout", deps.serializePortLayout(descriptor.ports));
+      var segmentPorts = deps.serializePortLayout(buildSegmentPortLayout(descriptor));
+      node.setAttribute("portsJson", segmentPorts);
+      node.setAttribute("portLayout", segmentPorts);
       node.setAttribute("label", "");
       return node;
     }
-    function createCabinetBodyCell(descriptor) {
-      var cell = new mxCell(
-        deps.createMetaCell(
-          deps.cabinetBodyTag,
-          deps.cabinetBodyKind,
-          "main",
-          ""
-        ),
-        new mxGeometry(0, 0, descriptor.width, descriptor.height),
-        makeCabinetBodyStyle(descriptor)
-      );
+    function escapeLabelHtml(text) {
+      return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    function createCabinetDecorationCell(kind, style, geometry, label, tag) {
+      var value = deps.createNode(tag || deps.cabinetTextTag);
+      value.setAttribute("esKind", kind);
+      value.setAttribute("label", label != null ? String(label) : "");
+      var cell = new mxCell(value, geometry, style);
       cell.vertex = true;
       cell.setConnectable(false);
       return cell;
     }
-    function isSelectedCabinetGap(logicalCabinetId, gapIndex) {
-      return state.selectedCabinetGap != null && deps.trim(state.selectedCabinetGap.logicalCabinetId) == deps.trim(logicalCabinetId) && deps.toInt(state.selectedCabinetGap.gapIndex, -1) == deps.toInt(gapIndex, -1);
+    function buildCabinetDecorations(cabinetModel, descriptor) {
+      var cells = [];
+      var busbarX = descriptor.busbar.x;
+      cells.push(
+        createCabinetDecorationCell(
+          deps.cabinetBusbarKind,
+          makeCabinetBusbarStyle(),
+          new mxGeometry(
+            busbarX - Math.round(deps.busbarWidth / 2),
+            descriptor.busbar.y,
+            deps.busbarWidth,
+            descriptor.busbar.height
+          ),
+          "",
+          deps.cabinetBusbarTag
+        )
+      );
+      var nameLabel = buildCabinetNameLabel(cabinetModel);
+      if (nameLabel.length > 0 && busbarX > 8) {
+        cells.push(
+          createCabinetDecorationCell(
+            deps.cabinetNameLabelKind,
+            makeCabinetNameLabelStyle(),
+            new mxGeometry(
+              0,
+              descriptor.busbar.y,
+              Math.max(12, busbarX - Math.round(deps.busbarWidth / 2) - 2),
+              descriptor.busbar.height
+            ),
+            escapeLabelHtml(nameLabel)
+          )
+        );
+      }
+      var designation = deps.trim(cabinetModel.designation);
+      if (designation.length > 0 && cabinetModel.headPadding > 0) {
+        cells.push(
+          createCabinetDecorationCell(
+            deps.cabinetDesignationLabelKind,
+            makeCabinetDesignationLabelStyle(),
+            new mxGeometry(
+              busbarX,
+              // 续接页的顶边折断会压到这块区域，编号要整体下移让开它
+              (descriptor.topBreakDepth || 0) + 2,
+              Math.max(20, descriptor.width - busbarX),
+              Math.max(12, cabinetModel.headPadding - 6)
+            ),
+            escapeLabelHtml(designation)
+          )
+        );
+      }
+      if (descriptor.showLocation) {
+        var lines = [];
+        if (deps.trim(cabinetModel.locationNote).length > 0) {
+          lines.push(deps.trim(cabinetModel.locationNote));
+        }
+        if (deps.trim(cabinetModel.location).length > 0) {
+          lines.push(deps.trim(cabinetModel.location));
+        }
+        if (lines.length > 0) {
+          var lineHeight = 14;
+          var boxHeight = lines.length * lineHeight;
+          var li;
+          for (li = 0; li < lines.length; li++) {
+            lines[li] = escapeLabelHtml(lines[li]);
+          }
+          cells.push(
+            createCabinetDecorationCell(
+              deps.cabinetLocationLabelKind,
+              makeCabinetLocationLabelStyle(),
+              new mxGeometry(0, -(boxHeight + 6), Math.max(80, descriptor.width), boxHeight),
+              lines.join("<br>")
+            )
+          );
+        }
+      }
+      return cells;
     }
-    function createCabinetGapCell(cabinetModel, descriptor, gap) {
-      var value = deps.createNode(deps.cabinetGapTag);
-      value.setAttribute("pluginType", deps.cabinetGapType);
-      value.setAttribute("esKind", deps.cabinetGapKind);
-      value.setAttribute("esKey", String(gap.gapIndex));
+    function createCabinetBlockCell(cabinetModel, block) {
+      var value = deps.createNode(deps.cabinetBlockTag);
+      value.setAttribute("esKind", deps.cabinetBlockKind);
+      value.setAttribute("esKey", deps.trim(block.id));
+      value.setAttribute("blockId", deps.trim(block.id));
+      value.setAttribute("portId", deps.trim(block.portId));
       value.setAttribute(
         "logicalCabinetId",
         deps.trim(cabinetModel.logicalCabinetId)
       );
-      value.setAttribute("gapIndex", String(gap.gapIndex));
-      value.setAttribute("label", "");
-      var geometry = new mxGeometry(1, gap.y, 14, gap.height);
-      geometry.relative = true;
-      geometry.offset = new mxPoint(-7, 0);
+      value.setAttribute("switchInstanceId", deps.trim(block.switchInstanceId));
+      value.setAttribute("blockOrder", String(block.order));
+      value.setAttribute("blockHeight", String(Math.round(block.height)));
+      value.setAttribute("label", deps.trim(block.title));
+      value.setAttribute(
+        "portsJson",
+        deps.serializePortLayout([
+          {
+            // 出线接口在母线上，不在柜壁上
+            id: block.portId,
+            x: block.portX,
+            y: 0.5,
+            marker: "cross",
+            direction: "right",
+            ioMode: "out",
+            order: block.order
+          }
+        ])
+      );
       var cell = new mxCell(
         value,
-        geometry,
-        makeCabinetGapStyle(
-          isSelectedCabinetGap(cabinetModel.logicalCabinetId, gap.gapIndex)
-        )
+        new mxGeometry(0, block.localY, block.width, block.height),
+        makeCabinetBlockStyle()
       );
       cell.vertex = true;
-      cell.setConnectable(false);
+      cell.setConnectable(true);
       return cell;
     }
     function getCellAbsoluteGeometry2(cell) {
@@ -5784,16 +5864,18 @@
           descriptor.width,
           descriptor.height
         ),
-        makeCabinetRootStyle()
+        // 柜段本身就是外框（含换页折断标识）
+        makeCabinetRootStyle(descriptor)
       );
+      var decorations = buildCabinetDecorations(cabinetModel, descriptor);
       var i;
       root.vertex = true;
-      root.setConnectable(true);
-      root.insert(createCabinetBodyCell(descriptor));
-      for (i = 0; i < descriptor.gaps.length; i++) {
-        root.insert(
-          createCabinetGapCell(cabinetModel, descriptor, descriptor.gaps[i])
-        );
+      root.setConnectable(false);
+      for (i = 0; i < decorations.length; i++) {
+        root.insert(decorations[i]);
+      }
+      for (i = 0; i < descriptor.blocks.length; i++) {
+        root.insert(createCabinetBlockCell(cabinetModel, descriptor.blocks[i]));
       }
       return root;
     }
@@ -5807,7 +5889,11 @@
       if (raw == null || raw.length == 0) {
         throw new Error("\u7F3A\u5C11 cabinetModelJson \u6570\u636E");
       }
-      return normalizeCabinetModel(JSON.parse(raw));
+      var frame = deps.findDrawingFrame(root);
+      return normalizeCabinetModel(
+        JSON.parse(raw),
+        frame != null ? deps.getFrameConfig(frame) : null
+      );
     }
     function findCabinetSegments2(logicalCabinetId) {
       var target = deps.trim(logicalCabinetId);
@@ -5825,85 +5911,56 @@
       }
       return result;
     }
-    function updateCabinetGapHighlight() {
-      var frames = deps.getAllDrawingFrames();
+    function getSegmentBlocks2(segment) {
+      var result = [];
+      var count = model.getChildCount(segment);
       var i;
-      var j;
-      var k;
-      model.beginUpdate();
-      try {
-        for (i = 0; i < frames.length; i++) {
-          for (j = 0; j < model.getChildCount(frames[i]); j++) {
-            var segment = model.getChildAt(frames[i], j);
-            if (!deps.isCabinetSegment(segment)) {
-              continue;
-            }
-            for (k = 0; k < model.getChildCount(segment); k++) {
-              var child = model.getChildAt(segment, k);
-              if (deps.isCabinetGap(child)) {
-                var nextStyle = makeCabinetGapStyle(
-                  isSelectedCabinetGap(
-                    deps.getAttr(child, "logicalCabinetId"),
-                    deps.getAttr(child, "gapIndex")
-                  )
-                );
-                if (child.style != nextStyle) {
-                  model.setStyle(child, nextStyle);
-                }
-              }
-            }
-          }
+      for (i = 0; i < count; i++) {
+        var child = model.getChildAt(segment, i);
+        if (deps.isCabinetBlock(child)) {
+          result.push(child);
         }
-      } finally {
-        model.endUpdate();
       }
-    }
-    function setSelectedCabinetGap2(logicalCabinetId, gapIndex) {
-      if (deps.trim(logicalCabinetId).length == 0 || deps.toInt(gapIndex, -1) < 0) {
-        state.selectedCabinetGap = null;
-      } else {
-        state.selectedCabinetGap = {
-          logicalCabinetId: deps.trim(logicalCabinetId),
-          gapIndex: deps.toInt(gapIndex, -1)
-        };
-      }
-      updateCabinetGapHighlight();
+      return result;
     }
     function collectCabinetAttachments2(segments) {
       var seen = {};
       var attachments = [];
       var i;
       var j;
+      var k;
       for (i = 0; i < segments.length; i++) {
-        var segment = segments[i];
-        var edgeCount = model.getEdgeCount(segment);
-        for (j = 0; j < edgeCount; j++) {
-          var edge = model.getEdgeAt(segment, j);
-          var sourceTerminal = model.getTerminal(edge, true);
-          var targetTerminal = model.getTerminal(edge, false);
-          var sourceIsSegment = sourceTerminal == segment;
-          var targetIsSegment = targetTerminal == segment;
-          if (!sourceIsSegment && !targetIsSegment) {
-            continue;
+        var hosts = getSegmentBlocks2(segments[i]);
+        hosts.push(segments[i]);
+        for (j = 0; j < hosts.length; j++) {
+          var host = hosts[j];
+          var edgeCount = model.getEdgeCount(host);
+          for (k = 0; k < edgeCount; k++) {
+            var edge = model.getEdgeAt(host, k);
+            var sourceIsHost = model.getTerminal(edge, true) == host;
+            var targetIsHost = model.getTerminal(edge, false) == host;
+            if (!sourceIsHost && !targetIsHost) {
+              continue;
+            }
+            var key = mxCellPath.create(edge) + ":" + (sourceIsHost ? "S" : "T");
+            if (seen[key]) {
+              continue;
+            }
+            seen[key] = true;
+            var source = sourceIsHost;
+            var portId = deps.getEdgePortId(edge, host, source);
+            var port = deps.getPortMetaById(host, portId);
+            if (port == null) {
+              continue;
+            }
+            attachments.push({
+              edge,
+              source,
+              portId,
+              oldPortPosition: getPortAbsolutePosition2(host, port),
+              otherTerminal: model.getTerminal(edge, !source)
+            });
           }
-          var key = mxCellPath.create(edge) + ":" + (sourceIsSegment ? "S" : "T");
-          if (seen[key]) {
-            continue;
-          }
-          seen[key] = true;
-          var source = sourceIsSegment;
-          var portId = deps.getEdgePortId(edge, segment, source);
-          var port = deps.getPortMetaById(segment, portId);
-          if (port == null) {
-            continue;
-          }
-          attachments.push({
-            edge,
-            source,
-            portId,
-            oldPortPosition: getPortAbsolutePosition2(segment, port),
-            otherTerminal: model.getTerminal(edge, !source)
-          });
         }
       }
       return attachments;
@@ -5911,18 +5968,24 @@
     function buildCabinetPortMap2(segments) {
       var result = {};
       var i;
+      var j;
+      var k;
       for (i = 0; i < segments.length; i++) {
         var segment = segments[i];
         var frame = deps.findDrawingFrame(segment);
-        var ports = deps.parsePortLayout(deps.getAttr(segment, "portsJson"));
-        var j;
-        for (j = 0; j < ports.length; j++) {
-          result[deps.trim(ports[j].id)] = {
-            segment,
-            port: ports[j],
-            frame,
-            absolutePosition: getPortAbsolutePosition2(segment, ports[j])
-          };
+        var blocks = getSegmentBlocks2(segment);
+        for (j = 0; j < blocks.length; j++) {
+          var block = blocks[j];
+          var ports = deps.parsePortLayout(deps.getAttr(block, "portsJson"));
+          for (k = 0; k < ports.length; k++) {
+            result[deps.trim(ports[k].id)] = {
+              segment,
+              host: block,
+              port: ports[k],
+              frame,
+              absolutePosition: getPortAbsolutePosition2(block, ports[k])
+            };
+          }
         }
       }
       return result;
@@ -5936,10 +5999,10 @@
         if (target == null) {
           continue;
         }
-        model.setTerminal(attachment.edge, target.segment, attachment.source);
+        model.setTerminal(attachment.edge, target.host, attachment.source);
         deps.setConnectionConstraint(
           attachment.edge,
-          target.segment,
+          target.host,
           attachment.source,
           new mxConnectionConstraint(
             new mxPoint(target.port.x, target.port.y),
@@ -6044,12 +6107,13 @@
       return frames;
     }
     function relayoutCabinetByModel2(cabinetModel) {
-      var normalized = normalizeCabinetModel(cabinetModel);
-      var originFrame = deps.findFrameById(normalized.originFrameId);
+      var probe = normalizeCabinetModel(cabinetModel);
+      var originFrame = deps.findFrameById(probe.originFrameId);
       if (originFrame == null) {
         throw new Error("\u672A\u627E\u5230\u914D\u7535\u67DC\u6240\u5C5E\u7684\u8D77\u59CB\u56FE\u6846");
       }
       var frameConfig = deps.getFrameConfig(originFrame);
+      var normalized = normalizeCabinetModel(cabinetModel, frameConfig);
       var descriptors = buildCabinetPageDescriptors(normalized, frameConfig);
       var oldSegments = findCabinetSegments2(normalized.logicalCabinetId);
       var attachments = collectCabinetAttachments2(oldSegments);
@@ -6076,9 +6140,278 @@
         model.remove(oldSegments[i]);
       }
       ensureCabinetFrames(originFrame, normalized, descriptors.length);
+      syncBoundSwitches(newSegments);
       return newSegments;
     }
+    function findSwitchCellByInstanceId2(instanceId) {
+      var target = deps.trim(instanceId);
+      if (target.length == 0) {
+        return null;
+      }
+      var frames = deps.getAllDrawingFrames();
+      var i;
+      var j;
+      for (i = 0; i < frames.length; i++) {
+        for (j = 0; j < model.getChildCount(frames[i]); j++) {
+          var child = model.getChildAt(frames[i], j);
+          if (deps.isElectricalRoot(child) && deps.trim(deps.getAttr(child, "instanceId")) == target) {
+            return child;
+          }
+        }
+      }
+      return null;
+    }
+    function findSwitchInputPort(switchCell) {
+      var ports = deps.parsePortLayout(deps.getAttr(switchCell, "portsJson"));
+      var fallback = null;
+      var i;
+      for (i = 0; i < ports.length; i++) {
+        if (deps.trim(ports[i].ioMode) == "in") {
+          return ports[i];
+        }
+        if (fallback == null || ports[i].x < fallback.x) {
+          fallback = ports[i];
+        }
+      }
+      return fallback;
+    }
+    function placeSwitchInBlock(blockCell, switchCell) {
+      var frame = deps.findDrawingFrame(blockCell);
+      if (frame == null) {
+        return;
+      }
+      var blockRect = getCellAbsoluteGeometry2(blockCell);
+      var switchGeometry = model.getGeometry(switchCell);
+      if (switchGeometry == null) {
+        return;
+      }
+      var cabinetModel = extractCabinetModel2(blockCell);
+      var busbarX = Math.round(blockRect.width * cabinetModel.busbarRatio);
+      var placement = computeSwitchPlacementInBlock(
+        blockRect,
+        { width: switchGeometry.width, height: switchGeometry.height },
+        { busbarX, switchLead: cabinetModel.switchLead }
+      );
+      var frameRect = getCellAbsoluteGeometry2(frame);
+      var nextGeometry = switchGeometry.clone();
+      nextGeometry.x = blockRect.x + placement.x - frameRect.x;
+      nextGeometry.y = blockRect.y + placement.y - frameRect.y;
+      nextGeometry.width = placement.width;
+      if (model.getParent(switchCell) !== frame) {
+        model.add(frame, switchCell);
+      }
+      model.setGeometry(switchCell, nextGeometry);
+      ensureSwitchAboveCabinet(frame, switchCell);
+    }
+    function ensureSwitchAboveCabinet(frame, switchCell) {
+      var count = model.getChildCount(frame);
+      var lastSegmentIndex = -1;
+      var switchIndex = -1;
+      var i;
+      for (i = 0; i < count; i++) {
+        var child = model.getChildAt(frame, i);
+        if (deps.isCabinetSegment(child)) {
+          lastSegmentIndex = i;
+        } else if (child === switchCell) {
+          switchIndex = i;
+        }
+      }
+      if (switchIndex >= 0 && switchIndex < lastSegmentIndex) {
+        model.add(frame, switchCell);
+      }
+    }
+    function findSwitchLink(blockCell) {
+      var edgeCount = model.getEdgeCount(blockCell);
+      var i;
+      for (i = 0; i < edgeCount; i++) {
+        var edge = model.getEdgeAt(blockCell, i);
+        if (deps.isCabinetSwitchLink(edge)) {
+          return edge;
+        }
+      }
+      return null;
+    }
+    function ensureSwitchLink(blockCell, switchCell) {
+      var frame = deps.findDrawingFrame(blockCell);
+      if (frame == null || switchCell == null) {
+        return null;
+      }
+      var blockPortId = deps.trim(deps.getAttr(blockCell, "portId"));
+      var blockPorts = deps.parsePortLayout(deps.getAttr(blockCell, "portsJson"));
+      var blockPort = blockPorts.length > 0 ? blockPorts[0] : null;
+      var switchPort = findSwitchInputPort(switchCell);
+      var edge = findSwitchLink(blockCell);
+      if (edge == null) {
+        var value = deps.createNode(deps.cabinetSwitchLinkTag);
+        value.setAttribute("esKind", deps.cabinetSwitchLinkKind);
+        value.setAttribute("label", "");
+        edge = new mxCell(value, new mxGeometry(), makeCabinetSwitchLinkStyle());
+        edge.edge = true;
+        model.add(frame, edge);
+      }
+      edge.value.setAttribute("blockId", deps.trim(deps.getAttr(blockCell, "blockId")));
+      edge.value.setAttribute(
+        "logicalCabinetId",
+        deps.trim(deps.getAttr(blockCell, "logicalCabinetId"))
+      );
+      edge.value.setAttribute(
+        "switchInstanceId",
+        deps.trim(deps.getAttr(switchCell, "instanceId"))
+      );
+      model.setTerminal(edge, blockCell, true);
+      model.setTerminal(edge, switchCell, false);
+      if (blockPort != null) {
+        deps.setConnectionConstraint(
+          edge,
+          blockCell,
+          true,
+          new mxConnectionConstraint(
+            new mxPoint(blockPort.x, blockPort.y),
+            false,
+            blockPortId
+          )
+        );
+      }
+      if (switchPort != null) {
+        deps.setConnectionConstraint(
+          edge,
+          switchCell,
+          false,
+          new mxConnectionConstraint(
+            new mxPoint(switchPort.x, switchPort.y),
+            false,
+            deps.trim(switchPort.id)
+          )
+        );
+      }
+      return edge;
+    }
+    function syncBoundSwitches(segments) {
+      var i;
+      var j;
+      for (i = 0; i < segments.length; i++) {
+        var blocks = getSegmentBlocks2(segments[i]);
+        for (j = 0; j < blocks.length; j++) {
+          var blockCell = blocks[j];
+          var instanceId = deps.trim(deps.getAttr(blockCell, "switchInstanceId"));
+          if (instanceId.length == 0) {
+            continue;
+          }
+          var switchCell = findSwitchCellByInstanceId2(instanceId);
+          if (switchCell == null) {
+            continue;
+          }
+          placeSwitchInBlock(blockCell, switchCell);
+          ensureSwitchLink(blockCell, switchCell);
+        }
+      }
+    }
+    function bindSwitchToBlock2(blockCell, spec) {
+      var segment = findCabinetSegment2(blockCell);
+      var frame = deps.findDrawingFrame(blockCell);
+      if (segment == null || frame == null || spec == null) {
+        return null;
+      }
+      var blockId = deps.trim(deps.getAttr(blockCell, "blockId"));
+      var nextModel = setBlockSwitchBinding(extractCabinetModel2(segment), blockId, {
+        instanceId: deps.trim(spec.instanceId),
+        symbolId: deps.trim(spec.symbolId)
+      });
+      if (nextModel == null) {
+        return null;
+      }
+      unbindSwitchFromBlock2(blockCell, true, true);
+      var switchCell = deps.buildSymbolCell(spec);
+      model.add(frame, switchCell);
+      placeSwitchInBlock(blockCell, switchCell);
+      var segments = relayoutCabinetByModel2(nextModel);
+      return { segments, switchCell };
+    }
+    function unbindSwitchFromBlock2(blockCell, removeSwitch, skipRelayout) {
+      var segment = findCabinetSegment2(blockCell);
+      if (segment == null) {
+        return null;
+      }
+      var instanceId = deps.trim(deps.getAttr(blockCell, "switchInstanceId"));
+      var link = findSwitchLink(blockCell);
+      if (link != null) {
+        model.remove(link);
+      }
+      if (removeSwitch && instanceId.length > 0) {
+        var switchCell = findSwitchCellByInstanceId2(instanceId);
+        if (switchCell != null) {
+          model.remove(switchCell);
+        }
+      }
+      if (skipRelayout) {
+        return null;
+      }
+      var blockId = deps.trim(deps.getAttr(blockCell, "blockId"));
+      var nextModel = setBlockSwitchBinding(extractCabinetModel2(segment), blockId, null);
+      return nextModel != null ? relayoutCabinetByModel2(nextModel) : null;
+    }
+    function insertCabinetBlockAfter2(blockCell, blockInit) {
+      var segment = findCabinetSegment2(blockCell);
+      if (segment == null) {
+        return null;
+      }
+      var nextModel = insertBlockAfter(
+        extractCabinetModel2(segment),
+        deps.getAttr(blockCell, "blockId"),
+        blockInit
+      );
+      if (nextModel == null) {
+        return null;
+      }
+      return relayoutCabinetByModel2(nextModel);
+    }
+    function applyCabinetBlockHeight2(blockCell, height) {
+      var segment = findCabinetSegment2(blockCell);
+      if (segment == null) {
+        return null;
+      }
+      var cabinetModel = extractCabinetModel2(segment);
+      var blockId = deps.trim(deps.getAttr(blockCell, "blockId"));
+      var nextHeight = deps.clamp(
+        Math.round(height),
+        deps.blockMinHeight,
+        deps.blockMaxHeight
+      );
+      var i;
+      for (i = 0; i < cabinetModel.blocks.length; i++) {
+        if (cabinetModel.blocks[i].id != blockId) {
+          continue;
+        }
+        if (cabinetModel.blocks[i].height == nextHeight) {
+          return null;
+        }
+        cabinetModel.blocks[i].height = nextHeight;
+        return relayoutCabinetByModel2(cabinetModel);
+      }
+      return null;
+    }
+    function applyCabinetWidth2(cell, width) {
+      var segment = findCabinetSegment2(cell);
+      if (segment == null) {
+        return null;
+      }
+      var cabinetModel = extractCabinetModel2(segment);
+      var nextWidth = Math.max(deps.minWidth, Math.round(width));
+      if (cabinetModel.cabinetWidth == nextWidth) {
+        return null;
+      }
+      cabinetModel.cabinetWidth = nextWidth;
+      return relayoutCabinetByModel2(cabinetModel);
+    }
     return {
+      applyCabinetBlockHeight: applyCabinetBlockHeight2,
+      applyCabinetWidth: applyCabinetWidth2,
+      bindSwitchToBlock: bindSwitchToBlock2,
+      findSwitchCellByInstanceId: findSwitchCellByInstanceId2,
+      findSwitchLink,
+      insertCabinetBlockAfter: insertCabinetBlockAfter2,
+      syncBoundSwitches,
+      unbindSwitchFromBlock: unbindSwitchFromBlock2,
       buildCabinetPageDescriptors,
       buildCabinetPortMap: buildCabinetPortMap2,
       buildCabinetSegmentCell: buildCabinetSegmentCell2,
@@ -6086,12 +6419,12 @@
       extractCabinetModel: extractCabinetModel2,
       findCabinetSegment: findCabinetSegment2,
       findCabinetSegments: findCabinetSegments2,
+      getSegmentBlocks: getSegmentBlocks2,
       getCellAbsoluteGeometry: getCellAbsoluteGeometry2,
       getPortAbsolutePosition: getPortAbsolutePosition2,
       normalizeCabinetModel,
       relayoutCabinetByModel: relayoutCabinetByModel2,
-      restoreCabinetAttachments: restoreCabinetAttachments2,
-      setSelectedCabinetGap: setSelectedCabinetGap2
+      restoreCabinetAttachments: restoreCabinetAttachments2
     };
   }
 
@@ -6132,11 +6465,33 @@
   function restoreCabinetAttachments() {
     return getCabinetDomain().restoreCabinetAttachments.apply(null, arguments);
   }
-  function setSelectedCabinetGap() {
-    return getCabinetDomain().setSelectedCabinetGap.apply(null, arguments);
+  function applyCabinetBlockHeight() {
+    return getCabinetDomain().applyCabinetBlockHeight.apply(null, arguments);
+  }
+  function applyCabinetWidth() {
+    return getCabinetDomain().applyCabinetWidth.apply(null, arguments);
+  }
+  function bindSwitchToBlock() {
+    return getCabinetDomain().bindSwitchToBlock.apply(null, arguments);
+  }
+  function unbindSwitchFromBlock() {
+    return getCabinetDomain().unbindSwitchFromBlock.apply(null, arguments);
+  }
+  function findSwitchCellByInstanceId() {
+    return getCabinetDomain().findSwitchCellByInstanceId.apply(null, arguments);
+  }
+  function insertCabinetBlockAfter() {
+    return getCabinetDomain().insertCabinetBlockAfter.apply(null, arguments);
+  }
+  function getSegmentBlocks() {
+    return getCabinetDomain().getSegmentBlocks.apply(null, arguments);
   }
   var cabinetDomainApi = {
+    applyCabinetBlockHeight,
+    applyCabinetWidth,
+    bindSwitchToBlock,
     buildCabinetPageDescriptors: buildCabinetPageDescriptors2,
+    findSwitchCellByInstanceId,
     buildCabinetPortMap,
     buildCabinetSegmentCell,
     collectCabinetAttachments,
@@ -6145,10 +6500,473 @@
     findCabinetSegments,
     getCellAbsoluteGeometry,
     getPortAbsolutePosition,
+    getSegmentBlocks,
+    insertCabinetBlockAfter,
+    unbindSwitchFromBlock,
     normalizeCabinetModel,
     relayoutCabinetByModel,
-    restoreCabinetAttachments,
-    setSelectedCabinetGap
+    restoreCabinetAttachments
+  };
+
+  // runtime/connectionConstraints.js
+  function getConstraintDeps() {
+    var app = getApp();
+    var ctx = app.ctx;
+    return {
+      ctx,
+      trim,
+      clamp,
+      parsePortLayout: specDomainApi.parsePortLayout,
+      getAttr,
+      buildPortLayout: specDomainApi.buildPortLayout,
+      findPortHostRoot,
+      normalizePortDirection: specDomainApi.normalizePortDirection,
+      normalizePortIoMode: specDomainApi.normalizePortIoMode,
+      isDrawingFrame,
+      isCabinetSegment,
+      isCabinetGap,
+      findDrawingFrame: frameDomainApi.findDrawingFrame,
+      getCellAbsoluteGeometry: function(cell) {
+        return cabinetDomainApi.getCellAbsoluteGeometry(cell);
+      },
+      getPortAbsolutePosition: function(root, port) {
+        return cabinetDomainApi.getPortAbsolutePosition(root, port);
+      }
+    };
+  }
+  function getConstraintRuntime() {
+    var deps = getConstraintDeps();
+    var ctx = deps.ctx;
+    var graph = ctx.graph;
+    return {
+      deps,
+      graph,
+      model: ctx.model,
+      state: ctx.state,
+      oldGetAllConnectionConstraints: graph.getAllConnectionConstraints,
+      oldSetConnectionConstraint: graph.setConnectionConstraint,
+      oldValidateConnection: graph.connectionHandler.validateConnection
+    };
+  }
+  function getElectricalConstraints(cell) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var root = deps.findPortHostRoot(cell);
+    var layout;
+    var constraints = [];
+    var i;
+    if (root == null) {
+      return null;
+    }
+    layout = deps.buildPortLayout(
+      { ports: deps.parsePortLayout(deps.getAttr(root, "portsJson")) },
+      deps.parsePortLayout(deps.getAttr(root, "portLayout"))
+    );
+    for (i = 0; i < layout.length; i++) {
+      var point = layout[i];
+      constraints.push(
+        new mxConnectionConstraint(
+          new mxPoint(point.x, point.y),
+          false,
+          point.id || "port:" + i
+        )
+      );
+    }
+    return constraints;
+  }
+  function getPortMetaByConstraint(root, constraint) {
+    var deps = getConstraintRuntime().deps;
+    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
+    var name = constraint != null ? deps.trim(constraint.name) : "";
+    var i;
+    for (i = 0; i < ports.length; i++) {
+      if (deps.trim(ports[i].id) == name) {
+        return ports[i];
+      }
+    }
+    return null;
+  }
+  function getPortMetaById(root, portId) {
+    var deps = getConstraintRuntime().deps;
+    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
+    var target = deps.trim(portId);
+    var i;
+    for (i = 0; i < ports.length; i++) {
+      if (deps.trim(ports[i].id) == target) {
+        return ports[i];
+      }
+    }
+    return null;
+  }
+  function mapPortDirectionToConstraint(direction) {
+    var normalizePortDirection2 = getConstraintRuntime().deps.normalizePortDirection;
+    switch (normalizePortDirection2(direction)) {
+      case "left":
+        return "west";
+      case "right":
+        return "east";
+      case "up":
+        return "north";
+      case "down":
+        return "south";
+      default:
+        return "";
+    }
+  }
+  function validatePortIoMode(sourcePort, targetPort) {
+    var normalizePortIoMode2 = getConstraintRuntime().deps.normalizePortIoMode;
+    if (sourcePort != null && normalizePortIoMode2(sourcePort.ioMode) == "in") {
+      return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u5165\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u8D77\u70B9";
+    }
+    if (targetPort != null && normalizePortIoMode2(targetPort.ioMode) == "out") {
+      return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u51FA\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u7EC8\u70B9";
+    }
+    return null;
+  }
+  function applyNativeConnectionConstraint(edge, terminal, source, constraint) {
+    var runtime = getConstraintRuntime();
+    runtime.oldSetConnectionConstraint.call(
+      runtime.graph,
+      edge,
+      terminal,
+      source,
+      constraint
+    );
+  }
+  function isMovableConnectedTerminal(cell) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    return cell != null && model.isVertex(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isCabinetGap(cell);
+  }
+  function clampCellGeometryToFrame(geometry, frame) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var frameGeometry = model.getGeometry(frame);
+    var nextGeometry = geometry.clone();
+    var padding = 12;
+    var minX = padding;
+    var minY = padding;
+    var maxX = Math.max(minX, frameGeometry.width - geometry.width - padding);
+    var maxY = Math.max(minY, frameGeometry.height - geometry.height - padding);
+    nextGeometry.x = deps.clamp(nextGeometry.x, minX, maxX);
+    nextGeometry.y = deps.clamp(nextGeometry.y, minY, maxY);
+    return nextGeometry;
+  }
+  function moveCellToFrameByDelta(cell, targetFrame, deltaX, deltaY) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    if (!isMovableConnectedTerminal(cell) || targetFrame == null) {
+      return;
+    }
+    var geometry = model.getGeometry(cell);
+    if (geometry == null) {
+      return;
+    }
+    var currentFrame = deps.findDrawingFrame(cell);
+    var absolute = deps.getCellAbsoluteGeometry(cell);
+    var targetFrameGeometry = model.getGeometry(targetFrame);
+    var nextGeometry = geometry.clone();
+    var nextAbsoluteX = absolute.x + deltaX;
+    var nextAbsoluteY = absolute.y + deltaY;
+    if (currentFrame != targetFrame) {
+      model.add(targetFrame, cell);
+    }
+    nextGeometry.x = nextAbsoluteX - targetFrameGeometry.x;
+    nextGeometry.y = nextAbsoluteY - targetFrameGeometry.y;
+    nextGeometry = clampCellGeometryToFrame(nextGeometry, targetFrame);
+    model.setGeometry(cell, nextGeometry);
+  }
+  function collectConnectedMovableGroup(startCell) {
+    var model = getConstraintRuntime().model;
+    var queue = [];
+    var vertexMap = {};
+    var edgeMap = {};
+    var vertices = [];
+    var edges = [];
+    var i;
+    if (!isMovableConnectedTerminal(startCell)) {
+      return {
+        vertices,
+        edges
+      };
+    }
+    queue.push(startCell);
+    while (queue.length > 0) {
+      var cell = queue.shift();
+      var cellId = mxObjectIdentity.get(cell);
+      if (vertexMap[cellId]) {
+        continue;
+      }
+      vertexMap[cellId] = true;
+      vertices.push(cell);
+      for (i = 0; i < model.getEdgeCount(cell); i++) {
+        var edge = model.getEdgeAt(cell, i);
+        var edgeId = mxObjectIdentity.get(edge);
+        var source = model.getTerminal(edge, true);
+        var target = model.getTerminal(edge, false);
+        var other = source == cell ? target : source;
+        if (!edgeMap[edgeId]) {
+          edgeMap[edgeId] = true;
+          edges.push(edge);
+        }
+        if (isMovableConnectedTerminal(other)) {
+          queue.push(other);
+        }
+      }
+    }
+    return {
+      vertices,
+      edges
+    };
+  }
+  function getCellsAbsoluteBounds(cells) {
+    var getCellAbsoluteGeometry2 = getConstraintRuntime().deps.getCellAbsoluteGeometry;
+    var bounds = null;
+    var i;
+    for (i = 0; i < cells.length; i++) {
+      var geometry = getCellAbsoluteGeometry2(cells[i]);
+      if (bounds == null) {
+        bounds = {
+          x: geometry.x,
+          y: geometry.y,
+          width: geometry.width,
+          height: geometry.height
+        };
+      } else {
+        var minX = Math.min(bounds.x, geometry.x);
+        var minY = Math.min(bounds.y, geometry.y);
+        var maxX = Math.max(
+          bounds.x + bounds.width,
+          geometry.x + geometry.width
+        );
+        var maxY = Math.max(
+          bounds.y + bounds.height,
+          geometry.y + geometry.height
+        );
+        bounds.x = minX;
+        bounds.y = minY;
+        bounds.width = maxX - minX;
+        bounds.height = maxY - minY;
+      }
+    }
+    return bounds;
+  }
+  function adjustGroupDeltaToFrame(vertices, targetFrame, deltaX, deltaY) {
+    var model = getConstraintRuntime().model;
+    var bounds = getCellsAbsoluteBounds(vertices);
+    var frameGeometry = model.getGeometry(targetFrame);
+    var padding = 12;
+    if (bounds == null || frameGeometry == null) {
+      return {
+        x: deltaX,
+        y: deltaY
+      };
+    }
+    var nextX = bounds.x + deltaX;
+    var nextY = bounds.y + deltaY;
+    var minX = frameGeometry.x + padding;
+    var minY = frameGeometry.y + padding;
+    var maxX = frameGeometry.x + frameGeometry.width - padding;
+    var maxY = frameGeometry.y + frameGeometry.height - padding;
+    if (nextX < minX) {
+      deltaX += minX - nextX;
+      nextX = minX;
+    }
+    if (nextY < minY) {
+      deltaY += minY - nextY;
+      nextY = minY;
+    }
+    if (nextX + bounds.width > maxX) {
+      deltaX -= nextX + bounds.width - maxX;
+    }
+    if (nextY + bounds.height > maxY) {
+      deltaY -= nextY + bounds.height - maxY;
+    }
+    return {
+      x: deltaX,
+      y: deltaY
+    };
+  }
+  function shiftEdgePointsByDelta(edge, deltaX, deltaY) {
+    var model = getConstraintRuntime().model;
+    var geometry = model.getGeometry(edge);
+    var points;
+    var i;
+    if (geometry == null || geometry.points == null || geometry.points.length == 0) {
+      return;
+    }
+    geometry = geometry.clone();
+    points = [];
+    for (i = 0; i < geometry.points.length; i++) {
+      points.push(
+        new mxPoint(
+          geometry.points[i].x + deltaX,
+          geometry.points[i].y + deltaY
+        )
+      );
+    }
+    geometry.points = points;
+    model.setGeometry(edge, geometry);
+  }
+  function clearEdgePoints(edge) {
+    var model = getConstraintRuntime().model;
+    var geometry = model.getGeometry(edge);
+    if (geometry != null && geometry.points != null && geometry.points.length > 0) {
+      geometry = geometry.clone();
+      geometry.points = null;
+      model.setGeometry(edge, geometry);
+    }
+  }
+  function moveConnectedGroupToCabinetPort(edge, source, oldRoot, oldPortId, newRoot, newPort) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var state = runtime.state;
+    var otherTerminal = model.getTerminal(edge, !source);
+    var oldPort = getPortMetaById(oldRoot, oldPortId);
+    var targetFrame = deps.findDrawingFrame(newRoot);
+    var group;
+    var delta;
+    var movedMap = {};
+    var i;
+    if (state.updatingModel || !deps.isCabinetSegment(oldRoot) || !deps.isCabinetSegment(newRoot) || oldPort == null || newPort == null || !isMovableConnectedTerminal(otherTerminal) || targetFrame == null) {
+      return;
+    }
+    group = collectConnectedMovableGroup(otherTerminal);
+    if (group.vertices.length == 0) {
+      return;
+    }
+    delta = adjustGroupDeltaToFrame(
+      group.vertices,
+      targetFrame,
+      deps.getPortAbsolutePosition(newRoot, newPort).x - deps.getPortAbsolutePosition(oldRoot, oldPort).x,
+      deps.getPortAbsolutePosition(newRoot, newPort).y - deps.getPortAbsolutePosition(oldRoot, oldPort).y
+    );
+    if (Math.abs(delta.x) < 1e-4 && Math.abs(delta.y) < 1e-4) {
+      return;
+    }
+    state.updatingModel = true;
+    model.beginUpdate();
+    try {
+      for (i = 0; i < group.vertices.length; i++) {
+        var vertex = group.vertices[i];
+        var key = mxObjectIdentity.get(vertex);
+        if (!movedMap[key]) {
+          movedMap[key] = true;
+          moveCellToFrameByDelta(vertex, targetFrame, delta.x, delta.y);
+        }
+      }
+      for (i = 0; i < group.edges.length; i++) {
+        var groupEdge = group.edges[i];
+        var sourceTerminal = model.getTerminal(groupEdge, true);
+        var targetTerminal = model.getTerminal(groupEdge, false);
+        var sourceMoved = movedMap[mxObjectIdentity.get(sourceTerminal)] === true;
+        var targetMoved = movedMap[mxObjectIdentity.get(targetTerminal)] === true;
+        if (sourceMoved && targetMoved) {
+          shiftEdgePointsByDelta(groupEdge, delta.x, delta.y);
+        } else {
+          clearEdgePoints(groupEdge);
+        }
+      }
+    } finally {
+      model.endUpdate();
+      state.updatingModel = false;
+    }
+  }
+  function installGraphBehavior(extraDeps) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var graph = runtime.graph;
+    var model = runtime.model;
+    graph.getAllConnectionConstraints = function(terminal, source) {
+      var root = deps.findPortHostRoot(terminal != null ? terminal.cell : null);
+      if (root != null) {
+        return getElectricalConstraints(root);
+      }
+      return runtime.oldGetAllConnectionConstraints.apply(this, arguments);
+    };
+    graph.setConnectionConstraint = function(edge, terminal, source, constraint) {
+      if (edge == null) {
+        runtime.oldSetConnectionConstraint.apply(this, arguments);
+        return;
+      }
+      var previousStyle = model.getStyle(edge) || "";
+      var previousPortId = deps.trim(
+        mxUtils.getValue(
+          previousStyle,
+          source ? "sourcePortId" : "targetPortId",
+          ""
+        )
+      );
+      var previousRoot = deps.findPortHostRoot(model.getTerminal(edge, source));
+      runtime.oldSetConnectionConstraint.apply(this, arguments);
+      var root = deps.findPortHostRoot(terminal);
+      if (root == null || edge == null) {
+        return;
+      }
+      var port = getPortMetaByConstraint(root, constraint);
+      extraDeps.applyEdgePortConstraintMetadata(edge, root, source, constraint);
+      if (previousRoot != null && root != null && previousPortId.length > 0 && port != null && deps.trim(port.id).length > 0 && (previousRoot != root || previousPortId != deps.trim(port.id))) {
+        moveConnectedGroupToCabinetPort(
+          edge,
+          source,
+          previousRoot,
+          previousPortId,
+          root,
+          port
+        );
+      }
+    };
+    graph.connectionHandler.validateConnection = function(source, target) {
+      var error = runtime.oldValidateConnection.apply(this, arguments);
+      var sourceRoot;
+      var targetRoot;
+      var sourcePort;
+      var targetPort;
+      if (error != null) {
+        extraDeps.setCanvasStatus(error);
+        return error;
+      }
+      sourceRoot = deps.findPortHostRoot(source);
+      targetRoot = deps.findPortHostRoot(target);
+      if (isCabinetBlock(sourceRoot) || isCabinetBlock(targetRoot)) {
+        error = "\u8BF7\u8FDE\u63A5\u5F00\u5173\u7684\u51FA\u7EBF\u7AEF\u5B50\uFF0C\u914D\u7535\u67DC\u5757\u7684\u7AEF\u53E3\u7531\u7ED1\u5B9A\u7684\u5F00\u5173\u5360\u7528";
+        extraDeps.setCanvasStatus(error);
+        return error;
+      }
+      if (sourceRoot == null && targetRoot == null) {
+        return null;
+      }
+      sourcePort = getPortMetaByConstraint(sourceRoot, this.sourceConstraint);
+      targetPort = getPortMetaByConstraint(
+        targetRoot,
+        this.constraintHandler != null ? this.constraintHandler.currentConstraint : null
+      );
+      error = validatePortIoMode(sourcePort, targetPort);
+      extraDeps.setCanvasStatus(error);
+      return error;
+    };
+    graph.connectionHandler.addListener(mxEvent.RESET, function() {
+      extraDeps.setCanvasStatus("");
+    });
+    graph.connectionHandler.addListener(mxEvent.CONNECT, function() {
+      extraDeps.setCanvasStatus("");
+    });
+  }
+  var connectionConstraintsApi = {
+    applyNativeConnectionConstraint,
+    clearEdgePoints,
+    getElectricalConstraints,
+    getPortMetaByConstraint,
+    getPortMetaById,
+    isMovableConnectedTerminal,
+    installGraphBehavior,
+    mapPortDirectionToConstraint,
+    moveCellToFrameByDelta,
+    moveConnectedGroupToCabinetPort
   };
 
   // ui/backendDialogs.js
@@ -6477,6 +7295,125 @@
     openBackendSaveDialog
   };
 
+  // runtime/frameBinding.js
+  var ZERO_ORIGIN = { x: 0, y: 0 };
+  var syncing = false;
+  function getCtx() {
+    return getApp().ctx;
+  }
+  function isBindableVertex(cell) {
+    var ctx = getCtx();
+    var model = ctx.model;
+    if (cell == null || !model.isVertex(cell)) {
+      return false;
+    }
+    if (isDrawingFrame(cell) || isCabinetSegment(cell) || isCabinetGap(cell)) {
+      return false;
+    }
+    if (trim(getAttr(cell, "esKind")).length > 0 || isFrameDecorationCell(cell)) {
+      return false;
+    }
+    var parent = model.getParent(cell);
+    return parent === ctx.graph.getDefaultParent() || isDrawingFrame(parent);
+  }
+  function originOfParent(parent) {
+    var ctx = getCtx();
+    if (parent == null || parent === ctx.graph.getDefaultParent()) {
+      return ZERO_ORIGIN;
+    }
+    var origin = frameDomainApi.getAbsoluteOrigin(parent);
+    var geometry = ctx.model.getGeometry(parent);
+    return {
+      x: origin.x + (geometry != null ? geometry.x : 0),
+      y: origin.y + (geometry != null ? geometry.y : 0)
+    };
+  }
+  function resolveTargetParent(cell) {
+    var ctx = getCtx();
+    var center = frameDomainApi.getAbsoluteCenter(cell);
+    var frame = center != null ? frameDomainApi.findFrameContainingPoint(center.x, center.y) : null;
+    return frame != null ? frame : ctx.graph.getDefaultParent();
+  }
+  function reparentCell(cell, nextParent) {
+    var ctx = getCtx();
+    var model = ctx.model;
+    var from = originOfParent(model.getParent(cell));
+    var to = originOfParent(nextParent);
+    var dx = from.x - to.x;
+    var dy = from.y - to.y;
+    var geometry = model.getGeometry(cell);
+    if (geometry != null && (dx !== 0 || dy !== 0)) {
+      geometry = geometry.clone();
+      geometry.translate(dx, dy);
+      model.setGeometry(cell, geometry);
+    }
+    model.add(nextParent, cell, model.getChildCount(nextParent));
+  }
+  function syncFrameBinding(cells) {
+    if (syncing || !Array.isArray(cells) || cells.length === 0) {
+      return 0;
+    }
+    var model = getCtx().model;
+    var changed = 0;
+    var i;
+    syncing = true;
+    model.beginUpdate();
+    try {
+      for (i = 0; i < cells.length; i++) {
+        var cell = cells[i];
+        if (!isBindableVertex(cell)) {
+          continue;
+        }
+        var nextParent = resolveTargetParent(cell);
+        if (nextParent === model.getParent(cell)) {
+          continue;
+        }
+        reparentCell(cell, nextParent);
+        changed++;
+      }
+    } finally {
+      model.endUpdate();
+      syncing = false;
+    }
+    return changed;
+  }
+  function bindCellsToFrame(cells, frame) {
+    if (syncing || !Array.isArray(cells) || cells.length === 0 || frame == null) {
+      return 0;
+    }
+    var model = getCtx().model;
+    var changed = 0;
+    var i;
+    syncing = true;
+    model.beginUpdate();
+    try {
+      for (i = 0; i < cells.length; i++) {
+        var cell = cells[i];
+        if (!isBindableVertex(cell) || model.getParent(cell) === frame) {
+          continue;
+        }
+        reparentCell(cell, frame);
+        changed++;
+      }
+    } finally {
+      model.endUpdate();
+      syncing = false;
+    }
+    return changed;
+  }
+  function handleGraphCellsEvent(sender, evt) {
+    var cells = evt != null ? evt.getProperty("cells") : null;
+    if (Array.isArray(cells) && cells.length > 0) {
+      syncFrameBinding(cells);
+    }
+  }
+  function installFrameBinding(ctx) {
+    var graph = ctx.graph;
+    graph.addListener(mxEvent.MOVE_CELLS, handleGraphCellsEvent);
+    graph.addListener(mxEvent.CELLS_ADDED, handleGraphCellsEvent);
+    graph.addListener(mxEvent.CELLS_RESIZED, handleGraphCellsEvent);
+  }
+
   // runtime/hostBridge.js
   function parseHostMessage(data) {
     if (data === null) {
@@ -6800,6 +7737,16 @@
         setGenericHostPorts(cell, nextPorts);
       }
     }
+    function withFrameDecorationFlag(style) {
+      var text = style != null ? String(style) : "";
+      if (text.indexOf(FRAME_DECORATION_STYLE_FLAG) >= 0) {
+        return text;
+      }
+      if (text.length === 0) {
+        return FRAME_DECORATION_STYLE_FLAG + ";";
+      }
+      return text.charAt(text.length - 1) === ";" ? text + FRAME_DECORATION_STYLE_FLAG + ";" : text + ";" + FRAME_DECORATION_STYLE_FLAG + ";";
+    }
     function createFrameTemplateLabelCell(frame, label) {
       var frameConfig = frameDomainApi.getFrameConfig(frame);
       var width = Math.max(40, Math.round(Number(label.width) || 120));
@@ -7050,9 +7997,6 @@
         return true;
       }
       ownerFrame = frameDomainApi.findDrawingFrame(cell);
-      if (ownerFrame == null) {
-        return true;
-      }
       return ownerFrame === frame;
     }
     function edgeBelongsToLayoutFrame(edge, frame) {
@@ -7175,6 +8119,7 @@
                     insertedIds.push(String(cells[ci].id));
                   }
                 }
+                syncFrameBinding(cells);
               } finally {
                 model2.endUpdate();
               }
@@ -7287,7 +8232,7 @@
                   var decoCell = new mxCell(
                     deco.label || "",
                     decoGeo,
-                    deco.style || ""
+                    withFrameDecorationFlag(deco.style)
                   );
                   decoCell.vertex = true;
                   decoCell.setConnectable(false);
@@ -7339,7 +8284,7 @@
                   var edgeCell = new mxCell(
                     edgeDeco.label || "",
                     edgeGeo,
-                    edgeDeco.style || ""
+                    withFrameDecorationFlag(edgeDeco.style)
                   );
                   edgeCell.edge = true;
                   edgeCell.setConnectable(false);
@@ -7492,6 +8437,7 @@
                   }
                 }
               }
+              bindCellsToFrame(movedCells, frame);
               for (var edgeId in edgeMap) {
                 if (edgeMap.hasOwnProperty(edgeId)) {
                   clearEdgePoints(edgeMap[edgeId]);
@@ -8646,6 +9592,55 @@
     });
   }
 
+  // runtime/printMode.js
+  var printMode = false;
+  var listeners = [];
+  function isPrintMode() {
+    return printMode;
+  }
+  function onPrintModeChanged(listener) {
+    if (typeof listener === "function") {
+      listeners.push(listener);
+    }
+  }
+  function notify() {
+    var i;
+    for (i = 0; i < listeners.length; i++) {
+      try {
+        listeners[i]();
+      } catch (e) {
+      }
+    }
+  }
+  function applyMode(graph, next) {
+    printMode = next;
+    notify();
+    graph.refresh();
+  }
+  function withPrintStyles(callback) {
+    var graph = getApp().ctx.graph;
+    if (printMode) {
+      return callback();
+    }
+    applyMode(graph, true);
+    try {
+      return callback();
+    } finally {
+      applyMode(graph, false);
+    }
+  }
+  function installPrintMode(ctx) {
+    var graph = ctx.graph;
+    var origGetCellStyle = graph.getCellStyle;
+    graph.getCellStyle = function(cell) {
+      var style = origGetCellStyle.apply(this, arguments);
+      if (printMode && isCabinetBlock(cell)) {
+        style[mxConstants.STYLE_STROKECOLOR] = mxConstants.NONE;
+      }
+      return style;
+    };
+  }
+
   // ui/exportSvgDialog.js
   function buildExportDialogDeps() {
     var app = getApp();
@@ -8672,6 +9667,11 @@
       };
     }
     function createSvgExportCode(width, height) {
+      return withPrintStyles(function() {
+        return buildSvgExportCode(width, height);
+      });
+    }
+    function buildSvgExportCode(width, height) {
       var exportBounds2 = getDiagramExportBounds();
       var targetWidth = Math.max(1, deps.toInt(width, exportBounds2.width));
       var targetHeight = Math.max(1, deps.toInt(height, exportBounds2.height));
@@ -8891,7 +9891,9 @@
         deps.showStatus("\u5F53\u524D\u73AF\u5883\u7F3A\u5C11 PDF \u5BFC\u51FA\u52A8\u4F5C", true);
         return;
       }
-      ui.actions.get("exportPdf").funct();
+      withPrintStyles(function() {
+        ui.actions.get("exportPdf").funct();
+      });
     });
     pdfButton.style.marginTop = "0";
     buttons.appendChild(pdfButton);
@@ -11615,6 +12617,204 @@
     }
   };
 
+  // ui/switchPickerDialog.js
+  var DIALOG_WIDTH2 = 360;
+  var DIALOG_HEIGHT2 = 420;
+  function getState3() {
+    return getApp().ctx.state;
+  }
+  function closeSwitchPickerDialog() {
+    var state = getState3();
+    if (state.switchPickerWindow != null) {
+      var wnd = state.switchPickerWindow;
+      state.switchPickerWindow = null;
+      wnd.destroy();
+    }
+  }
+  function loadTemplates(onReady) {
+    libraryStoreApi.loadStoredLibrary(function(images) {
+      var templates = [];
+      var i;
+      for (i = 0; i < images.length; i++) {
+        try {
+          templates.push(libraryStoreApi.getLibraryEntrySpec(images[i]));
+        } catch (e) {
+        }
+      }
+      onReady(templates);
+    });
+  }
+  function createTemplateRow(template, onPick) {
+    var row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "10px";
+    row.style.padding = "6px 8px";
+    row.style.border = "1px solid transparent";
+    row.style.borderRadius = "4px";
+    row.style.cursor = "pointer";
+    row.onmouseenter = function() {
+      row.style.background = Editor.isDarkMode() ? "#2a2a2a" : "#f0f3f7";
+      row.style.borderColor = "#2a5c9c";
+    };
+    row.onmouseleave = function() {
+      row.style.background = "transparent";
+      row.style.borderColor = "transparent";
+    };
+    var thumb = document.createElement("div");
+    thumb.style.width = "40px";
+    thumb.style.height = "32px";
+    thumb.style.flex = "0 0 auto";
+    thumb.style.display = "flex";
+    thumb.style.alignItems = "center";
+    thumb.style.justifyContent = "center";
+    thumb.style.overflow = "hidden";
+    if (trim(template.svg).length > 0) {
+      var img = document.createElement("img");
+      img.setAttribute("src", "data:image/svg+xml," + encodeURIComponent(template.svg));
+      img.style.maxWidth = "100%";
+      img.style.maxHeight = "100%";
+      thumb.appendChild(img);
+    }
+    row.appendChild(thumb);
+    var text = document.createElement("div");
+    text.style.flex = "1 1 auto";
+    text.style.minWidth = "0";
+    var title = document.createElement("div");
+    title.innerText = trim(template.title) || trim(template.symbolId) || "\u672A\u547D\u540D";
+    title.style.fontSize = "13px";
+    title.style.overflow = "hidden";
+    title.style.textOverflow = "ellipsis";
+    title.style.whiteSpace = "nowrap";
+    text.appendChild(title);
+    var subtitle = document.createElement("div");
+    subtitle.innerText = trim(template.symbolId);
+    subtitle.style.fontSize = "11px";
+    subtitle.style.color = Editor.isDarkMode() ? "#9aa0a6" : "#6b7280";
+    subtitle.style.overflow = "hidden";
+    subtitle.style.textOverflow = "ellipsis";
+    subtitle.style.whiteSpace = "nowrap";
+    text.appendChild(subtitle);
+    row.appendChild(text);
+    mxEvent.addListener(row, "click", function() {
+      onPick(template);
+    });
+    return row;
+  }
+  function openSwitchPickerDialog(blockCell, nativeEvent) {
+    if (blockCell == null) {
+      return;
+    }
+    closeSwitchPickerDialog();
+    loadTemplates(function(templates) {
+      var div = document.createElement("div");
+      div.style.padding = "10px";
+      div.style.display = "flex";
+      div.style.flexDirection = "column";
+      div.style.gap = "8px";
+      div.style.boxSizing = "border-box";
+      div.style.width = "100%";
+      div.style.height = "100%";
+      var search = document.createElement("input");
+      search.setAttribute("type", "text");
+      search.setAttribute("placeholder", "\u6309\u540D\u79F0\u6216\u7F16\u53F7\u7B5B\u9009");
+      search.style.flex = "0 0 auto";
+      div.appendChild(search);
+      var list = document.createElement("div");
+      list.style.flex = "1 1 auto";
+      list.style.overflow = "auto";
+      list.style.display = "flex";
+      list.style.flexDirection = "column";
+      list.style.gap = "2px";
+      div.appendChild(list);
+      function renderEmptyState(message, hint) {
+        var box = document.createElement("div");
+        box.style.padding = "16px 8px";
+        box.style.color = Editor.isDarkMode() ? "#9aa0a6" : "#6b7280";
+        box.style.fontSize = "12.5px";
+        box.style.lineHeight = "1.7";
+        var title = document.createElement("div");
+        title.innerText = message;
+        title.style.marginBottom = "6px";
+        box.appendChild(title);
+        if (hint != null) {
+          var tip = document.createElement("div");
+          tip.innerText = hint;
+          box.appendChild(tip);
+        }
+        list.appendChild(box);
+      }
+      function pick(template) {
+        try {
+          commandApi.bindCabinetSwitch(
+            blockCell,
+            specDomainApi.buildInstanceSpec({}, template)
+          );
+        } catch (e) {
+          var message = e.message || String(e);
+          showStatus(message, true);
+          setCanvasStatus(message);
+          return;
+        }
+        closeSwitchPickerDialog();
+      }
+      function render() {
+        var keyword = trim(search.value).toLowerCase();
+        var shown = 0;
+        var i;
+        list.innerHTML = "";
+        for (i = 0; i < templates.length; i++) {
+          var template = templates[i];
+          var haystack = (trim(template.title) + " " + trim(template.symbolId)).toLowerCase();
+          if (keyword.length > 0 && haystack.indexOf(keyword) < 0) {
+            continue;
+          }
+          list.appendChild(createTemplateRow(template, pick));
+          shown++;
+        }
+        if (shown > 0) {
+          return;
+        }
+        if (templates.length == 0) {
+          renderEmptyState(
+            "\u7535\u6C14\u56FE\u5143\u5E93\u8FD8\u662F\u7A7A\u7684\u3002",
+            "\u5F00\u5173\u662F\u4ECE\u56FE\u5143\u5E93\u91CC\u9009\u7684\uFF1A\u5148\u5728 Extras \u83DC\u5355\u70B9\u300C\u5B9A\u4E49\u7535\u6C14\u56FE\u5143\u300D\u6253\u5F00\u7F16\u8F91\u5668\uFF0C\u753B\u597D\u5F00\u5173\u540E\u70B9\u300C\u52A0\u5165\u5E93\u300D\uFF0C\u5B83\u5C31\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC\u3002"
+          );
+        } else {
+          renderEmptyState("\u6CA1\u6709\u5339\u914D\u7684\u56FE\u5143\u7C7B\u578B\u3002", "\u6362\u4E2A\u5173\u952E\u8BCD\uFF0C\u6216\u8005\u6E05\u7A7A\u641C\u7D22\u6846\u770B\u5168\u90E8\u3002");
+        }
+      }
+      mxEvent.addListener(search, "input", render);
+      render();
+      var position = getCabinetPopupPosition(nativeEvent, DIALOG_WIDTH2, DIALOG_HEIGHT2);
+      var wnd = new mxWindow(
+        "\u9009\u62E9\u5F00\u5173",
+        div,
+        position.x,
+        position.y,
+        DIALOG_WIDTH2,
+        DIALOG_HEIGHT2,
+        true,
+        true
+      );
+      wnd.destroyOnClose = true;
+      wnd.setClosable(true);
+      wnd.setMaximizable(false);
+      wnd.setResizable(true);
+      wnd.setScrollable(false);
+      wnd.addListener(mxEvent.DESTROY, function() {
+        getState3().switchPickerWindow = null;
+      });
+      getState3().switchPickerWindow = wnd;
+      wnd.setVisible(true);
+      search.focus();
+    });
+  }
+  var switchPickerApi = {
+    closeSwitchPickerDialog,
+    openSwitchPickerDialog
+  };
+
   // runtime/modelSync.js
   function buildModelSyncDeps() {
     var app = getApp();
@@ -11765,7 +12965,7 @@
     var menu = ui.menus.get("extras");
     var oldExtrasMenu = menu.funct;
     graph.isCellDeletable = function(cell) {
-      if (isDrawingFrame(cell) || isPluginInternalCell(cell)) {
+      if (isDrawingFrame(cell) || isCabinetSegment(cell) || isPluginInternalCell(cell)) {
         return !!state.allowProtectedDelete;
       }
       return graphIsCellDeletable.apply(this, arguments);
@@ -11790,13 +12990,62 @@
       if (isElectricalRoot(cell)) {
         return true;
       }
+      if (isCabinetBlock(cell) || isCabinetSegment(cell)) {
+        return true;
+      }
       if (isPluginInternalCell(cell)) {
         return false;
       }
       return graphIsCellResizable.apply(this, arguments);
     };
+    var _origCellsResized = graph.cellsResized;
+    graph.cellsResized = function(cells, bounds, recurse) {
+      if (!Array.isArray(cells) || cells.length === 0) {
+        return _origCellsResized.apply(this, arguments);
+      }
+      var passthroughCells = [];
+      var passthroughBounds = [];
+      var cabinetEdits = [];
+      var i;
+      for (i = 0; i < cells.length; i++) {
+        var cell = cells[i];
+        var bound = bounds != null ? bounds[i] : null;
+        if (bound != null && isCabinetBlock(cell)) {
+          cabinetEdits.push({ kind: "blockHeight", cell, value: bound.height });
+        } else if (bound != null && isCabinetSegment(cell)) {
+          cabinetEdits.push({ kind: "cabinetWidth", cell, value: bound.width });
+        } else {
+          passthroughCells.push(cell);
+          passthroughBounds.push(bound);
+        }
+      }
+      if (cabinetEdits.length === 0) {
+        return _origCellsResized.apply(this, arguments);
+      }
+      var result;
+      model.beginUpdate();
+      try {
+        if (passthroughCells.length > 0) {
+          result = _origCellsResized.call(this, passthroughCells, passthroughBounds, recurse);
+        }
+        for (i = 0; i < cabinetEdits.length; i++) {
+          var edit = cabinetEdits[i];
+          if (edit.kind === "blockHeight") {
+            cabinetDomainApi.applyCabinetBlockHeight(edit.cell, edit.value);
+          } else {
+            cabinetDomainApi.applyCabinetWidth(edit.cell, edit.value);
+          }
+        }
+      } finally {
+        model.endUpdate();
+      }
+      return result;
+    };
     graph.isCellSelectable = function(cell) {
       if (composeModeApi.isBlockedComposeTarget(cell)) {
+        return false;
+      }
+      if (isCabinetSwitchLink(cell)) {
         return false;
       }
       return graphIsCellSelectable.apply(this, arguments);
@@ -11818,6 +13067,34 @@
       }
       return filtered;
     };
+    var _origCreatePopupMenu = ui.menus.createPopupMenu;
+    ui.menus.createPopupMenu = function(menu2, cell, evt) {
+      var result = _origCreatePopupMenu.apply(this, arguments);
+      var target = graph.getSelectionCount() === 1 ? graph.getSelectionCell() : cell;
+      if (isCabinetBlock(target)) {
+        addCabinetBlockMenuItems(menu2, target, evt);
+      }
+      return result;
+    };
+    function addCabinetBlockMenuItems(menu2, blockCell, evt) {
+      var bound = trim(getAttr(blockCell, "switchInstanceId")).length > 0;
+      menu2.addSeparator();
+      if (!bound) {
+        menu2.addItem("\u7ED1\u5B9A\u5F00\u5173\u2026", null, function() {
+          switchPickerApi.openSwitchPickerDialog(blockCell, evt);
+        });
+        return;
+      }
+      menu2.addItem("\u66F4\u6362\u5F00\u5173\u2026", null, function() {
+        switchPickerApi.openSwitchPickerDialog(blockCell, evt);
+      });
+      menu2.addItem("\u89E3\u9664\u7ED1\u5B9A\uFF08\u4FDD\u7559\u5F00\u5173\uFF09", null, function() {
+        commandApi.unbindCabinetSwitch(blockCell, false);
+      });
+      menu2.addItem("\u5220\u9664\u5F00\u5173", null, function() {
+        commandApi.unbindCabinetSwitch(blockCell, true);
+      });
+    }
     ui.actions.addAction("electricalSymbols", actions.electricalSymbols);
     ui.actions.addAction("electricalBrowse", actions.electricalBrowse);
     ui.actions.addAction("electricalCreate", actions.electricalCreate);
@@ -11923,6 +13200,264 @@
     model.addListener(mxEvent.CHANGE, modelSyncApi.handleModelChange);
   }
 
+  // runtime/cabinetOverlays.js
+  var OVERLAY_SIZE = 18;
+  var PLUS_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#2a5c9c" stroke="#ffffff" stroke-width="1"/><path d="M9 5.4v7.2M5.4 9h7.2" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round"/></svg>';
+  var SWITCH_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#a85c22" stroke="#ffffff" stroke-width="1"/><path d="M4.9 12.2L11.2 6.6" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round"/><path d="M11.4 12.2h1.8" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round"/><circle cx="4.8" cy="12.2" r="1.2" fill="#ffffff"/><circle cx="13.2" cy="12.2" r="1.2" fill="#ffffff"/></svg>';
+  var iconCache = {};
+  function getIconImage(key, svg) {
+    if (iconCache[key] == null) {
+      iconCache[key] = new mxImage(
+        "data:image/svg+xml," + encodeURIComponent(svg),
+        OVERLAY_SIZE,
+        OVERLAY_SIZE
+      );
+    }
+    return iconCache[key];
+  }
+  function createInsertOverlay() {
+    var overlay = new mxCellOverlay(
+      getIconImage("plus", PLUS_ICON_SVG),
+      "\u5728\u6B64\u5757\u4E0B\u65B9\u63D2\u5165\u65B0\u5757",
+      mxConstants.ALIGN_CENTER,
+      mxConstants.ALIGN_BOTTOM,
+      new mxPoint(0, 0),
+      "pointer"
+    );
+    overlay.addListener(mxEvent.CLICK, function(sender, evt) {
+      var cell = evt.getProperty("cell");
+      var nativeEvent = evt.getProperty("event");
+      if (cell != null) {
+        cabinetBlockDialogApi.openCabinetBlockDialog(cell, nativeEvent);
+      }
+    });
+    return overlay;
+  }
+  function createBindSwitchOverlay() {
+    var overlay = new mxCellOverlay(
+      getIconImage("switch", SWITCH_ICON_SVG),
+      "\u4E3A\u6B64\u5757\u7ED1\u5B9A\u5F00\u5173",
+      mxConstants.ALIGN_RIGHT,
+      mxConstants.ALIGN_MIDDLE,
+      new mxPoint(-12, 0),
+      "pointer"
+    );
+    overlay.addListener(mxEvent.CLICK, function(sender, evt) {
+      var cell = evt.getProperty("cell");
+      var nativeEvent = evt.getProperty("event");
+      if (cell != null) {
+        switchPickerApi.openSwitchPickerDialog(cell, nativeEvent);
+      }
+    });
+    return overlay;
+  }
+  function hasSwitchBound(cell) {
+    return trim(getAttr(cell, "switchInstanceId")).length > 0;
+  }
+  function countOverlays(cell) {
+    return Array.isArray(cell.overlays) ? cell.overlays.length : 0;
+  }
+  function syncBlockOverlay(cell) {
+    var graph = getApp().ctx.graph;
+    if (!isCabinetBlock(cell)) {
+      return;
+    }
+    if (isPrintMode() || isOverviewMode()) {
+      if (countOverlays(cell) > 0) {
+        graph.removeCellOverlays(cell);
+      }
+      return;
+    }
+    var expected = hasSwitchBound(cell) ? 1 : 2;
+    if (countOverlays(cell) === expected) {
+      return;
+    }
+    graph.removeCellOverlays(cell);
+    graph.addCellOverlay(cell, createInsertOverlay());
+    if (!hasSwitchBound(cell)) {
+      graph.addCellOverlay(cell, createBindSwitchOverlay());
+    }
+  }
+  function refreshCabinetOverlays() {
+    var model = getApp().ctx.model;
+    var frames = frameDomainApi.getAllDrawingFrames();
+    var i;
+    var j;
+    var k;
+    for (i = 0; i < frames.length; i++) {
+      for (j = 0; j < model.getChildCount(frames[i]); j++) {
+        var segment = model.getChildAt(frames[i], j);
+        if (!isCabinetSegment(segment)) {
+          continue;
+        }
+        var blocks = cabinetDomainApi.getSegmentBlocks(segment);
+        for (k = 0; k < blocks.length; k++) {
+          syncBlockOverlay(blocks[k]);
+        }
+      }
+    }
+  }
+  function syncSegmentOverlays(segment) {
+    var blocks = cabinetDomainApi.getSegmentBlocks(segment);
+    var i;
+    for (i = 0; i < blocks.length; i++) {
+      syncBlockOverlay(blocks[i]);
+    }
+  }
+  function handleModelChange2(sender, evt) {
+    var edit = evt != null ? evt.getProperty("edit") : null;
+    var changes = edit != null ? edit.changes : null;
+    var i;
+    if (!Array.isArray(changes)) {
+      return;
+    }
+    for (i = 0; i < changes.length; i++) {
+      var change = changes[i];
+      if (change.constructor == mxRootChange) {
+        refreshCabinetOverlays();
+        return;
+      }
+      if (change.constructor != mxChildChange || change.parent == null) {
+        continue;
+      }
+      if (isCabinetSegment(change.child)) {
+        syncSegmentOverlays(change.child);
+      } else if (isCabinetBlock(change.child)) {
+        syncBlockOverlay(change.child);
+      }
+    }
+  }
+  function installCabinetOverlays(ctx) {
+    ctx.model.addListener(mxEvent.CHANGE, handleModelChange2);
+    onLodChanged(refreshCabinetOverlays);
+    onPrintModeChanged(refreshCabinetOverlays);
+    refreshCabinetOverlays();
+  }
+
+  // runtime/clipboardSanitizer.js
+  var CELL_TAG_NAMES = {
+    mxCell: true,
+    object: true,
+    UserObject: true
+  };
+  var PROTECTED_TYPE_REASON = {};
+  PROTECTED_TYPE_REASON[ELECTRICAL_CONSTANTS.FRAME_TYPE] = "frame";
+  PROTECTED_TYPE_REASON[ELECTRICAL_CONSTANTS.CABINET_TYPE] = "cabinet";
+  PROTECTED_TYPE_REASON[ELECTRICAL_CONSTANTS.CABINET_GAP_TYPE] = "cabinet";
+  function isCellElement(node) {
+    return node != null && node.nodeType === 1 && CELL_TAG_NAMES[node.nodeName] === true;
+  }
+  function getTopologyNode(element) {
+    var inner;
+    if (element.nodeName !== "mxCell") {
+      inner = element.getElementsByTagName("mxCell");
+      if (inner.length > 0) {
+        return inner[0];
+      }
+    }
+    return element;
+  }
+  function collectCellElements(doc) {
+    var all = doc.getElementsByTagName("*");
+    var result = [];
+    var i;
+    for (i = 0; i < all.length; i++) {
+      var element = all[i];
+      if (!isCellElement(element) || element.getAttribute("id") == null) {
+        continue;
+      }
+      if (element.nodeName === "mxCell" && isCellElement(element.parentNode)) {
+        continue;
+      }
+      result.push(element);
+    }
+    return result;
+  }
+  function isContentCell(topologyNode) {
+    return topologyNode.getAttribute("vertex") === "1" || topologyNode.getAttribute("edge") === "1";
+  }
+  function sanitizePastedGraphXml(xml) {
+    var doc;
+    if (typeof xml !== "string" || xml.length === 0) {
+      return null;
+    }
+    try {
+      doc = mxUtils.parseXml(xml);
+    } catch (e) {
+      return null;
+    }
+    if (doc == null || doc.documentElement == null) {
+      return null;
+    }
+    var elements = collectCellElements(doc);
+    if (elements.length === 0) {
+      return null;
+    }
+    var entries = [];
+    var removed = {};
+    var reasons = {};
+    var i;
+    for (i = 0; i < elements.length; i++) {
+      var element = elements[i];
+      var topology = getTopologyNode(element);
+      var id = element.getAttribute("id");
+      var reason = PROTECTED_TYPE_REASON[element.getAttribute("pluginType")];
+      entries.push({ element, topology, id });
+      if (reason != null) {
+        removed[id] = true;
+        reasons[reason] = true;
+      }
+    }
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (i = 0; i < entries.length; i++) {
+        var entry = entries[i];
+        if (removed[entry.id] === true) {
+          continue;
+        }
+        var parentId = entry.topology.getAttribute("parent");
+        if (parentId != null && removed[parentId] === true) {
+          removed[entry.id] = true;
+          changed = true;
+        }
+      }
+    }
+    for (i = 0; i < entries.length; i++) {
+      var edgeEntry = entries[i];
+      if (removed[edgeEntry.id] === true) {
+        continue;
+      }
+      var source = edgeEntry.topology.getAttribute("source");
+      var target = edgeEntry.topology.getAttribute("target");
+      if (source != null && removed[source] === true || target != null && removed[target] === true) {
+        removed[edgeEntry.id] = true;
+      }
+    }
+    var hadProtected = false;
+    var remaining = 0;
+    for (i = 0; i < entries.length; i++) {
+      var current = entries[i];
+      if (removed[current.id] === true) {
+        hadProtected = true;
+        if (current.element.parentNode != null) {
+          current.element.parentNode.removeChild(current.element);
+        }
+      } else if (isContentCell(current.topology)) {
+        remaining++;
+      }
+    }
+    if (!hadProtected) {
+      return null;
+    }
+    return {
+      xml: mxUtils.getXml(doc.documentElement),
+      hadProtected: true,
+      reasons,
+      removedAll: remaining === 0
+    };
+  }
+
   // runtime/clipboardOverride.js
   function collectExistingCodes(model) {
     var codes = {};
@@ -11977,22 +13512,58 @@
     }
     return s;
   }
-  function isProtectedFromCopy(cell) {
+  function classifyCopyProtection(cell) {
     if (cell == null) {
-      return false;
+      return null;
     }
-    if (isDrawingFrame(cell) || isCabinetSegment(cell) || isCabinetGap(cell)) {
-      return true;
+    if (isDrawingFrame(cell)) {
+      return "frame";
+    }
+    if (isCabinetSegment(cell) || isCabinetGap(cell)) {
+      return "cabinet";
+    }
+    if (isElectricalRoot(cell)) {
+      return null;
+    }
+    if (trim(getAttr(cell, "esKind")).length > 0 || isFrameDecorationCell(cell)) {
+      return "internal";
     }
     var model = getApp().ctx.model;
     var parent = model.getParent(cell);
     while (parent != null) {
-      if (isDrawingFrame(parent) || isCabinetSegment(parent) || isCabinetGap(parent)) {
-        return true;
+      if (isElectricalRoot(parent)) {
+        return null;
+      }
+      if (isCabinetSegment(parent) || isCabinetGap(parent)) {
+        return "cabinet";
       }
       parent = model.getParent(parent);
     }
-    return false;
+    return null;
+  }
+  function describeProtection(reasons, actionLabel) {
+    var names = [];
+    var message = "";
+    if (reasons.frame === true) {
+      names.push("\u56FE\u6846");
+    }
+    if (reasons.cabinet === true) {
+      names.push("\u914D\u7535\u67DC");
+    }
+    if (names.length > 0) {
+      message = names.join("\u3001") + "\u65E0\u6CD5" + actionLabel + "\uFF0C\u5DF2\u81EA\u52A8\u6392\u9664";
+    }
+    if (reasons.internal === true) {
+      var tip = "\u56FE\u5143\u5185\u90E8\u6784\u4EF6\u4E0D\u80FD\u5355\u72EC" + actionLabel + "\uFF0C\u8BF7\u9009\u62E9\u6574\u4E2A\u56FE\u5143";
+      message = message.length > 0 ? message + "\uFF1B" + tip : tip;
+    }
+    return message;
+  }
+  function notifyProtection(reasons, actionLabel) {
+    var message = describeProtection(reasons, actionLabel);
+    if (message.length > 0) {
+      emitHostEvent("eid-clipboard-filtered", { message });
+    }
   }
   function isDeviceRoot(cell) {
     return isElectricalRoot(cell);
@@ -12058,7 +13629,13 @@
     });
   }
   function updateSymbolPayloadJson(cell, newCode, newInstanceId) {
-    var payloadStr = trim(getAttr(cell, "symbolPayload"));
+    updateSymbolPayloadJsonOnNode(cell.value, newCode, newInstanceId);
+  }
+  function updateSymbolPayloadJsonOnNode(valueNode, newCode, newInstanceId) {
+    if (valueNode == null || valueNode.nodeType !== 1) {
+      return;
+    }
+    var payloadStr = trim(valueNode.getAttribute("symbolPayload"));
     if (payloadStr.length === 0) {
       return;
     }
@@ -12070,7 +13647,7 @@
       if (payload.device != null && payload.device.code != null && newCode.length > 0) {
         payload.device.code = newCode;
       }
-      cell.value.setAttribute("symbolPayload", JSON.stringify(payload));
+      valueNode.setAttribute("symbolPayload", JSON.stringify(payload));
     } catch (e) {
     }
   }
@@ -12091,6 +13668,119 @@
         }
       }
     }
+  }
+  function collectSubtree(model, cells) {
+    var result = [];
+    var stack = Array.isArray(cells) ? cells.slice() : [];
+    while (stack.length > 0) {
+      var cell = stack.pop();
+      if (cell == null) {
+        continue;
+      }
+      result.push(cell);
+      var childCount = model.getChildCount(cell);
+      var i;
+      for (i = 0; i < childCount; i++) {
+        stack.push(model.getChildAt(cell, i));
+      }
+    }
+    return result;
+  }
+  function rewriteInsertedDeviceCell(model, cell, existingCodes, duplicateLog) {
+    if (cell.value == null || cell.value.nodeType !== 1) {
+      return;
+    }
+    var oldCode = trim(getAttr(cell, "deviceCode"));
+    var oldInstanceId = trim(getAttr(cell, "instanceId"));
+    var newInstanceId = generateUuid();
+    var newCode = "";
+    var value = cell.value.cloneNode(true);
+    if (oldCode.length > 0) {
+      newCode = incrementCode(oldCode, existingCodes);
+      existingCodes[newCode] = true;
+    }
+    value.setAttribute("instanceId", newInstanceId);
+    if (newCode.length > 0) {
+      value.setAttribute("deviceCode", newCode);
+    }
+    updateSymbolPayloadJsonOnNode(value, newCode, newInstanceId);
+    model.setValue(cell, value);
+    duplicateLog.push({
+      type: "device",
+      originalCode: oldCode,
+      newCode,
+      originalInstanceId: oldInstanceId,
+      newInstanceId
+    });
+    rewriteInsertedChildLabels(model, cell, newCode);
+  }
+  function rewriteInsertedCableCell(model, cell, existingCodes, duplicateLog) {
+    var oldCode = trim(getAttr(cell, "cableCode"));
+    if (oldCode.length === 0 || cell.value == null || cell.value.nodeType !== 1) {
+      return;
+    }
+    var newCode = incrementCode(oldCode, existingCodes);
+    var value = cell.value.cloneNode(true);
+    existingCodes[newCode] = true;
+    value.setAttribute("cableCode", newCode);
+    model.setValue(cell, value);
+    duplicateLog.push({
+      type: "cable",
+      originalCode: oldCode,
+      newCode
+    });
+  }
+  function rewriteInsertedChildLabels(model, rootCell, newValue) {
+    if (newValue.length === 0) {
+      return;
+    }
+    var childCount = model.getChildCount(rootCell);
+    var i;
+    for (i = 0; i < childCount; i++) {
+      var child = model.getChildAt(rootCell, i);
+      var labelFieldPath = trim(getAttr(child, "esFieldPath"));
+      if (labelFieldPath !== "deviceCode" && labelFieldPath !== "device.code") {
+        continue;
+      }
+      if (child.value != null && child.value.nodeType === 1) {
+        var value = child.value.cloneNode(true);
+        value.setAttribute("label", newValue);
+        model.setValue(child, value);
+      }
+    }
+  }
+  function rewriteImportedCells(graph, importedCells) {
+    var model = graph.getModel();
+    var all = collectSubtree(model, importedCells);
+    var existingCodes = collectExistingCodes(model);
+    var duplicateLog = [];
+    var importedIds = {};
+    var i;
+    for (i = 0; i < all.length; i++) {
+      if (all[i].id != null) {
+        importedIds[all[i].id] = true;
+      }
+    }
+    for (i = 0; i < all.length; i++) {
+      var cell = all[i];
+      if (isDeviceRoot(cell)) {
+        rewriteInsertedDeviceCell(model, cell, existingCodes, duplicateLog);
+        continue;
+      }
+      if (cell.edge) {
+        rewriteInsertedCableCell(model, cell, existingCodes, duplicateLog);
+        if (cell.source != null && importedIds[cell.source.id] !== true) {
+          model.setTerminal(cell, null, true);
+        }
+        if (cell.target != null && importedIds[cell.target.id] !== true) {
+          model.setTerminal(cell, null, false);
+        }
+      }
+    }
+    if (duplicateLog.length > 0) {
+      logDuplicates(duplicateLog);
+    }
+    return duplicateLog;
   }
   function disconnectDanglingEdges(clonedCells, originalCells) {
     var cloneIdSet = {};
@@ -12139,16 +13829,19 @@
     var graph = ctx.graph;
     function separateProtected(cells) {
       var filtered = [];
+      var reasons = {};
       var hadProtected = false;
       var i;
       for (i = 0; i < cells.length; i++) {
-        if (isProtectedFromCopy(cells[i])) {
+        var reason = classifyCopyProtection(cells[i]);
+        if (reason != null) {
+          reasons[reason] = true;
           hadProtected = true;
         } else {
           filtered.push(cells[i]);
         }
       }
-      return { filtered, hadProtected };
+      return { filtered, hadProtected, reasons };
     }
     var _origDuplicateCells = graph.duplicateCells;
     graph.duplicateCells = function(cells, append) {
@@ -12158,9 +13851,7 @@
       }
       var result = separateProtected(input);
       if (result.hadProtected) {
-        emitHostEvent("eid-clipboard-filtered", {
-          message: "\u56FE\u6846/\u914D\u7535\u67DC\u65E0\u6CD5\u590D\u5236\uFF0C\u5DF2\u81EA\u52A8\u6392\u9664"
-        });
+        notifyProtection(result.reasons, "\u590D\u5236");
       }
       if (result.filtered.length === 0) {
         return [];
@@ -12205,12 +13896,13 @@
       var duplicateLog = [];
       rewriteClonedCellAttributes(clonedCells, existingCodes, duplicateLog);
       disconnectDanglingEdges(clonedCells, copiedCells);
+      var imported = null;
       model.beginUpdate();
       try {
         var defaultParent = graph2.getDefaultParent();
         var dx = mxClipboard.getDx();
         var dy = mxClipboard.getDy();
-        var imported = graph2.importCells(clonedCells, dx, dy, defaultParent);
+        imported = graph2.importCells(clonedCells, dx, dy, defaultParent);
         if (imported != null && imported.length > 0) {
           graph2.setSelectionCells(imported);
         }
@@ -12222,6 +13914,7 @@
       if (duplicateLog.length > 0) {
         logDuplicates(duplicateLog);
       }
+      return imported || [];
     };
     var _origCopy = mxClipboard.copy;
     mxClipboard.copy = function(graph2, cells) {
@@ -12234,9 +13927,7 @@
       }
       var result = separateProtected(selectedCells);
       if (result.hadProtected) {
-        emitHostEvent("eid-clipboard-filtered", {
-          message: "\u56FE\u6846/\u914D\u7535\u67DC\u65E0\u6CD5\u590D\u5236\uFF0C\u5DF2\u81EA\u52A8\u6392\u9664"
-        });
+        notifyProtection(result.reasons, "\u590D\u5236");
       }
       if (result.filtered.length === 0) {
         mxClipboard.setCells(null);
@@ -12255,15 +13946,72 @@
       }
       var result = separateProtected(selectedCells);
       if (result.hadProtected) {
-        emitHostEvent("eid-clipboard-filtered", {
-          message: "\u56FE\u6846/\u914D\u7535\u67DC\u65E0\u6CD5\u526A\u5207\uFF0C\u5DF2\u81EA\u52A8\u6392\u9664"
-        });
+        notifyProtection(result.reasons, "\u526A\u5207");
       }
       if (result.filtered.length === 0) {
         mxClipboard.setCells(null);
         return null;
       }
       return _origCut.call(this, graph2, result.filtered);
+    };
+    var ui = ctx.ui;
+    var _origCopyCells = ui.copyCells;
+    ui.copyCells = function(elt, removeCells) {
+      var currentGraph = this.editor.graph;
+      var result = separateProtected(currentGraph.getSelectionCells() || []);
+      if (!result.hadProtected) {
+        return _origCopyCells.apply(this, arguments);
+      }
+      notifyProtection(result.reasons, removeCells ? "\u526A\u5207" : "\u590D\u5236");
+      if (result.filtered.length === 0) {
+        elt.innerText = "";
+        return;
+      }
+      var cells = mxUtils.sortCells(
+        currentGraph.model.getTopmostCells(result.filtered)
+      );
+      var xml = mxUtils.getXml(currentGraph.encodeCells(cells));
+      mxUtils.setTextContent(elt, encodeURIComponent(xml));
+      if (removeCells) {
+        currentGraph.removeCells(cells, false);
+        currentGraph.lastPasteXml = null;
+      } else {
+        currentGraph.lastPasteXml = xml;
+        currentGraph.pasteCounter = 0;
+      }
+      elt.focus();
+      document.execCommand("selectAll", false, null);
+    };
+    var _origPasteXml = ui.pasteXml;
+    ui.pasteXml = function(xml, pasteAsLabel, compat, evt, html, pt) {
+      var sanitized = sanitizePastedGraphXml(xml);
+      if (sanitized != null) {
+        notifyProtection(sanitized.reasons, "\u7C98\u8D34");
+        if (sanitized.removedAll) {
+          return null;
+        }
+        xml = sanitized.xml;
+      }
+      var currentModel = this.editor.graph.getModel();
+      var pasted = null;
+      currentModel.beginUpdate();
+      try {
+        pasted = _origPasteXml.call(
+          this,
+          xml,
+          pasteAsLabel,
+          compat,
+          evt,
+          html,
+          pt
+        );
+        if (Array.isArray(pasted) && pasted.length > 0) {
+          rewriteImportedCells(this.editor.graph, pasted);
+        }
+      } finally {
+        currentModel.endUpdate();
+      }
+      return pasted;
     };
   }
 
@@ -12422,19 +14170,17 @@
     var ui = app.ctx.ui;
     applyEmbeddedEditorLayout(ui);
     installHostBridge(app.ctx);
-    portSwapModeApi.installGraphClickBehavior({
-      isCabinetGap,
-      openCabinetGapDialog: cabinetDialogsApi.openCabinetGapDialog,
-      closeGapDialogWindow: cabinetDialogsApi.closeGapDialogWindow,
-      setSelectedCabinetGap: cabinetDomainApi.setSelectedCabinetGap
-    });
+    portSwapModeApi.installGraphClickBehavior();
     connectionConstraintsApi.installGraphBehavior({
       applyEdgePortConstraintMetadata: portSwapModeApi.applyEdgePortConstraintMetadata,
       setCanvasStatus
     });
+    installFrameBinding(app.ctx);
     installCanvasFeatures(app.ctx);
     installClipboardOverride(app.ctx);
     installViewportVirtualization(app.ctx);
+    installPrintMode(app.ctx);
+    installCabinetOverlays(app.ctx);
     pruneToolbarButtons(ui);
     installCustomToolbarButtons(ui);
     if (ui.menubarContainer != null) {

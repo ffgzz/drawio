@@ -5,7 +5,7 @@
 // 组合模式本质上是一个短生命周期的画布交互会话。
 import { getApp } from "../core/appRuntime.js";
 import { clamp, trim } from "../utils/base.js";
-import { cabinetDialogsApi } from "../ui/cabinetDialog.js";
+import { cabinetBlockDialogApi } from "../ui/cabinetBlockDialog.js";
 import { portSwapModeApi } from "./portSwapMode.js";
 import { snapshotDomainApi } from "../domain/snapshot.js";
 import {
@@ -31,8 +31,8 @@ function getComposeDeps() {
     minHeight: ctx.constants.INSTANCE_COMPOSE_ZONE_MIN_HEIGHT,
     showStatus,
     setCanvasStatus,
-    closeGapDialogWindow: function () {
-      return cabinetDialogsApi.closeGapDialogWindow();
+    closeCabinetBlockDialog: function () {
+      return cabinetBlockDialogApi.closeCabinetBlockDialog();
     },
     exitPortSwapMode: function (clearStatus) {
       return portSwapModeApi.exitPortSwapMode(clearStatus);
@@ -685,7 +685,7 @@ export function enterInstanceComposeMode() {
     zoneBounds: null,
     initialZoneCellIds: {},
   };
-  deps.closeGapDialogWindow();
+  deps.closeCabinetBlockDialog();
   deps.exitPortSwapMode(false);
   graph.clearSelection();
 

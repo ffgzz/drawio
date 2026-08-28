@@ -11,6 +11,7 @@ import { frameDomainApi } from "../domain/frame.js";
 import { specDomainApi } from "../domain/spec.js";
 import {
   findPortHostRoot,
+  isCabinetBlock,
   isCabinetGap,
   isCabinetSegment,
   isDrawingFrame,
@@ -569,6 +570,14 @@ export function installGraphBehavior(extraDeps) {
 
     sourceRoot = deps.findPortHostRoot(source);
     targetRoot = deps.findPortHostRoot(target);
+
+    // 块的出线端口只留给托管连线用：开关由绑定入口产生，用户不能手工往上拉线，
+    // 下游要连的是开关的出线端子，不是柜体的端口。
+    if (isCabinetBlock(sourceRoot) || isCabinetBlock(targetRoot)) {
+      error = "请连接开关的出线端子，配电柜块的端口由绑定的开关占用";
+      extraDeps.setCanvasStatus(error);
+      return error;
+    }
 
     if (sourceRoot == null && targetRoot == null) {
       return null;

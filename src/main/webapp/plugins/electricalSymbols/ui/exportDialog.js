@@ -6,6 +6,7 @@ import { getApp } from "../core/appRuntime.js";
 import { showStatus } from "../core/runtimeHelpers.js";
 import { createPluginButton } from "./shared/buttonFactory.js";
 import { openSvgExportDialog } from "./exportSvgDialog.js";
+import { withPrintStyles } from "../runtime/printMode.js";
 
 function buildExportDialogDeps() {
   var app = getApp();
@@ -104,7 +105,9 @@ export function openExportDialog() {
       return;
     }
 
-    ui.actions.get("exportPdf").funct();
+    withPrintStyles(function () {
+      ui.actions.get("exportPdf").funct();
+    });
   });
   pdfButton.style.marginTop = "0";
   buttons.appendChild(pdfButton);

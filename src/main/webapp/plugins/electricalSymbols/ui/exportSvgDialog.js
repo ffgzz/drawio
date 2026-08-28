@@ -7,6 +7,7 @@ import { getApp } from "../core/appRuntime.js";
 import { toInt } from "../utils/base.js";
 import { showStatus } from "../core/runtimeHelpers.js";
 import { createPluginButton } from "./shared/buttonFactory.js";
+import { withPrintStyles } from "../runtime/printMode.js";
 
 function buildExportDialogDeps() {
   var app = getApp();
@@ -39,6 +40,12 @@ export function openSvgExportDialog() {
   }
 
   function createSvgExportCode(width, height) {
+    return withPrintStyles(function () {
+      return buildSvgExportCode(width, height);
+    });
+  }
+
+  function buildSvgExportCode(width, height) {
     var exportBounds = getDiagramExportBounds();
     var targetWidth = Math.max(1, deps.toInt(width, exportBounds.width));
     var targetHeight = Math.max(1, deps.toInt(height, exportBounds.height));

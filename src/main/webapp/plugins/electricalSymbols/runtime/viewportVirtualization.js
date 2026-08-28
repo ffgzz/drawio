@@ -66,6 +66,9 @@ var culledFrameSet = new Set();
 
 var installed = false;
 var throttleTimer = null;
+
+/** LOD 状态变化的订阅者 */
+var lodListeners = [];
 var _graph = null;
 
 // ---------------------------------------------------------------------------
@@ -345,6 +348,7 @@ function runCullingPass(graph) {
     clearInvalidSelection(graph);
     graph.view.revalidate();
     graph.view.validate();
+    notifyLodChanged();
   }
 }
 
@@ -362,6 +366,28 @@ function scheduleThrottledCulling(graph) {
 // ---------------------------------------------------------------------------
 // 公共 API
 // ---------------------------------------------------------------------------
+
+/**
+ * 订阅 LOD 状态变化（Overview 切换、视口裁剪集合变动）。
+ * 目前用于配电柜块的加号浮层：Overview 模式下要全部摘掉。
+ */
+export function onLodChanged(listener) {
+  if (typeof listener === "function") {
+    lodListeners.push(listener);
+  }
+}
+
+function notifyLodChanged() {
+  var i;
+
+  for (i = 0; i < lodListeners.length; i++) {
+    try {
+      lodListeners[i]();
+    } catch (e) {
+      debugLog("lod listener failed", e);
+    }
+  }
+}
 
 /** 兼容旧接口：cell 是否被视口裁剪 */
 export function isVirtuallyCollapsed(cell) {

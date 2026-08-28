@@ -27,7 +27,7 @@ import {
   isElectricalRoot,
   resetPendingChangeRecords,
 } from "../core/runtimeHelpers.js";
-import { cabinetDialogsApi } from "../ui/cabinetDialog.js";
+import { cabinetBlockDialogApi } from "../ui/cabinetBlockDialog.js";
 import { cabinetDomainApi } from "./cabinet.js";
 import { composeModeApi } from "../runtime/composeMode.js";
 import { connectionConstraintsApi } from "../runtime/connectionConstraints.js";
@@ -82,11 +82,8 @@ function buildSnapshotDeps() {
     exitInstanceComposeMode: function (clearStatus) {
       return composeModeApi.exitInstanceComposeMode(clearStatus);
     },
-    closeGapDialogWindow: function () {
-      return cabinetDialogsApi.closeGapDialogWindow();
-    },
-    setSelectedCabinetGap: function (logicalCabinetId, gapIndex) {
-      return cabinetDomainApi.setSelectedCabinetGap(logicalCabinetId, gapIndex);
+    closeCabinetBlockDialog: function () {
+      return cabinetBlockDialogApi.closeCabinetBlockDialog();
     },
     exitPortSwapMode: function (clearStatus) {
       return portSwapModeApi.exitPortSwapMode(clearStatus);
@@ -107,6 +104,7 @@ export function createSnapshotDomain() {
   var state = deps.state;
   var ui = deps.ui;
   var currentDuplicateSymbolInstanceIds = null;
+  var currentDuplicateFrameIds = null;
 
   function belongsToCurrentDefaultParent(cell) {
     var parent = cell != null ? model.getParent(cell) : null;
@@ -153,6 +151,43 @@ export function createSnapshotDomain() {
 
     var spec = deps.extractSpec(cell);
     return deps.trim(spec != null ? spec.instanceId : "");
+  }
+
+  function collectDuplicateFrameIds(frames) {
+    var counts = {};
+    var duplicates = {};
+    var i;
+
+    for (i = 0; i < frames.length; i++) {
+      var frameId = deps.trim(deps.getAttr(frames[i], "frameId"));
+
+      if (frameId.length == 0) {
+        continue;
+      }
+
+      counts[frameId] = (counts[frameId] || 0) + 1;
+    }
+
+    for (var key in counts) {
+      if (Object.prototype.hasOwnProperty.call(counts, key) && counts[key] > 1) {
+        duplicates[key] = true;
+      }
+    }
+
+    return duplicates;
+  }
+
+  function getFrameObjectId(frame, duplicateFrameIds) {
+    var frameId = deps.trim(deps.getAttr(frame, "frameId"));
+
+    if (
+      frameId.length > 0 &&
+      !(duplicateFrameIds != null && duplicateFrameIds[frameId] === true)
+    ) {
+      return frameId;
+    }
+
+    return deps.trim(frame != null && frame.id != null ? String(frame.id) : "");
   }
 
   function collectDuplicateSymbolInstanceIds(cells) {
@@ -353,8 +388,7 @@ export function createSnapshotDomain() {
       cells.push(model.getChildAt(parent, i));
     }
 
-    deps.closeGapDialogWindow();
-    deps.setSelectedCabinetGap(null, null);
+    deps.closeCabinetBlockDialog();
     deps.exitPortSwapMode(false);
 
     if (cells.length == 0) {
@@ -376,7 +410,7 @@ export function createSnapshotDomain() {
     }
 
     if (deps.isDrawingFrame(cell)) {
-      return deps.trim(deps.getAttr(cell, "frameId")) || null;
+      return getFrameObjectId(cell, currentDuplicateFrameIds) || null;
     }
 
     if (deps.isCabinetSegment(cell)) {
@@ -502,11 +536,10 @@ export function createSnapshotDomain() {
 
   function exportFrameObject(frame) {
     var geometry = model.getGeometry(frame);
-    var frameId = deps.trim(deps.getAttr(frame, "frameId"));
     var frameConfig = deps.getFrameConfig(frame);
 
     return {
-      id: frameId,
+      id: getFrameObjectId(frame, currentDuplicateFrameIds),
       kind: "frame",
       parentId: null,
       groupId: deps.getFrameGroupId(frame) || null,
@@ -538,11 +571,16 @@ export function createSnapshotDomain() {
       logicalCabinetId;
     var currentFrameId =
       currentFrame != null ? deps.trim(deps.getAttr(currentFrame, "frameId")) : "";
+    var currentFrameObjectId =
+      currentFrame != null
+        ? getFrameObjectId(currentFrame, currentDuplicateFrameIds)
+        : "";
 
     return {
       id: segmentObjectId,
       kind: "cabinet",
-      parentId: currentFrameId || deps.trim(cabinetModel.originFrameId) || null,
+      parentId:
+        currentFrameObjectId || deps.trim(cabinetModel.originFrameId) || null,
       groupId: currentFrame != null ? deps.getFrameGroupId(currentFrame) : null,
       geometry: {
         x: geometry != null ? geometry.x : cabinetModel.cabinetX,
@@ -637,6 +675,8 @@ export function createSnapshotDomain() {
         portId: deps.trim(targetPortId) || null,
       },
       props: {
+        // 托管连线（块↔开关）带 esKind，消费方据此把它与用户画的电缆区分开
+        esKind: deps.trim(deps.getAttr(edge, "esKind")) || null,
         parentId:
           parent != null && parent != graph.getDefaultParent()
             ? resolveSnapshotObjectId(parent)
@@ -717,6 +757,7 @@ export function createSnapshotDomain() {
     var i;
 
     currentDuplicateSymbolInstanceIds = duplicateSymbolInstanceIds;
+    currentDuplicateFrameIds = collectDuplicateFrameIds(frames);
 
     for (i = 0; i < frames.length; i++) {
       frameObjects.push(exportFrameObject(frames[i]));
@@ -751,6 +792,7 @@ export function createSnapshotDomain() {
       };
     } finally {
       currentDuplicateSymbolInstanceIds = null;
+      currentDuplicateFrameIds = null;
     }
   }
 

@@ -48,7 +48,8 @@ export function createPluginState(constants) {
       templateEditor: null,
       templateBrowser: null,
       instanceEditor: null,
-      cabinetGapDialog: null,
+      cabinetBlockDialog: null,
+      switchPicker: null,
     },
     library: {
       images: [],
@@ -82,7 +83,6 @@ export function createPluginState(constants) {
     },
     cabinet: {
       frameConfig: null,
-      selectedGap: null,
     },
   };
 
@@ -131,8 +131,8 @@ export function createPluginState(constants) {
   defineAlias(state, "variantItems", "editor", "variantItems");
   defineAlias(state, "draftSaveTimer", "editor", "draftSaveTimer");
   defineAlias(state, "frameConfig", "cabinet", "frameConfig");
-  defineAlias(state, "selectedCabinetGap", "cabinet", "selectedGap");
-  defineAlias(state, "gapDialogWindow", "windows", "cabinetGapDialog");
+  defineAlias(state, "cabinetBlockDialogWindow", "windows", "cabinetBlockDialog");
+  defineAlias(state, "switchPickerWindow", "windows", "switchPicker");
   defineAlias(state, "portSwapSession", "portSwap", "session");
   defineAlias(state, "portSwapOverlay", "portSwap", "overlay");
   defineAlias(state, "allowProtectedDelete", "canvas", "allowProtectedDelete");
