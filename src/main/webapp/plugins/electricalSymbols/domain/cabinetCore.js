@@ -130,7 +130,7 @@ export function makeCabinetSwitchLinkStyle() {
   return (
     "edgeStyle=none;html=1;strokeColor=#111111;strokeWidth=1;" +
     "endArrow=none;startArrow=none;noEdgeStyle=1;rounded=0;" +
-    "movable=0;editable=0;deletable=0;bendable=0;"
+    "movable=0;editable=0;deletable=0;bendable=0;eidLayoutManaged=1;"
   );
 }
 
@@ -237,6 +237,9 @@ export function normalizeCabinetBlock(raw, index) {
       ELECTRICAL_CONSTANTS.CABINET_BLOCK_MAX_HEIGHT,
     ),
     portId: trim(raw.portId) || id + ":out",
+    // 端口拖动只记录相对块中心的纵向偏移，不改块高，
+    // 因此不会触发整柜重排，也不会挤动其他回路。
+    portOffsetY: toFloat(raw.portOffsetY, 0),
     switchInstanceId: trim(raw.switchInstanceId),
     switchSymbolId: trim(raw.switchSymbolId),
     params: isObject(raw.params) ? cloneJson(raw.params) : {},
@@ -488,26 +491,43 @@ export function setBlockSwitchBinding(cabinetModel, blockId, binding) {
 }
 
 /**
- * 开关在块内的摆位：左端距母线一段固定的引出线长度，垂直居中。
+ * 开关在块内的摆位：左端距母线一段固定的引出线长度，
+ * 输入端口与块中心的出线端口对齐。未提供端口位置时退回整个开关垂直居中。
  *
  * 这样柜体被拉宽时开关不动、引出线不变，多出来的宽度落在开关右侧到柜壁之间——
  * 与 CAD 图纸一致（支路线从母线引出，经过开关，再穿出柜壁去下游）。
  *
  * @param {Object} blockRect  {width, height}
  * @param {Object} switchSize {width, height}
- * @param {Object} options    {busbarX, switchLead}
+ * @param {Object} options    {busbarX, switchLead, inputPortYRatio, targetPortYRatio}
  * @returns {Object} {x, y, width, height} —— 相对块左上角
  */
 export function computeSwitchPlacementInBlock(blockRect, switchSize, options) {
   var busbarX = options != null ? toInt(options.busbarX, 0) : 0;
   var lead = options != null ? Math.max(0, toInt(options.switchLead, 0)) : 0;
   var available = Math.max(8, blockRect.width - busbarX - lead);
-  var width = Math.max(8, Math.min(switchSize.width, available));
-  var height = Math.max(8, switchSize.height);
+  var requestedWidth = Math.max(8, switchSize.width);
+  var requestedHeight = Math.max(8, switchSize.height);
+  var fitScale = Math.min(1, available / requestedWidth);
+  // 标准开关模板放不下时必须等比缩放。只压缩宽度会拉伸
+  // SVG、标注和端口几何，也会与 React 初稿生成侧的布局不一致。
+  var width = Math.max(8, requestedWidth * fitScale);
+  var height = Math.max(1, requestedHeight * fitScale);
+  var inputPortYRatio =
+    options != null && isFinite(Number(options.inputPortYRatio))
+      ? clamp(Number(options.inputPortYRatio), 0, 1)
+      : 0.5;
+  var targetPortYRatio =
+    options != null && isFinite(Number(options.targetPortYRatio))
+      ? Number(options.targetPortYRatio)
+      : 0.5;
+  // 用户可以把端口拖出原块的纵向范围，所以这里不再把开关
+  // 夹回 block 内。拖动边界由当前柜段/图框统一约束。
+  var y = blockRect.height * targetPortYRatio - height * inputPortYRatio;
 
   return {
     x: busbarX + lead,
-    y: (blockRect.height - height) / 2,
+    y: y,
     width,
     height,
   };
@@ -573,13 +593,9 @@ export function buildCabinetPageDescriptors(cabinetModel, frameConfig) {
     var page = pages[pageIndex];
     var continuesToNext = pageIndex < pages.length - 1;
     var continuesFromPrev = pageIndex > 0;
-    // 续接页的柜体要一直画到可用高度的底部再折断，而不是画到最后一块就收尾
-    var segmentHeight = continuesToNext
-      ? Math.round(usableHeight)
-      : Math.max(
-          ELECTRICAL_CONSTANTS.CABINET_BLOCK_MIN_HEIGHT,
-          modelData.headPadding + page.height + modelData.tailPadding,
-        );
+    // 每一页的柜体都保持统一的完整页高。最后一页即使只有少量回路，
+    // 外框和母线也不应跟随实际块数量缩短。
+    var segmentHeight = Math.round(usableHeight);
     // 顶边折断会占掉一段高度，柜内编号要让开它
     var topBreakDepth = continuesFromPrev
       ? Math.max(
@@ -603,6 +619,7 @@ export function buildCabinetPageDescriptors(cabinetModel, frameConfig) {
         id: entry.block.id,
         title: entry.block.title,
         portId: entry.block.portId,
+        portOffsetY: entry.block.portOffsetY,
         switchInstanceId: entry.block.switchInstanceId,
         switchSymbolId: entry.block.switchSymbolId,
         params: cloneJson(entry.block.params),
@@ -614,7 +631,12 @@ export function buildCabinetPageDescriptors(cabinetModel, frameConfig) {
         portX: modelData.cabinetWidth > 0 ? busbarX / modelData.cabinetWidth : 0,
         portY:
           segmentHeight > 0
-            ? clamp((localY + entry.height / 2) / segmentHeight, 0, 1)
+            ? clamp(
+                (localY + entry.height / 2 + entry.block.portOffsetY) /
+                  segmentHeight,
+                0,
+                1,
+              )
             : 0.5,
       });
     }

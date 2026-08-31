@@ -7,6 +7,7 @@ import { cloneJson } from "../utils/base.js";
 import { cloneValue, getAttr } from "../utils/xml.js";
 import {
   generateFrameGroupId,
+  isCabinetSegment,
   setCanvasStatus,
   showStatus,
 } from "../core/runtimeHelpers.js";
@@ -233,34 +234,6 @@ export function insertCabinet(cabinetModel) {
  * @param {Object} blockInit 新块的初始属性
  * @returns {boolean} 是否真的插入了
  */
-export function insertCabinetBlock(blockCell, blockInit) {
-  var app = getApp();
-  var graph = app.ctx.graph;
-  var model = app.ctx.model;
-  var segments;
-
-  model.beginUpdate();
-
-  try {
-    segments = cabinetDomainApi.insertCabinetBlockAfter(blockCell, blockInit);
-  } finally {
-    model.endUpdate();
-  }
-
-  if (segments == null) {
-    showStatus("未找到要插入的位置", true);
-    return false;
-  }
-
-  if (segments.length > 0) {
-    graph.scrollCellToVisible(segments[0]);
-  }
-
-  showStatus("已插入配电柜块", false);
-  setCanvasStatus("已插入配电柜块");
-  return true;
-}
-
 /**
  * 给块绑定一个开关。已有绑定会被替换掉，不留孤儿图元。
  *
@@ -497,6 +470,41 @@ function forceDeleteSelection() {
     model.beginUpdate();
 
     try {
+      // 即使用户明确选择“强制删除”，也不能在 CabinetModel 里
+      // 留下指向已删开关的 switchInstanceId。普通 Delete 会被
+      // canvasFeatures 阻止；这里是唯一绕过保护的入口，必须先解绑。
+      var unboundBlocks = {};
+
+      for (i = 0; i < cells.length; i++) {
+        var boundBlock = cabinetDomainApi.findBoundCabinetBlockForSwitch(
+          cells[i],
+        );
+
+        if (boundBlock == null) {
+          continue;
+        }
+
+        var blockKey = isCabinetSegment(boundBlock)
+          ? String(boundBlock.id) + ":" + String(getAttr(cells[i], "instanceId"))
+          : boundBlock.id != null
+            ? String(boundBlock.id)
+            : String(i);
+
+        if (!unboundBlocks[blockKey]) {
+          unboundBlocks[blockKey] = true;
+          if (isCabinetSegment(boundBlock)) {
+            cabinetDomainApi.unbindSwitchFromCabinetSwitch(
+              boundBlock,
+              cells[i],
+              false,
+              false,
+            );
+          } else {
+            cabinetDomainApi.unbindSwitchFromBlock(boundBlock, false, false);
+          }
+        }
+      }
+
       graph.cellsRemoved(toRemove);
     } finally {
       model.endUpdate();
@@ -512,7 +520,6 @@ export var commandApi = {
     clearCurrentPage,
     forceDeleteSelection,
     insertCabinet,
-    insertCabinetBlock,
     bindCabinetSwitch,
     unbindCabinetSwitch,
     insertFrame,

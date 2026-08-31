@@ -116,9 +116,12 @@ function buildCabinetDeps() {
       return snapshotDomainApi.getEdgePortId(edge, root, source);
     },
     getPortMetaById: connectionConstraintsApi.getPortMetaById,
+    getPortLayoutForRoot: connectionConstraintsApi.getPortLayoutForRoot,
     parsePortLayout: specDomainApi.parsePortLayout,
     isMovableConnectedTerminal: connectionConstraintsApi.isMovableConnectedTerminal,
     moveCellToFrameByDelta: connectionConstraintsApi.moveCellToFrameByDelta,
+    moveConnectedGroupByDelta:
+      connectionConstraintsApi.moveConnectedGroupByDelta,
     setConnectionConstraint: function (edge, root, source, constraint) {
       ctx.graph.setConnectionConstraint(edge, root, source, constraint);
     },
@@ -129,6 +132,12 @@ export function createCabinetDomain() {
   var deps = arguments.length > 0 ? arguments[0] : buildCabinetDeps();
   var model = deps.model;
   var state = deps.state;
+
+  function getPortsForRoot(cell) {
+    return typeof deps.getPortLayoutForRoot == "function"
+      ? deps.getPortLayoutForRoot(cell)
+      : deps.parsePortLayout(deps.getAttr(cell, "portsJson"));
+  }
 
   function findCabinetSegment(cell) {
     while (cell != null) {
@@ -305,17 +314,22 @@ export function createCabinetDomain() {
       deps.trim(cabinetModel.logicalCabinetId),
     );
     value.setAttribute("switchInstanceId", deps.trim(block.switchInstanceId));
+    value.setAttribute("switchSymbolId", deps.trim(block.switchSymbolId));
     value.setAttribute("blockOrder", String(block.order));
     value.setAttribute("blockHeight", String(Math.round(block.height)));
+    value.setAttribute("portOffsetY", String(block.portOffsetY || 0));
     value.setAttribute("label", deps.trim(block.title));
     value.setAttribute(
       "portsJson",
-      deps.serializePortLayout([
+      JSON.stringify([
         {
           // 出线接口在母线上，不在柜壁上
           id: block.portId,
           x: block.portX,
-          y: 0.5,
+          y:
+            block.height > 0
+              ? 0.5 + Number(block.portOffsetY || 0) / block.height
+              : 0.5,
           marker: "cross",
           direction: "right",
           ioMode: "out",
@@ -390,15 +404,12 @@ export function createCabinetDomain() {
     var i;
 
     root.vertex = true;
-    root.setConnectable(false);
+    root.setConnectable(true);
 
-    // 先插装饰再插块：块在上层，即使描边被出图模式去掉也照样点得中
+    // 柜段本身是唯一的端口宿主。blocks 只保留在 cabinetModelJson
+    // 里作为回路布局数据，不再物化成 mxCell。
     for (i = 0; i < decorations.length; i++) {
       root.insert(decorations[i]);
-    }
-
-    for (i = 0; i < descriptor.blocks.length; i++) {
-      root.insert(createCabinetBlockCell(cabinetModel, descriptor.blocks[i]));
     }
 
     return root;
@@ -457,6 +468,7 @@ export function createCabinetDomain() {
     var count = model.getChildCount(segment);
     var i;
 
+    // 新图不再创建块 cell；这里只保留对过渡期旧 XML 的读取能力。
     for (i = 0; i < count; i++) {
       var child = model.getChildAt(segment, i);
 
@@ -473,19 +485,13 @@ export function createCabinetDomain() {
     var attachments = [];
     var i;
     var j;
-    var k;
 
     for (i = 0; i < segments.length; i++) {
-      // 端口挂在块上，所以连线也接在块上；同时兼容老图纸里直接接在柜段上的边
-      var hosts = getSegmentBlocks(segments[i]);
-      hosts.push(segments[i]);
+      var host = segments[i];
+      var edgeCount = model.getEdgeCount(host);
 
-      for (j = 0; j < hosts.length; j++) {
-        var host = hosts[j];
-        var edgeCount = model.getEdgeCount(host);
-
-        for (k = 0; k < edgeCount; k++) {
-          var edge = model.getEdgeAt(host, k);
+      for (j = 0; j < edgeCount; j++) {
+          var edge = model.getEdgeAt(host, j);
           var sourceIsHost = model.getTerminal(edge, true) == host;
           var targetIsHost = model.getTerminal(edge, false) == host;
 
@@ -516,7 +522,6 @@ export function createCabinetDomain() {
             oldPortPosition: getPortAbsolutePosition(host, port),
             otherTerminal: model.getTerminal(edge, !source),
           });
-        }
       }
     }
 
@@ -527,26 +532,20 @@ export function createCabinetDomain() {
     var result = {};
     var i;
     var j;
-    var k;
 
     for (i = 0; i < segments.length; i++) {
       var segment = segments[i];
       var frame = deps.findDrawingFrame(segment);
-      var blocks = getSegmentBlocks(segment);
+      var ports = getPortsForRoot(segment);
 
-      for (j = 0; j < blocks.length; j++) {
-        var block = blocks[j];
-        var ports = deps.parsePortLayout(deps.getAttr(block, "portsJson"));
-
-        for (k = 0; k < ports.length; k++) {
-          result[deps.trim(ports[k].id)] = {
+      for (j = 0; j < ports.length; j++) {
+          result[deps.trim(ports[j].id)] = {
             segment,
-            host: block,
-            port: ports[k],
+            host: segment,
+            port: ports[j],
             frame,
-            absolutePosition: getPortAbsolutePosition(block, ports[k]),
+            absolutePosition: getPortAbsolutePosition(segment, ports[j]),
           };
-        }
       }
     }
 
@@ -589,13 +588,48 @@ export function createCabinetDomain() {
         var moveKey = mxObjectIdentity.get(attachment.otherTerminal);
 
         if (!movedTerminals[moveKey]) {
-          movedTerminals[moveKey] = true;
-          deps.moveCellToFrameByDelta(
-            attachment.otherTerminal,
-            target.frame,
-            target.absolutePosition.x - attachment.oldPortPosition.x,
-            target.absolutePosition.y - attachment.oldPortPosition.y,
-          );
+          var deltaX =
+            target.absolutePosition.x - attachment.oldPortPosition.x;
+          var deltaY =
+            target.absolutePosition.y - attachment.oldPortPosition.y;
+          var movedGroup =
+            typeof deps.moveConnectedGroupByDelta == "function"
+              ? deps.moveConnectedGroupByDelta(
+                  attachment.otherTerminal,
+                  target.frame,
+                  deltaX,
+                  deltaY,
+                )
+              : null;
+
+          if (
+            movedGroup != null &&
+            Array.isArray(movedGroup.vertices) &&
+            movedGroup.vertices.length > 0
+          ) {
+            var movedIndex;
+
+            for (
+              movedIndex = 0;
+              movedIndex < movedGroup.vertices.length;
+              movedIndex++
+            ) {
+              movedTerminals[
+                mxObjectIdentity.get(movedGroup.vertices[movedIndex])
+              ] = true;
+            }
+          } else {
+            // 兼容注入旧 deps 的测试/宿主。
+            if (typeof deps.moveCellToFrameByDelta == "function") {
+              deps.moveCellToFrameByDelta(
+                attachment.otherTerminal,
+                target.frame,
+                deltaX,
+                deltaY,
+              );
+            }
+            movedTerminals[moveKey] = true;
+          }
         }
       }
     }
@@ -809,6 +843,74 @@ export function createCabinetDomain() {
   }
 
   /**
+   * 已绑定开关的位置和生命周期必须由 CabinetModel 管理。
+   * 先走托管连线快速路径，再扫描块属性，这样即使连线暂时缺失，
+   * 也不会让用户直接拖动或删除一个仍被模型引用的开关。
+   */
+  function findBoundCabinetBlockForSwitch(switchCell) {
+    if (switchCell == null || !deps.isElectricalRoot(switchCell)) {
+      return null;
+    }
+
+    var edgeCount = model.getEdgeCount(switchCell);
+    var i;
+
+    for (i = 0; i < edgeCount; i++) {
+      var edge = model.getEdgeAt(switchCell, i);
+
+      if (!deps.isCabinetSwitchLink(edge)) {
+        continue;
+      }
+
+      var source = model.getTerminal(edge, true);
+      var target = model.getTerminal(edge, false);
+      var other = source == switchCell ? target : source;
+
+      if (deps.isCabinetBlock(other) || deps.isCabinetSegment(other)) {
+        return other;
+      }
+    }
+
+    var instanceId = deps.trim(deps.getAttr(switchCell, "instanceId"));
+    var key;
+
+    if (instanceId.length == 0) {
+      return null;
+    }
+
+    var frames = deps.getAllDrawingFrames();
+    var i;
+    var j;
+
+    for (i = 0; i < frames.length; i++) {
+      for (j = 0; j < model.getChildCount(frames[i]); j++) {
+        var segment = model.getChildAt(frames[i], j);
+
+        if (!deps.isCabinetSegment(segment)) {
+          continue;
+        }
+
+        var cabinetModel = extractCabinetModel(segment);
+        var blockIndex;
+
+        for (blockIndex = 0; blockIndex < cabinetModel.blocks.length; blockIndex++) {
+          if (
+            deps.trim(cabinetModel.blocks[blockIndex].switchInstanceId) == instanceId
+          ) {
+            return segment;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function isSwitchBoundToCabinet(switchCell) {
+    return findBoundCabinetBlockForSwitch(switchCell) != null;
+  }
+
+  /**
    * 开关的输入端子：端口布局里第一个 ioMode 为 in 的端口；
    * 没有明确输入端子时退回最靠左的端口。
    */
@@ -834,26 +936,72 @@ export function createCabinetDomain() {
    * 把开关摆到块内：右边缘贴块的右边界，垂直居中。
    * 同时保证开关排在柜段之后，不会被柜体盖住。
    */
-  function placeSwitchInBlock(blockCell, switchCell) {
-    var frame = deps.findDrawingFrame(blockCell);
+  function getDescriptorForSegment(segment) {
+    var frame = deps.findDrawingFrame(segment);
 
     if (frame == null) {
+      return null;
+    }
+
+    var descriptors = buildCabinetPageDescriptors(
+      extractCabinetModel(segment),
+      deps.getFrameConfig(frame),
+    );
+    var index = deps.toInt(deps.getAttr(segment, "segmentIndex"), 0);
+    return descriptors[index] || null;
+  }
+
+  function findBlockByPortId(cabinetModel, portId) {
+    var target = deps.trim(portId);
+    var i;
+
+    for (i = 0; i < cabinetModel.blocks.length; i++) {
+      if (deps.trim(cabinetModel.blocks[i].portId) == target) {
+        return cabinetModel.blocks[i];
+      }
+    }
+
+    return null;
+  }
+
+  function placeSwitchInBlock(segment, descriptorBlock, switchCell) {
+    var frame = deps.findDrawingFrame(segment);
+
+    if (frame == null || descriptorBlock == null) {
       return;
     }
 
-    var blockRect = getCellAbsoluteGeometry(blockCell);
+    var segmentRect = getCellAbsoluteGeometry(segment);
+    var blockRect = {
+      x: segmentRect.x,
+      y: segmentRect.y + descriptorBlock.localY,
+      width: descriptorBlock.width,
+      height: descriptorBlock.height,
+    };
     var switchGeometry = model.getGeometry(switchCell);
 
     if (switchGeometry == null) {
       return;
     }
 
-    var cabinetModel = extractCabinetModel(blockCell);
+    var cabinetModel = extractCabinetModel(segment);
     var busbarX = Math.round(blockRect.width * cabinetModel.busbarRatio);
+    var inputPort = findSwitchInputPort(switchCell);
+    var segmentPort = deps.getPortMetaById(segment, descriptorBlock.portId);
+    var targetPortYRatio =
+      segmentPort != null && blockRect.height > 0
+        ? (segmentRect.y + segmentPort.y * segmentRect.height - blockRect.y) /
+          blockRect.height
+        : 0.5;
     var placement = computeSwitchPlacementInBlock(
       blockRect,
       { width: switchGeometry.width, height: switchGeometry.height },
-      { busbarX: busbarX, switchLead: cabinetModel.switchLead },
+      {
+        busbarX: busbarX,
+        switchLead: cabinetModel.switchLead,
+        inputPortYRatio: inputPort != null ? Number(inputPort.y) : 0.5,
+        targetPortYRatio,
+      },
     );
     var frameRect = getCellAbsoluteGeometry(frame);
     var nextGeometry = switchGeometry.clone();
@@ -861,6 +1009,7 @@ export function createCabinetDomain() {
     nextGeometry.x = blockRect.x + placement.x - frameRect.x;
     nextGeometry.y = blockRect.y + placement.y - frameRect.y;
     nextGeometry.width = placement.width;
+    nextGeometry.height = placement.height;
 
     if (model.getParent(switchCell) !== frame) {
       model.add(frame, switchCell);
@@ -898,14 +1047,18 @@ export function createCabinetDomain() {
   /**
    * 找到挂在某个块上的托管连线。
    */
-  function findSwitchLink(blockCell) {
-    var edgeCount = model.getEdgeCount(blockCell);
+  function findSwitchLink(segment, portId) {
+    var edgeCount = model.getEdgeCount(segment);
     var i;
 
     for (i = 0; i < edgeCount; i++) {
-      var edge = model.getEdgeAt(blockCell, i);
+      var edge = model.getEdgeAt(segment, i);
 
-      if (deps.isCabinetSwitchLink(edge)) {
+      if (
+        deps.isCabinetSwitchLink(edge) &&
+        model.getTerminal(edge, true) == segment &&
+        deps.trim(deps.getEdgePortId(edge, segment, true)) == deps.trim(portId)
+      ) {
         return edge;
       }
     }
@@ -916,18 +1069,17 @@ export function createCabinetDomain() {
   /**
    * 建立（或修复）块与开关之间的托管连线。不绘制，只为拓扑完整。
    */
-  function ensureSwitchLink(blockCell, switchCell) {
-    var frame = deps.findDrawingFrame(blockCell);
+  function ensureSwitchLink(segment, descriptorBlock, switchCell) {
+    var frame = deps.findDrawingFrame(segment);
 
-    if (frame == null || switchCell == null) {
+    if (frame == null || descriptorBlock == null || switchCell == null) {
       return null;
     }
 
-    var blockPortId = deps.trim(deps.getAttr(blockCell, "portId"));
-    var blockPorts = deps.parsePortLayout(deps.getAttr(blockCell, "portsJson"));
-    var blockPort = blockPorts.length > 0 ? blockPorts[0] : null;
+    var blockPortId = deps.trim(descriptorBlock.portId);
+    var blockPort = deps.getPortMetaById(segment, blockPortId);
     var switchPort = findSwitchInputPort(switchCell);
-    var edge = findSwitchLink(blockCell);
+    var edge = findSwitchLink(segment, blockPortId);
 
     if (edge == null) {
       var value = deps.createNode(deps.cabinetSwitchLinkTag);
@@ -938,23 +1090,38 @@ export function createCabinetDomain() {
       model.add(frame, edge);
     }
 
-    edge.value.setAttribute("blockId", deps.trim(deps.getAttr(blockCell, "blockId")));
+    if (
+      edge.value == null ||
+      typeof edge.value.setAttribute != "function"
+    ) {
+      edge.value = deps.createNode(deps.cabinetSwitchLinkTag);
+    }
+
+    if (model.getParent(edge) !== frame) {
+      model.add(frame, edge);
+    }
+
+    model.setStyle(edge, makeCabinetSwitchLinkStyle());
+
+    edge.value.setAttribute("esKind", deps.cabinetSwitchLinkKind);
+    edge.value.setAttribute("label", "");
+    edge.value.setAttribute("blockId", deps.trim(descriptorBlock.id));
     edge.value.setAttribute(
       "logicalCabinetId",
-      deps.trim(deps.getAttr(blockCell, "logicalCabinetId")),
+      deps.trim(deps.getAttr(segment, "logicalCabinetId")),
     );
     edge.value.setAttribute(
       "switchInstanceId",
       deps.trim(deps.getAttr(switchCell, "instanceId")),
     );
 
-    model.setTerminal(edge, blockCell, true);
+    model.setTerminal(edge, segment, true);
     model.setTerminal(edge, switchCell, false);
 
     if (blockPort != null) {
       deps.setConnectionConstraint(
         edge,
-        blockCell,
+        segment,
         true,
         new mxConnectionConstraint(
           new mxPoint(blockPort.x, blockPort.y),
@@ -985,15 +1152,25 @@ export function createCabinetDomain() {
    * 这是"开关与柜体平级"这条设计唯一需要显式维护的地方。
    */
   function syncBoundSwitches(segments) {
+    var logicalCabinetIds = {};
+    var retainedLinks = {};
     var i;
     var j;
 
     for (i = 0; i < segments.length; i++) {
-      var blocks = getSegmentBlocks(segments[i]);
+      var logicalCabinetId = deps.trim(
+        deps.getAttr(segments[i], "logicalCabinetId"),
+      );
+
+      if (logicalCabinetId.length > 0) {
+        logicalCabinetIds[logicalCabinetId] = true;
+      }
+      var descriptor = getDescriptorForSegment(segments[i]);
+      var blocks = descriptor != null ? descriptor.blocks : [];
 
       for (j = 0; j < blocks.length; j++) {
-        var blockCell = blocks[j];
-        var instanceId = deps.trim(deps.getAttr(blockCell, "switchInstanceId"));
+        var descriptorBlock = blocks[j];
+        var instanceId = deps.trim(descriptorBlock.switchInstanceId);
 
         if (instanceId.length == 0) {
           continue;
@@ -1005,10 +1182,81 @@ export function createCabinetDomain() {
           continue;
         }
 
-        placeSwitchInBlock(blockCell, switchCell);
-        ensureSwitchLink(blockCell, switchCell);
+        placeSwitchInBlock(segments[i], descriptorBlock, switchCell);
+        var link = ensureSwitchLink(segments[i], descriptorBlock, switchCell);
+
+        if (link != null) {
+          retainedLinks[mxObjectIdentity.get(link)] = true;
+        }
       }
     }
+
+    // 同一个 block 只允许一条托管连线。快照、旧 XML 或中途失败都可能
+    // 留下 segment→switch 旧连线或重复连线，在这个统一收口一并清理。
+    var staleLinks = [];
+    var key;
+
+    var allCells = model.cells || {};
+
+    for (key in allCells) {
+      if (!Object.prototype.hasOwnProperty.call(allCells, key)) {
+        continue;
+      }
+
+      var candidate = allCells[key];
+
+      if (!deps.isCabinetSwitchLink(candidate)) {
+        continue;
+      }
+
+      var sourceTerminal = model.getTerminal(candidate, true);
+      var candidateLogicalId = deps.trim(
+        deps.getAttr(candidate, "logicalCabinetId"),
+      );
+
+      if (
+        candidateLogicalId.length == 0 &&
+        (deps.isCabinetBlock(sourceTerminal) ||
+          deps.isCabinetSegment(sourceTerminal))
+      ) {
+        candidateLogicalId = deps.trim(
+          deps.getAttr(sourceTerminal, "logicalCabinetId"),
+        );
+      }
+
+      if (
+        logicalCabinetIds[candidateLogicalId] &&
+        !retainedLinks[mxObjectIdentity.get(candidate)]
+      ) {
+        staleLinks.push(candidate);
+      }
+    }
+
+    for (i = 0; i < staleLinks.length; i++) {
+      model.remove(staleLinks[i]);
+    }
+  }
+
+  /**
+   * 快照恢复会先建柜体、再建开关、最后建边。因此必须在恢复末尾
+   * 再做一次 reconcile，才能补齐缺失连线、修正端点并清掉重复连线。
+   */
+  function reconcileCabinetSwitchLinks() {
+    var segments = [];
+    var key;
+    var allCells = model.cells || {};
+
+    for (key in allCells) {
+      if (
+        Object.prototype.hasOwnProperty.call(allCells, key) &&
+        deps.isCabinetSegment(allCells[key])
+      ) {
+        segments.push(allCells[key]);
+      }
+    }
+
+    syncBoundSwitches(segments);
+    return segments;
   }
 
   /**
@@ -1087,6 +1335,48 @@ export function createCabinetDomain() {
     return nextModel != null ? relayoutCabinetByModel(nextModel) : null;
   }
 
+  function unbindSwitchFromCabinetSwitch(
+    segment,
+    switchCell,
+    removeSwitch,
+    skipRelayout,
+  ) {
+    if (!deps.isCabinetSegment(segment) || switchCell == null) {
+      return null;
+    }
+
+    var instanceId = deps.trim(deps.getAttr(switchCell, "instanceId"));
+    var cabinetModel = extractCabinetModel(segment);
+    var block = null;
+    var i;
+
+    for (i = 0; i < cabinetModel.blocks.length; i++) {
+      if (deps.trim(cabinetModel.blocks[i].switchInstanceId) == instanceId) {
+        block = cabinetModel.blocks[i];
+        break;
+      }
+    }
+
+    if (block == null) {
+      return null;
+    }
+
+    var link = findSwitchLink(segment, block.portId);
+
+    if (link != null) {
+      model.remove(link);
+    }
+
+    if (removeSwitch) {
+      model.remove(switchCell);
+    }
+
+    var nextModel = setBlockSwitchBinding(cabinetModel, block.id, null);
+    return !skipRelayout && nextModel != null
+      ? relayoutCabinetByModel(nextModel)
+      : nextModel;
+  }
+
   /**
    * 在指定块的下方插入一个新块（连带一个新的出线端口）。
    *
@@ -1114,6 +1404,410 @@ export function createCabinetDomain() {
     }
 
     return relayoutCabinetByModel(nextModel);
+  }
+
+  function cloneCellElementValue(cell) {
+    var value = cell != null ? cell.value : null;
+
+    return value != null && typeof value.cloneNode == "function"
+      ? value.cloneNode(true)
+      : value;
+  }
+
+  function setCellElementAttributes(cell, attributes) {
+    var value = cloneCellElementValue(cell);
+    var key;
+
+    if (value == null || typeof value.setAttribute != "function") {
+      return;
+    }
+
+    for (key in attributes) {
+      if (Object.prototype.hasOwnProperty.call(attributes, key)) {
+        value.setAttribute(key, String(attributes[key]));
+      }
+    }
+
+    model.setValue(cell, value);
+  }
+
+  function findDescriptorBlock(descriptor, blockId) {
+    var blocks = descriptor != null ? descriptor.blocks : null;
+    var i;
+
+    if (!Array.isArray(blocks)) {
+      return null;
+    }
+
+    for (i = 0; i < blocks.length; i++) {
+      if (deps.trim(blocks[i].id) == deps.trim(blockId)) {
+        return blocks[i];
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 把柜体一个出线端口与它后面的整条回路一起纵向平移。
+   *
+   * 这不是柜块重排：块的 geometry / height 不变，其他块和其他回路
+   * 都不动，因此允许回路互相覆盖。唯一持久化的布局量是模型中的
+   * block.portOffsetY，快照重开后仍能复原。
+   *
+   * @returns {Object|null} {deltaY, blockCell, switchCell, movedGroup}
+   */
+  function moveCabinetPortByDelta(blockCell, deltaY) {
+    var segment = findCabinetSegment(blockCell);
+    var requestedDelta = Number(deltaY);
+
+    if (
+      segment == null ||
+      !deps.isCabinetBlock(blockCell) ||
+      !isFinite(requestedDelta) ||
+      Math.abs(requestedDelta) < 0.0001
+    ) {
+      return null;
+    }
+
+    var blockPorts = getPortsForRoot(blockCell);
+    var blockPort = blockPorts.length > 0 ? blockPorts[0] : null;
+    var frame = deps.findDrawingFrame(segment);
+
+    if (blockPort == null || frame == null) {
+      return null;
+    }
+
+    var segmentRect = getCellAbsoluteGeometry(segment);
+    var currentPortPosition = getPortAbsolutePosition(blockCell, blockPort);
+    var verticalInset = Math.min(2, Math.max(0, segmentRect.height / 2));
+    var boundedPortY = deps.clamp(
+      currentPortPosition.y + requestedDelta,
+      segmentRect.y + verticalInset,
+      segmentRect.y + segmentRect.height - verticalInset,
+    );
+    var boundedDelta = boundedPortY - currentPortPosition.y;
+
+    if (Math.abs(boundedDelta) < 0.0001) {
+      return {
+        deltaY: 0,
+        blockCell,
+        switchCell: null,
+        movedGroup: null,
+      };
+    }
+
+    var switchInstanceId = deps.trim(
+      deps.getAttr(blockCell, "switchInstanceId"),
+    );
+    var switchCell = findSwitchCellByInstanceId(switchInstanceId);
+    var movedGroup = null;
+    var actualDelta = boundedDelta;
+    var cabinetModel;
+    var logicalCabinetId;
+    var blockId = deps.trim(deps.getAttr(blockCell, "blockId"));
+    var descriptors;
+    var segments;
+    var targetModelBlock = null;
+    var targetDescriptorBlock = null;
+    var i;
+    var j;
+
+    model.beginUpdate();
+
+    try {
+      if (
+        switchCell != null &&
+        typeof deps.moveConnectedGroupByDelta == "function"
+      ) {
+        movedGroup = deps.moveConnectedGroupByDelta(
+          switchCell,
+          frame,
+          0,
+          boundedDelta,
+          { lockX: true },
+        );
+
+        if (movedGroup != null && movedGroup.delta != null) {
+          actualDelta = Number(movedGroup.delta.y) || 0;
+        }
+      }
+
+      if (Math.abs(actualDelta) < 0.0001) {
+        return {
+          deltaY: 0,
+          blockCell,
+          switchCell,
+          movedGroup,
+        };
+      }
+
+      cabinetModel = extractCabinetModel(segment);
+      logicalCabinetId = deps.trim(cabinetModel.logicalCabinetId);
+
+      for (i = 0; i < cabinetModel.blocks.length; i++) {
+        if (deps.trim(cabinetModel.blocks[i].id) == blockId) {
+          targetModelBlock = cabinetModel.blocks[i];
+          targetModelBlock.portOffsetY =
+            Number(targetModelBlock.portOffsetY || 0) + actualDelta;
+          break;
+        }
+      }
+
+      if (targetModelBlock == null) {
+        return null;
+      }
+
+      descriptors = buildCabinetPageDescriptors(
+        cabinetModel,
+        deps.getFrameConfig(frame),
+      );
+      segments = findCabinetSegments(logicalCabinetId);
+
+      for (i = 0; i < segments.length; i++) {
+        var segmentIndex = deps.toInt(
+          deps.getAttr(segments[i], "segmentIndex"),
+          i,
+        );
+        var descriptor = descriptors[segmentIndex];
+
+        if (descriptor == null) {
+          continue;
+        }
+
+        var serializedSegmentPorts = deps.serializePortLayout(
+          buildSegmentPortLayout(descriptor),
+        );
+
+        setCellElementAttributes(segments[i], {
+          cabinetModelJson: JSON.stringify(cabinetModel),
+          portsJson: serializedSegmentPorts,
+          portLayout: serializedSegmentPorts,
+        });
+
+        var segmentBlocks = getSegmentBlocks(segments[i]);
+
+        for (j = 0; j < segmentBlocks.length; j++) {
+          if (deps.trim(deps.getAttr(segmentBlocks[j], "blockId")) != blockId) {
+            continue;
+          }
+
+          targetDescriptorBlock = findDescriptorBlock(descriptor, blockId);
+
+          if (targetDescriptorBlock == null) {
+            continue;
+          }
+
+          var blockGeometry = model.getGeometry(segmentBlocks[j]);
+          var displayHeight =
+            blockGeometry != null && blockGeometry.height > 0
+              ? blockGeometry.height
+              : targetDescriptorBlock.height;
+          var serializedBlockPorts = JSON.stringify([
+            {
+              id: targetDescriptorBlock.portId,
+              x: targetDescriptorBlock.portX,
+              y:
+                displayHeight > 0
+                  ? 0.5 + targetModelBlock.portOffsetY / displayHeight
+                  : 0.5,
+              marker: "cross",
+              direction: "right",
+              ioMode: "out",
+              order: targetDescriptorBlock.order,
+            },
+          ]);
+
+          setCellElementAttributes(segmentBlocks[j], {
+            portOffsetY: targetModelBlock.portOffsetY,
+            portsJson: serializedBlockPorts,
+          });
+        }
+      }
+
+      // 块 cell 本身没有重建，所以原指针仍有效。把托管边的源端
+      // 约束更新到新端口，并清掉历史折点，保证支线仍是直线。
+      blockPorts = getPortsForRoot(blockCell);
+      blockPort = blockPorts.length > 0 ? blockPorts[0] : null;
+      var link = findSwitchLink(blockCell);
+
+      if (link != null && blockPort != null) {
+        deps.setConnectionConstraint(
+          link,
+          blockCell,
+          true,
+          new mxConnectionConstraint(
+            new mxPoint(blockPort.x, blockPort.y),
+            false,
+            blockPort.id,
+          ),
+        );
+
+        var linkGeometry = model.getGeometry(link);
+
+        if (linkGeometry != null && linkGeometry.points != null) {
+          linkGeometry = linkGeometry.clone();
+          linkGeometry.points = null;
+          model.setGeometry(link, linkGeometry);
+        }
+      }
+    } finally {
+      model.endUpdate();
+    }
+
+    return {
+      deltaY: actualDelta,
+      blockCell,
+      switchCell,
+      movedGroup,
+    };
+  }
+
+  /** Segment-hosted variant used by the current canvas model. */
+  function moveCabinetSegmentPortByDelta(segment, portId, deltaY) {
+    var requestedDelta = Number(deltaY);
+    var frame = deps.findDrawingFrame(segment);
+    var port = deps.getPortMetaById(segment, portId);
+
+    if (
+      !deps.isCabinetSegment(segment) ||
+      frame == null ||
+      port == null ||
+      !isFinite(requestedDelta) ||
+      Math.abs(requestedDelta) < 0.0001
+    ) {
+      return null;
+    }
+
+    var segmentRect = getCellAbsoluteGeometry(segment);
+    var currentPosition = getPortAbsolutePosition(segment, port);
+    var nextAbsoluteY = deps.clamp(
+      currentPosition.y + requestedDelta,
+      segmentRect.y + Math.min(2, segmentRect.height / 2),
+      segmentRect.y + segmentRect.height - Math.min(2, segmentRect.height / 2),
+    );
+    var boundedDelta = nextAbsoluteY - currentPosition.y;
+    var cabinetModel = extractCabinetModel(segment);
+    var modelBlock = findBlockByPortId(cabinetModel, portId);
+
+    if (modelBlock == null || Math.abs(boundedDelta) < 0.0001) {
+      return { deltaY: 0, segment, portId, switchCell: null, movedGroup: null };
+    }
+
+    var switchCell = findSwitchCellByInstanceId(modelBlock.switchInstanceId);
+    var directTerminal = switchCell;
+    var edgeCount = model.getEdgeCount(segment);
+    var i;
+
+    if (directTerminal == null) {
+      for (i = 0; i < edgeCount; i++) {
+        var candidateEdge = model.getEdgeAt(segment, i);
+        var candidateSource = model.getTerminal(candidateEdge, true) == segment;
+
+        if (
+          deps.trim(deps.getEdgePortId(candidateEdge, segment, candidateSource)) ==
+          deps.trim(portId)
+        ) {
+          directTerminal = model.getTerminal(candidateEdge, !candidateSource);
+          break;
+        }
+      }
+    }
+
+    var movedGroup = null;
+    var actualDelta = boundedDelta;
+    model.beginUpdate();
+
+    try {
+      if (
+        directTerminal != null &&
+        typeof deps.moveConnectedGroupByDelta == "function"
+      ) {
+        movedGroup = deps.moveConnectedGroupByDelta(
+          directTerminal,
+          frame,
+          0,
+          boundedDelta,
+          { lockX: true },
+        );
+
+        if (movedGroup != null && movedGroup.delta != null) {
+          actualDelta = Number(movedGroup.delta.y) || 0;
+        }
+      }
+
+      if (Math.abs(actualDelta) < 0.0001) {
+        return { deltaY: 0, segment, portId, switchCell, movedGroup };
+      }
+
+      modelBlock.portOffsetY = Number(modelBlock.portOffsetY || 0) + actualDelta;
+      var descriptors = buildCabinetPageDescriptors(
+        cabinetModel,
+        deps.getFrameConfig(frame),
+      );
+      var segments = findCabinetSegments(cabinetModel.logicalCabinetId);
+
+      for (i = 0; i < segments.length; i++) {
+        var descriptor = descriptors[
+          deps.toInt(deps.getAttr(segments[i], "segmentIndex"), i)
+        ];
+
+        if (descriptor == null) {
+          continue;
+        }
+
+        var serializedPorts = deps.serializePortLayout(
+          buildSegmentPortLayout(descriptor),
+        );
+        setCellElementAttributes(segments[i], {
+          cabinetModelJson: JSON.stringify(cabinetModel),
+          portsJson: serializedPorts,
+          portLayout: serializedPorts,
+        });
+
+        var refreshedPort = deps.getPortMetaById(segments[i], portId);
+        var refreshedEdgeCount = model.getEdgeCount(segments[i]);
+        var edgeIndex;
+
+        if (refreshedPort == null) {
+          continue;
+        }
+
+        for (edgeIndex = 0; edgeIndex < refreshedEdgeCount; edgeIndex++) {
+          var edge = model.getEdgeAt(segments[i], edgeIndex);
+          var source = model.getTerminal(edge, true) == segments[i];
+
+          if (
+            deps.trim(deps.getEdgePortId(edge, segments[i], source)) !=
+            deps.trim(portId)
+          ) {
+            continue;
+          }
+
+          deps.setConnectionConstraint(
+            edge,
+            segments[i],
+            source,
+            new mxConnectionConstraint(
+              new mxPoint(refreshedPort.x, refreshedPort.y),
+              false,
+              refreshedPort.id,
+            ),
+          );
+          var edgeGeometry = model.getGeometry(edge);
+
+          if (edgeGeometry != null && edgeGeometry.points != null) {
+            edgeGeometry = edgeGeometry.clone();
+            edgeGeometry.points = null;
+            model.setGeometry(edge, edgeGeometry);
+          }
+        }
+      }
+    } finally {
+      model.endUpdate();
+    }
+
+    return { deltaY: actualDelta, segment, portId, switchCell, movedGroup };
   }
 
   /**
@@ -1179,11 +1873,14 @@ export function createCabinetDomain() {
     applyCabinetBlockHeight,
     applyCabinetWidth,
     bindSwitchToBlock,
+    findBoundCabinetBlockForSwitch,
     findSwitchCellByInstanceId,
     findSwitchLink,
     insertCabinetBlockAfter,
+    moveCabinetPortByDelta: moveCabinetSegmentPortByDelta,
     syncBoundSwitches,
     unbindSwitchFromBlock,
+    unbindSwitchFromCabinetSwitch,
     buildCabinetPageDescriptors,
     buildCabinetPortMap,
     buildCabinetSegmentCell,
@@ -1195,7 +1892,9 @@ export function createCabinetDomain() {
     getCellAbsoluteGeometry,
     getPortAbsolutePosition,
     normalizeCabinetModel,
+    reconcileCabinetSwitchLinks,
     relayoutCabinetByModel,
     restoreCabinetAttachments,
+    isSwitchBoundToCabinet,
   };
 }

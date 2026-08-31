@@ -5,7 +5,7 @@
 import { setCanvasStatus } from "../core/runtimeHelpers.js";
 import { connectionConstraintsApi } from "../runtime/connectionConstraints.js";
 import { installCanvasFeatures, ACTION_ITEMS } from "../runtime/canvasFeatures.js";
-import { installCabinetOverlays } from "../runtime/cabinetOverlays.js";
+import { installCabinetPortDrag } from "../runtime/cabinetPortDrag.js";
 import { installPrintMode } from "../runtime/printMode.js";
 import { installClipboardOverride } from "../runtime/clipboardOverride.js";
 import { installFrameBinding } from "../runtime/frameBinding.js";
@@ -265,8 +265,8 @@ export function activateAppRuntime(app) {
   // 出图模式：导出时把编辑辅助元素藏掉（要在浮层安装之前挂好覆写）
   installPrintMode(app.ctx);
 
-  // 配电柜块的加号浮层（依赖上面的 LOD 与出图模式：两者都要摘掉浮层）
-  installCabinetOverlays(app.ctx);
+  // 直接拖柜体连接点，只纵向搬移对应回路。
+  installCabinetPortDrag(app.ctx);
 
   // 隐藏不需要的原生工具栏按钮
   pruneToolbarButtons(ui);

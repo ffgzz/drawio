@@ -1,5 +1,6 @@
+/** Generated file. Edit sources in plugins/electricalSymbols/ instead. Built with esbuild from plugins/electricalSymbols/. */
 (() => {
-  // src/main/webapp/plugins/electricalSymbols/core/constants.js
+  // core/constants.js
   var ELECTRICAL_CONSTANTS = Object.freeze({
     LIBRARY_TITLE: "\u7535\u6C14\u56FE\u5143\u5E93",
     ROOT_TAG: "ElectricalSymbol",
@@ -34,6 +35,10 @@
     // a compatible port. 18px was too precise at normal zoom and made the
     // feature feel unavailable, especially on Retina displays.
     CANVAS_PORT_SNAP_THRESHOLD_PX: 36,
+    // Use a larger release threshold than the snap radius so a small adjustment
+    // does not immediately tear down a valid circuit, while an intentional drag
+    // clearly away from the peer port does disconnect it.
+    CANVAS_PORT_DETACH_THRESHOLD_PX: 72,
     CANVAS_PORT_SNAP_PREVIEW_RADIUS_PX: 160,
     TEMPLATE_DRAFT_STORAGE_KEY: "electrical-symbol-template-draft",
     FRAME_DEFAULT_WIDTH: 820,
@@ -78,7 +83,7 @@
     INSTANCE_COMPOSE_ZONE_MIN_HEIGHT: 200
   });
 
-  // src/main/webapp/plugins/electricalSymbols/core/state.js
+  // core/state.js
   function defineAlias(state, alias, slice, key) {
     Object.defineProperty(state, alias, {
       configurable: true,
@@ -227,7 +232,7 @@
     return state;
   }
 
-  // src/main/webapp/plugins/electricalSymbols/core/context.js
+  // core/context.js
   function createPluginContext(ui) {
     var graph = ui.editor.graph;
     return {
@@ -239,7 +244,7 @@
     };
   }
 
-  // src/main/webapp/plugins/electricalSymbols/core/resources.js
+  // core/resources.js
   var ELECTRICAL_RESOURCE_ENTRIES = [
     "electricalSymbols=\u5B9A\u4E49\u7535\u6C14\u56FE\u5143",
     "electricalBrowse=\u5DF2\u5B9A\u4E49\u56FE\u5143",
@@ -268,7 +273,7 @@
     mxResources.parse(ELECTRICAL_RESOURCE_ENTRIES.join("\n"));
   }
 
-  // src/main/webapp/plugins/electricalSymbols/core/appRuntime.js
+  // core/appRuntime.js
   var currentApp = null;
   function setApp(app) {
     currentApp = app;
@@ -280,7 +285,7 @@
     return currentApp;
   }
 
-  // src/main/webapp/plugins/electricalSymbols/utils/base.js
+  // utils/base.js
   function trim(value) {
     return value != null ? mxUtils.trim(String(value)) : "";
   }
@@ -352,7 +357,7 @@
     return result;
   }
 
-  // src/main/webapp/plugins/electricalSymbols/utils/xml.js
+  // utils/xml.js
   function createNode(tagName) {
     return mxUtils.createXmlDocument().createElement(tagName);
   }
@@ -405,7 +410,7 @@
     };
   }
 
-  // src/main/webapp/plugins/electricalSymbols/core/runtimeHelpers.js
+  // core/runtimeHelpers.js
   function getGraphApi() {
     return getApp().ctx;
   }
@@ -538,146 +543,6 @@
   }
 
   // domain/frameCore.js
-  // src/main/webapp/plugins/electricalSymbols/domain/specPorts.js
-  function normalizePortMarker(marker) {
-    marker = trim(marker).toLowerCase();
-    return marker == "circle" || marker == "hidden" ? marker : "cross";
-  }
-  function normalizePortDirection(direction) {
-    direction = trim(direction).toLowerCase();
-    return direction == "left" || direction == "right" || direction == "up" || direction == "down" ? direction : "any";
-  }
-  function normalizePortIoMode(mode) {
-    mode = trim(mode).toLowerCase();
-    return mode == "in" || mode == "out" ? mode : "both";
-  }
-  function defaultPortPosition(index, count) {
-    return count <= 0 ? 0.5 : (index + 1) / (count + 1);
-  }
-  function normalizePortPoint(raw, fallbackId, fallbackX, fallbackY) {
-    var id = fallbackId;
-    var x = fallbackX;
-    var y = fallbackY;
-    var name = "";
-    var marker = "cross";
-    var direction = "any";
-    var ioMode = "both";
-    if (isObject(raw)) {
-      id = trim(raw.id || raw.key || raw.name) || fallbackId;
-      x = toFloat(raw.x, fallbackX);
-      y = toFloat(raw.y, fallbackY);
-      name = trim(raw.name || raw.label || "");
-      marker = normalizePortMarker(raw.marker || raw.style);
-      direction = normalizePortDirection(raw.direction || raw.side);
-      ioMode = normalizePortIoMode(raw.ioMode || raw.io || raw.mode);
-    } else if (typeof raw == "number") {
-      y = raw;
-    }
-    return {
-      id,
-      x: clamp(x, 0, 1),
-      y: clamp(y, 0, 1),
-      name,
-      marker,
-      direction,
-      ioMode
-    };
-  }
-  function normalizePortLayout(rawPorts) {
-    var points = [];
-    var i;
-    if (Array.isArray(rawPorts)) {
-      for (i = 0; i < rawPorts.length; i++) {
-        points.push(
-          normalizePortPoint(
-            rawPorts[i],
-            "port:" + i,
-            0.5,
-            (i + 1) / (rawPorts.length + 1)
-          )
-        );
-      }
-      return points;
-    }
-    if (!isObject(rawPorts)) {
-      return points;
-    }
-    if (Array.isArray(rawPorts.items)) {
-      for (i = 0; i < rawPorts.items.length; i++) {
-        points.push(
-          normalizePortPoint(
-            rawPorts.items[i],
-            "port:" + i,
-            0.5,
-            (i + 1) / (rawPorts.items.length + 1)
-          )
-        );
-      }
-      return points;
-    }
-    if (Array.isArray(rawPorts.left) || Array.isArray(rawPorts.right)) {
-      var left = Array.isArray(rawPorts.left) ? rawPorts.left : [];
-      var right = Array.isArray(rawPorts.right) ? rawPorts.right : [];
-      for (i = 0; i < left.length; i++) {
-        points.push(
-          normalizePortPoint(
-            { id: "left:" + i, x: 0, y: left[i] },
-            "left:" + i,
-            0,
-            defaultPortPosition(i, left.length)
-          )
-        );
-      }
-      for (i = 0; i < right.length; i++) {
-        points.push(
-          normalizePortPoint(
-            { id: "right:" + i, x: 1, y: right[i] },
-            "right:" + i,
-            1,
-            defaultPortPosition(i, right.length)
-          )
-        );
-      }
-      return points;
-    }
-    var leftCount = Math.max(0, toInt(rawPorts.leftCount, 0));
-    var rightCount = Math.max(0, toInt(rawPorts.rightCount, 0));
-    for (i = 0; i < leftCount; i++) {
-      points.push({
-        id: "left:" + i,
-        x: 0,
-        y: defaultPortPosition(i, leftCount)
-      });
-    }
-    for (i = 0; i < rightCount; i++) {
-      points.push({
-        id: "right:" + i,
-        x: 1,
-        y: defaultPortPosition(i, rightCount)
-      });
-    }
-    return points;
-  }
-  function parsePortLayout(raw) {
-    if (raw == null || raw.length == 0) {
-      return [];
-    }
-    try {
-      return normalizePortLayout(JSON.parse(raw));
-    } catch (e) {
-      return [];
-    }
-  }
-  function buildPortLayout(spec, base) {
-    var current = normalizePortLayout(spec.ports);
-    var fallback = normalizePortLayout(base);
-    return current.length > 0 ? current : fallback;
-  }
-  function serializePortLayout(layout) {
-    return JSON.stringify(normalizePortLayout(layout));
-  }
-
-  // src/main/webapp/plugins/electricalSymbols/domain/frameCore.js
   function makeFrameStyle() {
     return "shape=rectangle;fillColor=none;strokeColor=#6b7280;strokeWidth=2;rounded=0;html=1;whiteSpace=wrap;connectable=0;container=1;dropTarget=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;deletable=0;";
   }
@@ -715,11 +580,6 @@
 
   // domain/cabinetCore.js
   function createCabinetOutlineSvg(descriptor) {
-  // src/main/webapp/plugins/electricalSymbols/domain/cabinetCore.js
-  function makeCabinetRootStyle() {
-    return "fillColor=none;strokeColor=none;html=1;whiteSpace=wrap;connectable=1;container=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;";
-  }
-  function createCabinetBodySvg(descriptor) {
     var width = Math.max(20, Math.round(descriptor.width));
     var height = Math.max(20, Math.round(descriptor.height));
     var strokeWidth = 2;
@@ -759,7 +619,7 @@
     return "shape=rectangle;fillColor=none;strokeColor=#c8ccd2;strokeWidth=1;dashed=1;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;spacingLeft=8;connectable=1;movable=0;resizable=1;rotatable=0;editable=0;deletable=0;resizeWidth=1;resizeHeight=0;";
   }
   function makeCabinetSwitchLinkStyle() {
-    return "edgeStyle=none;html=1;strokeColor=#111111;strokeWidth=1;endArrow=none;startArrow=none;noEdgeStyle=1;rounded=0;movable=0;editable=0;deletable=0;bendable=0;";
+    return "edgeStyle=none;html=1;strokeColor=#111111;strokeWidth=1;endArrow=none;startArrow=none;noEdgeStyle=1;rounded=0;movable=0;editable=0;deletable=0;bendable=0;eidLayoutManaged=1;";
   }
   function makeCabinetBusbarStyle() {
     return "shape=rectangle;fillColor=#00b7c3;strokeColor=none;html=1;connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;";
@@ -788,6 +648,9 @@
         ELECTRICAL_CONSTANTS.CABINET_BLOCK_MAX_HEIGHT
       ),
       portId: trim(raw.portId) || id + ":out",
+      // 端口拖动只记录相对块中心的纵向偏移，不改块高，
+      // 因此不会触发整柜重排，也不会挤动其他回路。
+      portOffsetY: toFloat(raw.portOffsetY, 0),
       switchInstanceId: trim(raw.switchInstanceId),
       switchSymbolId: trim(raw.switchSymbolId),
       params: isObject(raw.params) ? cloneJson(raw.params) : {},
@@ -967,11 +830,17 @@
     var busbarX = options != null ? toInt(options.busbarX, 0) : 0;
     var lead = options != null ? Math.max(0, toInt(options.switchLead, 0)) : 0;
     var available = Math.max(8, blockRect.width - busbarX - lead);
-    var width = Math.max(8, Math.min(switchSize.width, available));
-    var height = Math.max(8, switchSize.height);
+    var requestedWidth = Math.max(8, switchSize.width);
+    var requestedHeight = Math.max(8, switchSize.height);
+    var fitScale = Math.min(1, available / requestedWidth);
+    var width = Math.max(8, requestedWidth * fitScale);
+    var height = Math.max(1, requestedHeight * fitScale);
+    var inputPortYRatio = options != null && isFinite(Number(options.inputPortYRatio)) ? clamp(Number(options.inputPortYRatio), 0, 1) : 0.5;
+    var targetPortYRatio = options != null && isFinite(Number(options.targetPortYRatio)) ? Number(options.targetPortYRatio) : 0.5;
+    var y = blockRect.height * targetPortYRatio - height * inputPortYRatio;
     return {
       x: busbarX + lead,
-      y: (blockRect.height - height) / 2,
+      y,
       width,
       height
     };
@@ -1015,10 +884,7 @@
       var page = pages[pageIndex];
       var continuesToNext = pageIndex < pages.length - 1;
       var continuesFromPrev = pageIndex > 0;
-      var segmentHeight = continuesToNext ? Math.round(usableHeight) : Math.max(
-        ELECTRICAL_CONSTANTS.CABINET_BLOCK_MIN_HEIGHT,
-        modelData.headPadding + page.height + modelData.tailPadding
-      );
+      var segmentHeight = Math.round(usableHeight);
       var topBreakDepth = continuesFromPrev ? Math.max(
         8,
         Math.min(
@@ -1036,6 +902,7 @@
           id: entry.block.id,
           title: entry.block.title,
           portId: entry.block.portId,
+          portOffsetY: entry.block.portOffsetY,
           switchInstanceId: entry.block.switchInstanceId,
           switchSymbolId: entry.block.switchSymbolId,
           params: cloneJson(entry.block.params),
@@ -1045,7 +912,11 @@
           width: modelData.cabinetWidth,
           // 出线接口在母线上，不在柜壁上
           portX: modelData.cabinetWidth > 0 ? busbarX / modelData.cabinetWidth : 0,
-          portY: segmentHeight > 0 ? clamp((localY + entry.height / 2) / segmentHeight, 0, 1) : 0.5
+          portY: segmentHeight > 0 ? clamp(
+            (localY + entry.height / 2 + entry.block.portOffsetY) / segmentHeight,
+            0,
+            1
+          ) : 0.5
         });
       }
       descriptors.push({
@@ -1100,7 +971,7 @@
     return result;
   }
 
-  // src/main/webapp/plugins/electricalSymbols/domain/frameGraph.js
+  // domain/frameGraph.js
   function buildFrameDeps() {
     var app = getApp();
     var ctx = app.ctx;
@@ -1404,7 +1275,7 @@
     };
   }
 
-  // src/main/webapp/plugins/electricalSymbols/domain/frame.js
+  // domain/frame.js
   function getFrameDomain() {
     return createFrameDomain();
   }
@@ -1485,990 +1356,6 @@
   };
 
   // domain/snapshotCore.js
-  // src/main/webapp/plugins/electricalSymbols/domain/specSchema.js
-  function isSchemaLeafDescriptor(value) {
-    return isObject(value) && typeof value.type === "string" && trim(value.type).length > 0;
-  }
-  function normalizeSchemaType(type) {
-    type = trim(type).toLowerCase();
-    return type == "number" || type == "boolean" || type == "enum" ? type : "string";
-  }
-  function normalizeEnumOptions(options) {
-    var list = Array.isArray(options) ? options : String(options || "").split(",");
-    var result = [];
-    var seen = {};
-    var i;
-    for (i = 0; i < list.length; i++) {
-      var value = trim(list[i]);
-      if (value.length > 0 && seen[value] == null) {
-        seen[value] = true;
-        result.push(value);
-      }
-    }
-    return result;
-  }
-  function normalizeSchemaField(raw, nextItemId2) {
-    var field = isObject(raw) ? cloneJson(raw) : {};
-    field.id = trim(field.id) || (typeof nextItemId2 === "function" ? nextItemId2("field") : "");
-    field.path = trim(field.path);
-    field.type = normalizeSchemaType(field.type);
-    field.required = !!field.required;
-    field.enumValues = normalizeEnumOptions(field.enumValues);
-    return field;
-  }
-  function getDefaultSchemaFields(nextItemId2) {
-    return [
-      normalizeSchemaField({ path: "title", type: "string" }, nextItemId2),
-      normalizeSchemaField({ path: "name", type: "string" }, nextItemId2),
-      normalizeSchemaField({ path: "code", type: "string" }, nextItemId2),
-      normalizeSchemaField({ path: "power", type: "string" }, nextItemId2)
-    ];
-  }
-  function hasSchemaPath(schema, path) {
-    var parts = trim(path).split(".");
-    var current = schema;
-    var i;
-    if (!isObject(schema) || trim(path).length == 0) {
-      return false;
-    }
-    for (i = 0; i < parts.length; i++) {
-      if (!isObject(current) || !current.hasOwnProperty(parts[i])) {
-        return false;
-      }
-      current = current[parts[i]];
-    }
-    return true;
-  }
-  function isValidFieldPath(path) {
-    var parts = trim(path).split(".");
-    var i;
-    if (trim(path).length == 0) {
-      return false;
-    }
-    for (i = 0; i < parts.length; i++) {
-      if (!/^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(parts[i])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  function setValueByPath(target, path, value) {
-    var parts = trim(path).split(".");
-    var current = target;
-    var i;
-    for (i = 0; i < parts.length - 1; i++) {
-      if (!isObject(current[parts[i]])) {
-        current[parts[i]] = {};
-      }
-      current = current[parts[i]];
-    }
-    current[parts[parts.length - 1]] = value;
-  }
-  function buildSchemaFromFields(fields, nextItemId2) {
-    var schema = {};
-    var seen = {};
-    var i;
-    for (i = 0; i < fields.length; i++) {
-      var field = normalizeSchemaField(fields[i], nextItemId2);
-      var path = trim(field.path);
-      if (path.length == 0) {
-        continue;
-      }
-      if (!isValidFieldPath(path)) {
-        throw new Error("\u5B57\u6BB5\u8DEF\u5F84\u683C\u5F0F\u4E0D\u6B63\u786E");
-      }
-      if (seen[path]) {
-        throw new Error("\u5B57\u6BB5\u8DEF\u5F84\u4E0D\u80FD\u91CD\u590D");
-      }
-      if (field.type == "enum" && field.enumValues.length == 0) {
-        throw new Error("\u679A\u4E3E\u7C7B\u578B\u5FC5\u987B\u81F3\u5C11\u63D0\u4F9B\u4E00\u4E2A\u53EF\u9009\u503C");
-      }
-      seen[path] = true;
-      setValueByPath(schema, path, {
-        type: field.type,
-        required: !!field.required,
-        enumValues: field.enumValues
-      });
-    }
-    return schema;
-  }
-  function flattenSchemaFields(schema, prefix, result, nextItemId2) {
-    var nextPrefix = trim(prefix);
-    var key;
-    if (!isObject(schema)) {
-      return result;
-    }
-    for (key in schema) {
-      if (schema.hasOwnProperty(key)) {
-        var path = nextPrefix.length > 0 ? nextPrefix + "." + key : key;
-        var value = schema[key];
-        if (isSchemaLeafDescriptor(value)) {
-          result.push(
-            normalizeSchemaField(
-              {
-                path,
-                type: value.type,
-                required: value.required,
-                enumValues: value.enumValues
-              },
-              nextItemId2
-            )
-          );
-        } else if (isObject(value)) {
-          flattenSchemaFields(value, path, result, nextItemId2);
-        }
-      }
-    }
-    return result;
-  }
-  function buildEmptyValueFromSchema(schema) {
-    var key;
-    if (Array.isArray(schema)) {
-      return [];
-    }
-    if (isObject(schema)) {
-      if (isSchemaLeafDescriptor(schema)) {
-        switch (normalizeSchemaType(schema.type)) {
-          case "number":
-            return null;
-          case "boolean":
-            return null;
-          case "enum":
-            return "";
-          default:
-            return "";
-        }
-      }
-      var result = {};
-      for (key in schema) {
-        if (schema.hasOwnProperty(key)) {
-          result[key] = buildEmptyValueFromSchema(schema[key]);
-        }
-      }
-      return result;
-    }
-    return null;
-  }
-  function getValueByPath(obj, path) {
-    var current = obj;
-    var parts = trim(path).split(".");
-    var i;
-    if (trim(path).length == 0) {
-      return null;
-    }
-    for (i = 0; i < parts.length; i++) {
-      if (current == null) {
-        return null;
-      }
-      current = current[parts[i]];
-    }
-    return current;
-  }
-
-  // src/main/webapp/plugins/electricalSymbols/domain/specLabels.js
-  function normalizeLabelAlign(align) {
-    align = trim(align).toLowerCase();
-    return align == "left" || align == "right" ? align : "center";
-  }
-  function normalizeLabelItem(raw, fallbackId, fallbackText) {
-    var text = fallbackText;
-    var id = fallbackId;
-    var binding = "";
-    var x = 0.5;
-    var y = -0.18;
-    var width = 120;
-    var height = 26;
-    var align = "center";
-    var boxed = false;
-    if (isObject(raw)) {
-      text = trim(raw.text || raw.label) || fallbackText;
-      id = trim(raw.id || raw.key || raw.name) || fallbackId;
-      binding = trim(raw.binding || raw.field || raw.prop);
-      x = toFloat(raw.x, x);
-      y = toFloat(raw.y, y);
-      width = Math.max(40, toInt(raw.width, width));
-      height = Math.max(20, toInt(raw.height, height));
-      align = normalizeLabelAlign(raw.align);
-      boxed = raw.boxed === true || raw.boxed === 1 || raw.boxed === "1";
-    } else {
-      text = trim(raw) || fallbackText;
-    }
-    return {
-      id,
-      text,
-      binding,
-      x: clamp(x, -1.5, 2.5),
-      y: clamp(y, -1.5, 2.5),
-      width,
-      height,
-      align,
-      boxed
-    };
-  }
-  function normalizeLabels(rawLabels) {
-    var labels = [];
-    var i;
-    if (!Array.isArray(rawLabels)) {
-      return labels;
-    }
-    for (i = 0; i < rawLabels.length; i++) {
-      labels.push(normalizeLabelItem(rawLabels[i], "label:" + i, "\u6587\u672C" + (i + 1)));
-    }
-    return labels;
-  }
-  function resolveBindingText(binding, instance, getValueByPath2) {
-    var normalizedBinding = trim(binding);
-    var hasTemplate;
-    if (normalizedBinding.length == 0 || typeof getValueByPath2 !== "function") {
-      return null;
-    }
-    hasTemplate = /\{\{\s*[^{}]+?\s*\}\}/.test(normalizedBinding);
-    if (hasTemplate) {
-      return normalizedBinding.replace(
-        /\{\{\s*([^{}]+?)\s*\}\}/g,
-        function(_placeholder, fieldPath) {
-          var value2 = getValueByPath2(instance, trim(fieldPath));
-          return value2 != null ? String(value2) : "";
-        }
-      );
-    }
-    var value = getValueByPath2(instance, normalizedBinding);
-    return value != null ? String(value) : "";
-  }
-  function buildResolvedLabels(labels, instance, getValueByPath2) {
-    var result = [];
-    var i;
-    for (i = 0; i < labels.length; i++) {
-      var item = cloneJson(labels[i]);
-      var resolvedText = resolveBindingText(
-        item.binding,
-        instance,
-        getValueByPath2
-      );
-      item.text = resolvedText != null ? resolvedText : item.text || "";
-      result.push(item);
-    }
-    return result;
-  }
-
-  // src/main/webapp/plugins/electricalSymbols/domain/spec.js
-  function getSpecDeps() {
-    var app = getApp();
-    return {
-      trim,
-      isObject,
-      cloneJson,
-      validateSvg,
-      generateSymbolId,
-      toInt,
-      nextItemId,
-      normalizeMode,
-      deepMerge,
-      generateInstanceId
-    };
-  }
-  function getVariantLayout(spec, variantKey) {
-    var deps = getSpecDeps();
-    var layouts = normalizeVariantLayouts(spec.variantLayouts);
-    var key = deps.trim(variantKey);
-    if (key.length > 0 && layouts[key] != null) {
-      return {
-        ports: normalizePortLayout(layouts[key].ports),
-        labels: normalizeLabels(layouts[key].labels)
-      };
-    }
-    return {
-      ports: normalizePortLayout(spec.ports),
-      labels: normalizeLabels(spec.labels)
-    };
-  }
-  function getActiveVariantKey(spec) {
-    var deps = getSpecDeps();
-    var field = deps.trim(spec.variantField || "");
-    var value = deps.trim(getValueByPath(spec.data, field));
-    if (value.length == 0 && field == "mode") {
-      value = deps.trim(spec.device.mode);
-    }
-    return value;
-  }
-  function getActiveSvg(spec) {
-    var variantKey = getActiveVariantKey(spec);
-    if (variantKey.length > 0 && spec.svgVariants[variantKey] != null) {
-      return spec.svgVariants[variantKey];
-    }
-    return spec.svg;
-  }
-  function toSvgDataUri(spec) {
-    return "data:image/svg+xml," + encodeURIComponent(getActiveSvg(spec));
-  }
-  function toStyleImageUri(spec) {
-    return "data:image/svg+xml," + encodeURIComponent(getActiveSvg(spec));
-  }
-  function normalizeVariantLayouts(raw) {
-    var deps = getSpecDeps();
-    var result = {};
-    var key;
-    if (!deps.isObject(raw)) {
-      return result;
-    }
-    for (key in raw) {
-      if (raw.hasOwnProperty(key) && deps.trim(key).length > 0) {
-        var entry = deps.isObject(raw[key]) ? raw[key] : {};
-        result[deps.trim(key)] = {
-          ports: normalizePortLayout(entry.ports),
-          labels: normalizeLabels(entry.labels)
-        };
-      }
-    }
-    return result;
-  }
-  function normalizeSpec(raw) {
-    var deps = getSpecDeps();
-    if (!deps.isObject(raw)) {
-      throw new Error("JSON \u6839\u8282\u70B9\u5FC5\u987B\u662F\u5BF9\u8C61");
-    }
-    var device = deps.isObject(raw.device) ? raw.device : {};
-    var ports = raw.ports;
-    var variants = deps.isObject(raw.svgVariants) ? raw.svgVariants : {};
-    var size = deps.isObject(raw.size) ? raw.size : {};
-    var params = deps.isObject(device.params) ? deps.cloneJson(device.params) : {};
-    var schema = deps.isObject(raw.schema) ? deps.cloneJson(raw.schema) : {};
-    var data = deps.isObject(raw.data) ? deps.cloneJson(raw.data) : {};
-    var variantField = deps.trim(raw.variantField || "");
-    var spec = {
-      symbolId: deps.trim(raw.symbolId) || deps.generateSymbolId("symbol"),
-      templateName: deps.trim(raw.templateName) || deps.trim(raw.title) || deps.trim(device.name) || "\u7535\u6C14\u56FE\u5143",
-      title: deps.trim(raw.title) || deps.trim(device.name) || "\u7535\u6C14\u56FE\u5143",
-      svg: deps.validateSvg(raw.svg),
-      size: {
-        width: Math.max(20, deps.toInt(size.width, 120)),
-        height: Math.max(20, deps.toInt(size.height, 80))
-      },
-      device: {
-        name: deps.trim(device.name),
-        code: deps.trim(device.code),
-        power: deps.trim(device.power),
-        mode: deps.normalizeMode(device.mode),
-        params
-      },
-      ports: normalizePortLayout(ports),
-      labels: normalizeLabels(raw.labels),
-      schema,
-      data,
-      // Generated E&I symbols may grow to fit text, but must never be restored
-      // smaller than their library definition. Preserve the applied scale in
-      // snapshots so the host can enforce and regression-test that invariant.
-      layoutScale: Math.max(0.4, Number(raw.layoutScale) || 1),
-      variantField,
-      svgVariants: {},
-      variantLayouts: normalizeVariantLayouts(raw.variantLayouts)
-    };
-    if (deps.trim(raw.instanceId).length > 0) {
-      spec.instanceId = deps.trim(raw.instanceId);
-    }
-    if (deps.trim(raw.canvasCellId).length > 0) {
-      spec.canvasCellId = deps.trim(raw.canvasCellId);
-    }
-    if (deps.trim(raw.businessRole).length > 0) {
-      spec.businessRole = deps.trim(raw.businessRole);
-    }
-    if (Array.isArray(raw.businessBindings)) {
-      spec.businessBindings = deps.cloneJson(raw.businessBindings);
-    }
-    if (raw.businessBindingVersion != null) {
-      spec.businessBindingVersion = raw.businessBindingVersion;
-    }
-    if (deps.isObject(raw.libraryCategory)) {
-      spec.libraryCategory = deps.cloneJson(raw.libraryCategory);
-    }
-    if (deps.isObject(raw.visualBounds)) {
-      spec.visualBounds = deps.cloneJson(raw.visualBounds);
-    }
-    for (var variantKey in variants) {
-      if (variants.hasOwnProperty(variantKey) && deps.trim(variantKey).length > 0 && variants[variantKey] != null && deps.trim(variants[variantKey]).length > 0) {
-        spec.svgVariants[deps.trim(variantKey)] = deps.validateSvg(variants[variantKey]);
-      }
-    }
-    return spec;
-  }
-  function createEmptyTemplateSpec() {
-    var deps = getSpecDeps();
-    return normalizeSpec({
-      symbolId: deps.generateSymbolId("symbol"),
-      templateName: "\u7535\u6C14\u56FE\u5143",
-      title: "\u7535\u6C14\u56FE\u5143",
-      svg: '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80"></svg>',
-      size: {
-        width: 120,
-        height: 80
-      },
-      device: {},
-      ports: [],
-      labels: [],
-      schema: {},
-      data: {},
-      variantField: "",
-      svgVariants: {},
-      variantLayouts: {}
-    });
-  }
-  function buildInstanceSpec(instanceData, template, sizeOverride) {
-    var deps = getSpecDeps();
-    template = template != null ? normalizeSpec(deps.cloneJson(template)) : createEmptyTemplateSpec();
-    var mergedData = deps.deepMerge(
-      buildEmptyValueFromSchema(template.schema),
-      instanceData
-    );
-    var spec = deps.cloneJson(template);
-    var nameValue = getValueByPath(mergedData, "name") || getValueByPath(mergedData, "device.name");
-    var codeValue = getValueByPath(mergedData, "code") || getValueByPath(mergedData, "device.code");
-    var powerValue = getValueByPath(mergedData, "power") || getValueByPath(mergedData, "device.power");
-    var modeValue = getValueByPath(mergedData, "mode") || getValueByPath(mergedData, "device.mode");
-    var titleValue = getValueByPath(mergedData, "title");
-    var variantKey;
-    var layout;
-    spec.data = mergedData;
-    spec.symbolId = template.symbolId;
-    spec.instanceId = deps.generateInstanceId();
-    spec.title = deps.trim(titleValue) || deps.trim(nameValue) || template.title;
-    spec.size = {
-      width: Math.max(
-        20,
-        deps.toInt(
-          sizeOverride != null ? sizeOverride.width : null,
-          template.size.width
-        )
-      ),
-      height: Math.max(
-        20,
-        deps.toInt(
-          sizeOverride != null ? sizeOverride.height : null,
-          template.size.height
-        )
-      )
-    };
-    spec.device.name = deps.trim(nameValue);
-    spec.device.code = deps.trim(codeValue);
-    spec.device.power = deps.trim(powerValue);
-    spec.device.mode = deps.normalizeMode(modeValue);
-    variantKey = getActiveVariantKey(spec);
-    layout = getVariantLayout(template, variantKey);
-    spec.ports = layout.ports;
-    spec.labels = buildResolvedLabels(layout.labels, mergedData, getValueByPath);
-    return normalizeSpec(spec);
-  }
-  function buildResolvedLabels2(labels, instance) {
-    return buildResolvedLabels(labels, instance, getValueByPath);
-  }
-  function buildSchemaFromFields2(fields) {
-    var deps = getSpecDeps();
-    return buildSchemaFromFields(fields, deps.nextItemId);
-  }
-  function flattenSchemaFields2(schema, prefix, result) {
-    var deps = getSpecDeps();
-    return flattenSchemaFields(schema, prefix, result, deps.nextItemId);
-  }
-  function getDefaultSchemaFields2() {
-    var deps = getSpecDeps();
-    return getDefaultSchemaFields(deps.nextItemId);
-  }
-  function normalizeSchemaField2(raw) {
-    var deps = getSpecDeps();
-    return normalizeSchemaField(raw, deps.nextItemId);
-  }
-  var specDomainApi = {
-    buildEmptyValueFromSchema,
-    buildInstanceSpec,
-    buildPortLayout,
-    buildResolvedLabels: buildResolvedLabels2,
-    buildSchemaFromFields: buildSchemaFromFields2,
-    createEmptyTemplateSpec,
-    flattenSchemaFields: flattenSchemaFields2,
-    getActiveSvg,
-    getActiveVariantKey,
-    getDefaultSchemaFields: getDefaultSchemaFields2,
-    getValueByPath,
-    getVariantLayout,
-    hasSchemaPath,
-    isSchemaLeafDescriptor,
-    isValidFieldPath,
-    normalizeEnumOptions,
-    normalizeLabelAlign,
-    normalizeLabelItem,
-    normalizeLabels,
-    normalizePortDirection,
-    normalizePortIoMode,
-    normalizePortLayout,
-    normalizePortMarker,
-    normalizePortPoint,
-    normalizeSchemaField: normalizeSchemaField2,
-    normalizeSchemaType,
-    normalizeSpec,
-    normalizeVariantLayouts,
-    parsePortLayout,
-    serializePortLayout,
-    setValueByPath,
-    toStyleImageUri,
-    toSvgDataUri
-  };
-
-  // src/main/webapp/plugins/electricalSymbols/runtime/connectionConstraints.js
-  function getConstraintDeps() {
-    var app = getApp();
-    var ctx = app.ctx;
-    return {
-      ctx,
-      trim,
-      clamp,
-      parsePortLayout: specDomainApi.parsePortLayout,
-      getAttr,
-      buildPortLayout: specDomainApi.buildPortLayout,
-      findPortHostRoot,
-      normalizePortDirection: specDomainApi.normalizePortDirection,
-      normalizePortIoMode: specDomainApi.normalizePortIoMode,
-      isDrawingFrame,
-      isCabinetSegment,
-      isCabinetGap,
-      findDrawingFrame: frameDomainApi.findDrawingFrame,
-      getCellAbsoluteGeometry: function(cell) {
-        return cabinetDomainApi.getCellAbsoluteGeometry(cell);
-      },
-      getPortAbsolutePosition: function(root, port) {
-        return cabinetDomainApi.getPortAbsolutePosition(root, port);
-      }
-    };
-  }
-  function getConstraintRuntime() {
-    var deps = getConstraintDeps();
-    var ctx = deps.ctx;
-    var graph = ctx.graph;
-    return {
-      deps,
-      graph,
-      model: ctx.model,
-      state: ctx.state,
-      oldGetAllConnectionConstraints: graph.getAllConnectionConstraints,
-      oldSetConnectionConstraint: graph.setConnectionConstraint,
-      oldValidateConnection: graph.connectionHandler.validateConnection
-    };
-  }
-  function getElectricalConstraints(cell) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var root = deps.findPortHostRoot(cell);
-    var layout;
-    var constraints = [];
-    var i;
-    if (root == null) {
-      return null;
-    }
-    layout = deps.buildPortLayout(
-      { ports: deps.parsePortLayout(deps.getAttr(root, "portsJson")) },
-      deps.parsePortLayout(deps.getAttr(root, "portLayout"))
-    );
-    for (i = 0; i < layout.length; i++) {
-      var point = layout[i];
-      constraints.push(
-        new mxConnectionConstraint(
-          new mxPoint(point.x, point.y),
-          false,
-          point.id || "port:" + i
-        )
-      );
-    }
-    return constraints;
-  }
-  function getPortMetaByConstraint(root, constraint) {
-    var deps = getConstraintRuntime().deps;
-    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
-    var name = constraint != null ? deps.trim(constraint.name) : "";
-    var i;
-    for (i = 0; i < ports.length; i++) {
-      if (deps.trim(ports[i].id) == name) {
-        return ports[i];
-      }
-    }
-    return null;
-  }
-  function getPortMetaById(root, portId) {
-    var deps = getConstraintRuntime().deps;
-    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
-    var target = deps.trim(portId);
-    var i;
-    for (i = 0; i < ports.length; i++) {
-      if (deps.trim(ports[i].id) == target) {
-        return ports[i];
-      }
-    }
-    return null;
-  }
-  function mapPortDirectionToConstraint(direction) {
-    var normalizePortDirection2 = getConstraintRuntime().deps.normalizePortDirection;
-    switch (normalizePortDirection2(direction)) {
-      case "left":
-        return "west";
-      case "right":
-        return "east";
-      case "up":
-        return "north";
-      case "down":
-        return "south";
-      default:
-        return "";
-    }
-  }
-  function validatePortIoMode(sourcePort, targetPort) {
-    var normalizePortIoMode2 = getConstraintRuntime().deps.normalizePortIoMode;
-    if (sourcePort != null && normalizePortIoMode2(sourcePort.ioMode) == "in") {
-      return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u5165\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u8D77\u70B9";
-    }
-    if (targetPort != null && normalizePortIoMode2(targetPort.ioMode) == "out") {
-      return "\u8BE5\u7AEF\u5B50\u4EC5\u5141\u8BB8\u63A5\u51FA\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u8FDE\u7EBF\u7EC8\u70B9";
-    }
-    return null;
-  }
-  function applyNativeConnectionConstraint(edge, terminal, source, constraint) {
-    var runtime = getConstraintRuntime();
-    runtime.oldSetConnectionConstraint.call(
-      runtime.graph,
-      edge,
-      terminal,
-      source,
-      constraint
-    );
-  }
-  function isMovableConnectedTerminal(cell) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    return cell != null && model.isVertex(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isCabinetGap(cell);
-  }
-  function clampCellGeometryToFrame(geometry, frame) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    var frameGeometry = model.getGeometry(frame);
-    var nextGeometry = geometry.clone();
-    var padding = 12;
-    var minX = padding;
-    var minY = padding;
-    var maxX = Math.max(minX, frameGeometry.width - geometry.width - padding);
-    var maxY = Math.max(minY, frameGeometry.height - geometry.height - padding);
-    nextGeometry.x = deps.clamp(nextGeometry.x, minX, maxX);
-    nextGeometry.y = deps.clamp(nextGeometry.y, minY, maxY);
-    return nextGeometry;
-  }
-  function moveCellToFrameByDelta(cell, targetFrame, deltaX, deltaY) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    if (!isMovableConnectedTerminal(cell) || targetFrame == null) {
-      return;
-    }
-    var geometry = model.getGeometry(cell);
-    if (geometry == null) {
-      return;
-    }
-    var currentFrame = deps.findDrawingFrame(cell);
-    var absolute = deps.getCellAbsoluteGeometry(cell);
-    var targetFrameGeometry = model.getGeometry(targetFrame);
-    var nextGeometry = geometry.clone();
-    var nextAbsoluteX = absolute.x + deltaX;
-    var nextAbsoluteY = absolute.y + deltaY;
-    if (currentFrame != targetFrame) {
-      model.add(targetFrame, cell);
-    }
-    nextGeometry.x = nextAbsoluteX - targetFrameGeometry.x;
-    nextGeometry.y = nextAbsoluteY - targetFrameGeometry.y;
-    nextGeometry = clampCellGeometryToFrame(nextGeometry, targetFrame);
-    model.setGeometry(cell, nextGeometry);
-  }
-  function collectConnectedMovableGroup(startCell) {
-    var model = getConstraintRuntime().model;
-    var queue = [];
-    var vertexMap = {};
-    var edgeMap = {};
-    var vertices = [];
-    var edges = [];
-    var i;
-    if (!isMovableConnectedTerminal(startCell)) {
-      return {
-        vertices,
-        edges
-      };
-    }
-    queue.push(startCell);
-    while (queue.length > 0) {
-      var cell = queue.shift();
-      var cellId = mxObjectIdentity.get(cell);
-      if (vertexMap[cellId]) {
-        continue;
-      }
-      vertexMap[cellId] = true;
-      vertices.push(cell);
-      for (i = 0; i < model.getEdgeCount(cell); i++) {
-        var edge = model.getEdgeAt(cell, i);
-        var edgeId = mxObjectIdentity.get(edge);
-        var source = model.getTerminal(edge, true);
-        var target = model.getTerminal(edge, false);
-        var other = source == cell ? target : source;
-        if (!edgeMap[edgeId]) {
-          edgeMap[edgeId] = true;
-          edges.push(edge);
-        }
-        if (isMovableConnectedTerminal(other)) {
-          queue.push(other);
-        }
-      }
-    }
-    return {
-      vertices,
-      edges
-    };
-  }
-  function getCellsAbsoluteBounds(cells) {
-    var getCellAbsoluteGeometry2 = getConstraintRuntime().deps.getCellAbsoluteGeometry;
-    var bounds = null;
-    var i;
-    for (i = 0; i < cells.length; i++) {
-      var geometry = getCellAbsoluteGeometry2(cells[i]);
-      if (bounds == null) {
-        bounds = {
-          x: geometry.x,
-          y: geometry.y,
-          width: geometry.width,
-          height: geometry.height
-        };
-      } else {
-        var minX = Math.min(bounds.x, geometry.x);
-        var minY = Math.min(bounds.y, geometry.y);
-        var maxX = Math.max(
-          bounds.x + bounds.width,
-          geometry.x + geometry.width
-        );
-        var maxY = Math.max(
-          bounds.y + bounds.height,
-          geometry.y + geometry.height
-        );
-        bounds.x = minX;
-        bounds.y = minY;
-        bounds.width = maxX - minX;
-        bounds.height = maxY - minY;
-      }
-    }
-    return bounds;
-  }
-  function adjustGroupDeltaToFrame(vertices, targetFrame, deltaX, deltaY) {
-    var model = getConstraintRuntime().model;
-    var bounds = getCellsAbsoluteBounds(vertices);
-    var frameGeometry = model.getGeometry(targetFrame);
-    var padding = 12;
-    if (bounds == null || frameGeometry == null) {
-      return {
-        x: deltaX,
-        y: deltaY
-      };
-    }
-    var nextX = bounds.x + deltaX;
-    var nextY = bounds.y + deltaY;
-    var minX = frameGeometry.x + padding;
-    var minY = frameGeometry.y + padding;
-    var maxX = frameGeometry.x + frameGeometry.width - padding;
-    var maxY = frameGeometry.y + frameGeometry.height - padding;
-    if (nextX < minX) {
-      deltaX += minX - nextX;
-      nextX = minX;
-    }
-    if (nextY < minY) {
-      deltaY += minY - nextY;
-      nextY = minY;
-    }
-    if (nextX + bounds.width > maxX) {
-      deltaX -= nextX + bounds.width - maxX;
-    }
-    if (nextY + bounds.height > maxY) {
-      deltaY -= nextY + bounds.height - maxY;
-    }
-    return {
-      x: deltaX,
-      y: deltaY
-    };
-  }
-  function shiftEdgePointsByDelta(edge, deltaX, deltaY) {
-    var model = getConstraintRuntime().model;
-    var geometry = model.getGeometry(edge);
-    var points;
-    var i;
-    if (geometry == null || geometry.points == null || geometry.points.length == 0) {
-      return;
-    }
-    geometry = geometry.clone();
-    points = [];
-    for (i = 0; i < geometry.points.length; i++) {
-      points.push(
-        new mxPoint(
-          geometry.points[i].x + deltaX,
-          geometry.points[i].y + deltaY
-        )
-      );
-    }
-    geometry.points = points;
-    model.setGeometry(edge, geometry);
-  }
-  function clearEdgePoints(edge) {
-    var model = getConstraintRuntime().model;
-    var geometry = model.getGeometry(edge);
-    if (geometry != null && geometry.points != null && geometry.points.length > 0) {
-      geometry = geometry.clone();
-      geometry.points = null;
-      model.setGeometry(edge, geometry);
-    }
-  }
-  function moveConnectedGroupToCabinetPort(edge, source, oldRoot, oldPortId, newRoot, newPort) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var model = runtime.model;
-    var state = runtime.state;
-    var otherTerminal = model.getTerminal(edge, !source);
-    var oldPort = getPortMetaById(oldRoot, oldPortId);
-    var targetFrame = deps.findDrawingFrame(newRoot);
-    var group;
-    var delta;
-    var movedMap = {};
-    var i;
-    if (state.updatingModel || !deps.isCabinetSegment(oldRoot) || !deps.isCabinetSegment(newRoot) || oldPort == null || newPort == null || !isMovableConnectedTerminal(otherTerminal) || targetFrame == null) {
-      return;
-    }
-    group = collectConnectedMovableGroup(otherTerminal);
-    if (group.vertices.length == 0) {
-      return;
-    }
-    delta = adjustGroupDeltaToFrame(
-      group.vertices,
-      targetFrame,
-      deps.getPortAbsolutePosition(newRoot, newPort).x - deps.getPortAbsolutePosition(oldRoot, oldPort).x,
-      deps.getPortAbsolutePosition(newRoot, newPort).y - deps.getPortAbsolutePosition(oldRoot, oldPort).y
-    );
-    if (Math.abs(delta.x) < 1e-4 && Math.abs(delta.y) < 1e-4) {
-      return;
-    }
-    state.updatingModel = true;
-    model.beginUpdate();
-    try {
-      for (i = 0; i < group.vertices.length; i++) {
-        var vertex = group.vertices[i];
-        var key = mxObjectIdentity.get(vertex);
-        if (!movedMap[key]) {
-          movedMap[key] = true;
-          moveCellToFrameByDelta(vertex, targetFrame, delta.x, delta.y);
-        }
-      }
-      for (i = 0; i < group.edges.length; i++) {
-        var groupEdge = group.edges[i];
-        var sourceTerminal = model.getTerminal(groupEdge, true);
-        var targetTerminal = model.getTerminal(groupEdge, false);
-        var sourceMoved = movedMap[mxObjectIdentity.get(sourceTerminal)] === true;
-        var targetMoved = movedMap[mxObjectIdentity.get(targetTerminal)] === true;
-        if (sourceMoved && targetMoved) {
-          shiftEdgePointsByDelta(groupEdge, delta.x, delta.y);
-        } else {
-          clearEdgePoints(groupEdge);
-        }
-      }
-    } finally {
-      model.endUpdate();
-      state.updatingModel = false;
-    }
-  }
-  function installGraphBehavior(extraDeps) {
-    var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
-    var graph = runtime.graph;
-    var model = runtime.model;
-    graph.getAllConnectionConstraints = function(terminal, source) {
-      var root = deps.findPortHostRoot(terminal != null ? terminal.cell : null);
-      if (root != null) {
-        return getElectricalConstraints(root);
-      }
-      return runtime.oldGetAllConnectionConstraints.apply(this, arguments);
-    };
-    graph.setConnectionConstraint = function(edge, terminal, source, constraint) {
-      if (edge == null) {
-        runtime.oldSetConnectionConstraint.apply(this, arguments);
-        return;
-      }
-      var previousStyle = model.getStyle(edge) || "";
-      var previousPortId = deps.trim(
-        mxUtils.getValue(
-          previousStyle,
-          source ? "sourcePortId" : "targetPortId",
-          ""
-        )
-      );
-      var previousRoot = deps.findPortHostRoot(model.getTerminal(edge, source));
-      runtime.oldSetConnectionConstraint.apply(this, arguments);
-      var root = deps.findPortHostRoot(terminal);
-      if (root == null || edge == null) {
-        return;
-      }
-      var port = getPortMetaByConstraint(root, constraint);
-      extraDeps.applyEdgePortConstraintMetadata(edge, root, source, constraint);
-      if (previousRoot != null && root != null && previousPortId.length > 0 && port != null && deps.trim(port.id).length > 0 && (previousRoot != root || previousPortId != deps.trim(port.id))) {
-        moveConnectedGroupToCabinetPort(
-          edge,
-          source,
-          previousRoot,
-          previousPortId,
-          root,
-          port
-        );
-      }
-    };
-    graph.connectionHandler.validateConnection = function(source, target) {
-      var error = runtime.oldValidateConnection.apply(this, arguments);
-      var sourceRoot;
-      var targetRoot;
-      var sourcePort;
-      var targetPort;
-      if (error != null) {
-        extraDeps.setCanvasStatus(error);
-        return error;
-      }
-      sourceRoot = deps.findPortHostRoot(source);
-      targetRoot = deps.findPortHostRoot(target);
-      if (sourceRoot == null && targetRoot == null) {
-        return null;
-      }
-      sourcePort = getPortMetaByConstraint(sourceRoot, this.sourceConstraint);
-      targetPort = getPortMetaByConstraint(
-        targetRoot,
-        this.constraintHandler != null ? this.constraintHandler.currentConstraint : null
-      );
-      error = validatePortIoMode(sourcePort, targetPort);
-      extraDeps.setCanvasStatus(error);
-      return error;
-    };
-    graph.connectionHandler.addListener(mxEvent.RESET, function() {
-      extraDeps.setCanvasStatus("");
-    });
-    graph.connectionHandler.addListener(mxEvent.CONNECT, function() {
-      extraDeps.setCanvasStatus("");
-    });
-  }
-  var connectionConstraintsApi = {
-    applyNativeConnectionConstraint,
-    clearEdgePoints,
-    getElectricalConstraints,
-    getPortMetaByConstraint,
-    getPortMetaById,
-    isMovableConnectedTerminal,
-    installGraphBehavior,
-    mapPortDirectionToConstraint,
-    moveCellToFrameByDelta,
-    moveConnectedGroupToCabinetPort
-  };
-
-  // src/main/webapp/plugins/electricalSymbols/domain/snapshotCore.js
   function getCellStableId(cell) {
     return trim(
       cell != null ? cell.id != null ? cell.id : mxObjectIdentity.get(cell) : ""
@@ -3105,6 +1992,7 @@
     var width = 120;
     var height = 26;
     var align = "center";
+    var boxed = false;
     if (isObject(raw)) {
       text = trim(raw.text || raw.label) || fallbackText;
       id = trim(raw.id || raw.key || raw.name) || fallbackId;
@@ -3114,6 +2002,7 @@
       width = Math.max(40, toInt(raw.width, width));
       height = Math.max(20, toInt(raw.height, height));
       align = normalizeLabelAlign(raw.align);
+      boxed = raw.boxed === true || raw.boxed === 1 || raw.boxed === "1";
     } else {
       text = trim(raw) || fallbackText;
     }
@@ -3125,7 +2014,8 @@
       y: clamp(y, -1.5, 2.5),
       width,
       height,
-      align
+      align,
+      boxed
     };
   }
   function normalizeLabels(rawLabels) {
@@ -3139,13 +2029,36 @@
     }
     return labels;
   }
+  function resolveBindingText(binding, instance, getValueByPath2) {
+    var normalizedBinding = trim(binding);
+    var hasTemplate;
+    if (normalizedBinding.length == 0 || typeof getValueByPath2 !== "function") {
+      return null;
+    }
+    hasTemplate = /\{\{\s*[^{}]+?\s*\}\}/.test(normalizedBinding);
+    if (hasTemplate) {
+      return normalizedBinding.replace(
+        /\{\{\s*([^{}]+?)\s*\}\}/g,
+        function(_placeholder, fieldPath) {
+          var value2 = getValueByPath2(instance, trim(fieldPath));
+          return value2 != null ? String(value2) : "";
+        }
+      );
+    }
+    var value = getValueByPath2(instance, normalizedBinding);
+    return value != null ? String(value) : "";
+  }
   function buildResolvedLabels(labels, instance, getValueByPath2) {
     var result = [];
     var i;
     for (i = 0; i < labels.length; i++) {
       var item = cloneJson(labels[i]);
-      var value = typeof getValueByPath2 === "function" ? getValueByPath2(instance, item.binding) : null;
-      item.text = trim(item.binding).length > 0 ? value != null ? String(value) : "" : item.text || "";
+      var resolvedText = resolveBindingText(
+        item.binding,
+        instance,
+        getValueByPath2
+      );
+      item.text = resolvedText != null ? resolvedText : item.text || "";
       result.push(item);
     }
     return result;
@@ -3255,10 +2168,35 @@
       labels: normalizeLabels(raw.labels),
       schema,
       data,
+      // Generated E&I symbols may grow to fit text, but must never be restored
+      // smaller than their library definition. Preserve the applied scale in
+      // snapshots so the host can enforce and regression-test that invariant.
+      layoutScale: Math.max(0.4, Number(raw.layoutScale) || 1),
       variantField,
       svgVariants: {},
       variantLayouts: normalizeVariantLayouts(raw.variantLayouts)
     };
+    if (deps.trim(raw.instanceId).length > 0) {
+      spec.instanceId = deps.trim(raw.instanceId);
+    }
+    if (deps.trim(raw.canvasCellId).length > 0) {
+      spec.canvasCellId = deps.trim(raw.canvasCellId);
+    }
+    if (deps.trim(raw.businessRole).length > 0) {
+      spec.businessRole = deps.trim(raw.businessRole);
+    }
+    if (Array.isArray(raw.businessBindings)) {
+      spec.businessBindings = deps.cloneJson(raw.businessBindings);
+    }
+    if (raw.businessBindingVersion != null) {
+      spec.businessBindingVersion = raw.businessBindingVersion;
+    }
+    if (deps.isObject(raw.libraryCategory)) {
+      spec.libraryCategory = deps.cloneJson(raw.libraryCategory);
+    }
+    if (deps.isObject(raw.visualBounds)) {
+      spec.visualBounds = deps.cloneJson(raw.visualBounds);
+    }
     for (var variantKey in variants) {
       if (variants.hasOwnProperty(variantKey) && deps.trim(variantKey).length > 0 && variants[variantKey] != null && deps.trim(variants[variantKey]).length > 0) {
         spec.svgVariants[deps.trim(variantKey)] = deps.validateSvg(variants[variantKey]);
@@ -3388,7 +2326,6 @@
   };
 
   // runtime/portSwapMode.js
-  // src/main/webapp/plugins/electricalSymbols/runtime/portSwapMode.js
   function getPortSwapDeps() {
     var app = getApp();
     var ctx = app.ctx;
@@ -3399,8 +2336,13 @@
       parsePortLayout: specDomainApi.parsePortLayout,
       getAttr,
       findCabinetSegments: cabinetDomainApi.findCabinetSegments,
+      getSegmentBlocks: cabinetDomainApi.getSegmentBlocks,
+      extractCabinetModel: cabinetDomainApi.extractCabinetModel,
+      relayoutCabinetByModel: cabinetDomainApi.relayoutCabinetByModel,
       findPortHostRoot,
+      isCabinetBlock,
       isCabinetSegment,
+      isCabinetSwitchLink,
       isMovableConnectedTerminal: connectionConstraintsApi.isMovableConnectedTerminal,
       closeCabinetBlockDialog: function() {
         return cabinetBlockDialogApi.closeCabinetBlockDialog();
@@ -3441,8 +2383,8 @@
     var targetTerminal = model.getTerminal(edge, false);
     var sourceRoot = deps.findPortHostRoot(sourceTerminal);
     var targetRoot = deps.findPortHostRoot(targetTerminal);
-    var sourceCabinet = deps.isCabinetSegment(sourceRoot);
-    var targetCabinet = deps.isCabinetSegment(targetRoot);
+    var sourceCabinet = deps.isCabinetSegment(sourceRoot) || deps.isCabinetBlock(sourceRoot);
+    var targetCabinet = deps.isCabinetSegment(targetRoot) || deps.isCabinetBlock(targetRoot);
     if (sourceCabinet == targetCabinet) {
       return null;
     }
@@ -3506,14 +2448,14 @@
       deps.setCanvasStatus("");
     }
   }
-  function renderPortSwapOverlay(session) {
+  function renderPortSwapOverlay(session2) {
     var runtime = getPortSwapRuntime();
     var deps = runtime.deps;
     var graph = runtime.graph;
     var state = runtime.state;
     var container = document.createElement("div");
     var segments = deps.findCabinetSegments(
-      deps.trim(deps.getAttr(session.cabinetRoot, "logicalCabinetId"))
+      deps.trim(deps.getAttr(session2.cabinetRoot, "logicalCabinetId"))
     );
     var i;
     var j;
@@ -3526,41 +2468,49 @@
     container.style.pointerEvents = "none";
     container.style.zIndex = "3";
     for (i = 0; i < segments.length; i++) {
-      var stateView = graph.view.getState(segments[i]);
-      var ports = deps.parsePortLayout(deps.getAttr(segments[i], "portsJson"));
-      if (stateView == null) {
-        continue;
+      var hosts = deps.getSegmentBlocks(segments[i]);
+      if (hosts.length == 0) {
+        hosts = [segments[i]];
       }
-      for (j = 0; j < ports.length; j++) {
-        var marker = document.createElement("div");
-        var portId = deps.trim(ports[j].id);
-        var selected = deps.trim(ports[j].id) == deps.trim(session.portId);
-        var occupied = !selected && isCabinetPortOccupied(segments[i], portId, session.edge);
-        marker.style.position = "absolute";
-        marker.style.width = "14px";
-        marker.style.height = "14px";
-        marker.style.borderRadius = "50%";
-        marker.style.boxSizing = "border-box";
-        marker.style.border = selected ? "2px solid #1a73e8" : occupied ? "2px solid #94a3b8" : "2px solid #16a34a";
-        marker.style.background = selected ? "rgba(26,115,232,0.15)" : occupied ? "rgba(148,163,184,0.18)" : "rgba(22,163,74,0.18)";
-        marker.style.pointerEvents = "auto";
-        marker.style.cursor = selected || occupied ? "default" : "pointer";
-        marker.style.left = Math.round(stateView.x + ports[j].x * stateView.width - 7) + "px";
-        marker.style.top = Math.round(stateView.y + ports[j].y * stateView.height - 7) + "px";
-        marker.title = selected ? "\u5F53\u524D\u6302\u70B9" : occupied ? "\u8BE5\u6302\u70B9\u5DF2\u8FDE\u63A5\u5176\u4ED6\u8BBE\u5907\uFF0C\u4E0D\u80FD\u518D\u9009\u62E9" : "\u70B9\u51FB\u5207\u6362\u5230\u8BE5\u6302\u70B9";
-        if (!selected && !occupied) {
-          mxEvent.addListener(
-            marker,
-            "click",
-            /* @__PURE__ */ function(root, port) {
-              return function(evt) {
-                mxEvent.consume(evt);
-                commitPortSwap(state.portSwapSession, root, port);
-              };
-            }(segments[i], deps.cloneJson(ports[j]))
-          );
+      for (j = 0; j < hosts.length; j++) {
+        var host = hosts[j];
+        var stateView = graph.view.getState(host);
+        var ports = deps.parsePortLayout(deps.getAttr(host, "portsJson"));
+        var k;
+        if (stateView == null) {
+          continue;
         }
-        container.appendChild(marker);
+        for (k = 0; k < ports.length; k++) {
+          var marker = document.createElement("div");
+          var portId = deps.trim(ports[k].id);
+          var selected = portId == deps.trim(session2.portId);
+          var occupied = !selected && isCabinetPortOccupied(host, portId, session2.edge);
+          marker.style.position = "absolute";
+          marker.style.width = "14px";
+          marker.style.height = "14px";
+          marker.style.borderRadius = "50%";
+          marker.style.boxSizing = "border-box";
+          marker.style.border = selected ? "2px solid #1a73e8" : occupied ? "2px solid #94a3b8" : "2px solid #16a34a";
+          marker.style.background = selected ? "rgba(26,115,232,0.15)" : occupied ? "rgba(148,163,184,0.18)" : "rgba(22,163,74,0.18)";
+          marker.style.pointerEvents = "auto";
+          marker.style.cursor = selected || occupied ? "default" : "pointer";
+          marker.style.left = Math.round(stateView.x + ports[k].x * stateView.width - 7) + "px";
+          marker.style.top = Math.round(stateView.y + ports[k].y * stateView.height - 7) + "px";
+          marker.title = selected ? "\u5F53\u524D\u6302\u70B9" : occupied ? "\u8BE5\u6302\u70B9\u5DF2\u8FDE\u63A5\u5176\u4ED6\u8BBE\u5907\uFF0C\u4E0D\u80FD\u518D\u9009\u62E9" : "\u70B9\u51FB\u5207\u6362\u5230\u8BE5\u6302\u70B9";
+          if (!selected && !occupied) {
+            mxEvent.addListener(
+              marker,
+              "click",
+              /* @__PURE__ */ (function(root, port) {
+                return function(evt) {
+                  mxEvent.consume(evt);
+                  commitPortSwap(state.portSwapSession, root, port);
+                };
+              })(host, deps.cloneJson(ports[k]))
+            );
+          }
+          container.appendChild(marker);
+        }
       }
     }
     graph.container.appendChild(container);
@@ -3608,7 +2558,7 @@
         var sessionLogicalId = state.portSwapSession.cabinetRoot != null ? deps.trim(
           deps.getAttr(state.portSwapSession.cabinetRoot, "logicalCabinetId")
         ) : "";
-        if (deps.isCabinetSegment(portRoot) && deps.trim(deps.getAttr(portRoot, "logicalCabinetId")) == sessionLogicalId) {
+        if ((deps.isCabinetSegment(portRoot) || deps.isCabinetBlock(portRoot)) && deps.trim(deps.getAttr(portRoot, "logicalCabinetId")) == sessionLogicalId) {
           var nextPort = getNearestCabinetPortFromClick(portRoot, mouseEvent);
           if (nextPort != null) {
             commitPortSwap(state.portSwapSession, portRoot, nextPort);
@@ -3675,15 +2625,62 @@
     );
     model.setStyle(edge, style);
   }
-  function commitPortSwap(session, newRoot, newPort) {
+  function buildReboundCabinetModel(edge, oldRoot, newRoot, oldPortId, newPortId) {
+    var runtime = getPortSwapRuntime();
+    var deps = runtime.deps;
+    if (!deps.isCabinetSwitchLink(edge) || !(deps.isCabinetBlock(oldRoot) || deps.isCabinetSegment(oldRoot)) || !(deps.isCabinetBlock(newRoot) || deps.isCabinetSegment(newRoot))) {
+      return null;
+    }
+    var oldLogicalId = deps.trim(deps.getAttr(oldRoot, "logicalCabinetId"));
+    var newLogicalId = deps.trim(deps.getAttr(newRoot, "logicalCabinetId"));
+    if (oldLogicalId.length == 0 || oldLogicalId != newLogicalId) {
+      return { error: "\u53EA\u80FD\u5728\u540C\u4E00\u4E2A\u914D\u7535\u67DC\u5185\u66F4\u6362\u5F00\u5173\u6302\u70B9" };
+    }
+    var cabinetModel = deps.extractCabinetModel(oldRoot);
+    var oldBlockId = deps.trim(deps.getAttr(oldRoot, "blockId"));
+    var newBlockId = deps.trim(deps.getAttr(newRoot, "blockId"));
+    var oldBlock = null;
+    var newBlock = null;
+    var i;
+    for (i = 0; i < cabinetModel.blocks.length; i++) {
+      if (deps.trim(cabinetModel.blocks[i].id) == oldBlockId || deps.trim(cabinetModel.blocks[i].portId) == deps.trim(oldPortId)) {
+        oldBlock = cabinetModel.blocks[i];
+      }
+      if (deps.trim(cabinetModel.blocks[i].id) == newBlockId || deps.trim(cabinetModel.blocks[i].portId) == deps.trim(newPortId)) {
+        newBlock = cabinetModel.blocks[i];
+      }
+    }
+    if (oldBlock == null || newBlock == null) {
+      return { error: "\u76EE\u6807\u6302\u70B9\u4E0D\u5C5E\u4E8E\u5F53\u524D\u914D\u7535\u67DC\u6A21\u578B" };
+    }
+    if (deps.trim(oldBlock.switchInstanceId).length == 0) {
+      return { error: "\u5F53\u524D\u67DC\u5757\u6CA1\u6709\u7ED1\u5B9A\u53EF\u79FB\u52A8\u7684\u5F00\u5173" };
+    }
+    if (deps.trim(newBlock.switchInstanceId).length > 0) {
+      return { error: "\u76EE\u6807\u6302\u70B9\u5DF2\u7ECF\u7ED1\u5B9A\u5176\u4ED6\u5F00\u5173" };
+    }
+    newBlock.switchInstanceId = deps.trim(oldBlock.switchInstanceId);
+    newBlock.switchSymbolId = deps.trim(oldBlock.switchSymbolId);
+    oldBlock.switchInstanceId = "";
+    oldBlock.switchSymbolId = "";
+    return { cabinetModel };
+  }
+  function commitPortSwap(session2, newRoot, newPort) {
     var runtime = getPortSwapRuntime();
     var deps = runtime.deps;
     var model = runtime.model;
     var state = runtime.state;
-    var edge = session.edge;
-    var source = !!session.source;
-    var oldRoot = session.cabinetRoot;
-    var oldPortId = deps.trim(session.portId);
+    var edge = session2.edge;
+    var source = !!session2.source;
+    var oldRoot = session2.cabinetRoot;
+    var oldPortId = deps.trim(session2.portId);
+    var rebound = buildReboundCabinetModel(
+      edge,
+      oldRoot,
+      newRoot,
+      oldPortId,
+      newPort != null ? newPort.id : ""
+    );
     var constraint = new mxConnectionConstraint(
       new mxPoint(newPort.x, newPort.y),
       false,
@@ -3696,6 +2693,11 @@
     if (isCabinetPortOccupied(newRoot, newPort.id, edge)) {
       deps.showStatus("\u76EE\u6807\u6302\u70B9\u5DF2\u8FDE\u63A5\u5176\u4ED6\u8BBE\u5907\uFF0C\u4E0D\u80FD\u91CD\u590D\u9009\u62E9", true);
       deps.setCanvasStatus("\u76EE\u6807\u6302\u70B9\u5DF2\u8FDE\u63A5\u5176\u4ED6\u8BBE\u5907\uFF0C\u4E0D\u80FD\u91CD\u590D\u9009\u62E9");
+      return;
+    }
+    if (rebound != null && rebound.error != null) {
+      deps.showStatus(rebound.error, true);
+      deps.setCanvasStatus(rebound.error);
       return;
     }
     state.updatingModel = true;
@@ -3717,6 +2719,9 @@
       newRoot,
       newPort
     );
+    if (rebound != null && rebound.cabinetModel != null) {
+      deps.relayoutCabinetByModel(rebound.cabinetModel);
+    }
     exitPortSwapMode();
     deps.showStatus("\u5DF2\u66F4\u6362\u6302\u70B9", false);
     deps.setCanvasStatus("\u5DF2\u66F4\u6362\u6302\u70B9");
@@ -3760,7 +2765,7 @@
     installGraphClickBehavior
   };
 
-  // src/main/webapp/plugins/electricalSymbols/runtime/composeMode.js
+  // runtime/composeMode.js
   function getComposeDeps() {
     var app = getApp();
     var ctx = app.ctx;
@@ -3932,23 +2937,23 @@
     var deps = runtime.deps;
     var graph = runtime.graph;
     var state = runtime.state;
-    var session = state.instanceComposeSession;
+    var session2 = state.instanceComposeSession;
     var root;
     var candidates;
     var matched = [];
     var attached;
     var i;
-    if (session == null) {
+    if (session2 == null) {
       return;
     }
-    root = session.root;
+    root = session2.root;
     if (root == null || root.parent == null) {
       exitInstanceComposeMode();
       return;
     }
-    candidates = collectComposableCellsInZone(root, session.zoneBounds);
+    candidates = collectComposableCellsInZone(root, session2.zoneBounds);
     for (i = 0; i < candidates.length; i++) {
-      if (!session.initialZoneCellIds[candidates[i].id]) {
+      if (!session2.initialZoneCellIds[candidates[i].id]) {
         matched.push(candidates[i]);
       }
     }
@@ -3966,15 +2971,15 @@
     deps.showStatus("\u5DF2\u7EC4\u5408\u5230\u5F53\u524D\u56FE\u5143\u5B9E\u4F8B", false);
     deps.setCanvasStatus("");
   }
-  function renderInstanceComposeOverlay(session) {
+  function renderInstanceComposeOverlay(session2) {
     var runtime = getComposeRuntime();
     var deps = runtime.deps;
     var graph = runtime.graph;
     var state = runtime.state;
     var containerRect = graph.container.getBoundingClientRect();
     var zone = getInstanceComposeZoneBounds(
-      session.root,
-      session.dragging ? session.dragCandidates : null
+      session2.root,
+      session2.dragging ? session2.dragCandidates : null
     );
     var scrollLeft = graph.container.scrollLeft || 0;
     var scrollTop = graph.container.scrollTop || 0;
@@ -3990,7 +2995,7 @@
     if (zone == null) {
       return;
     }
-    session.zoneBounds = zone;
+    session2.zoneBounds = zone;
     container.style.position = "fixed";
     container.style.left = Math.round(containerRect.left) + "px";
     container.style.top = Math.round(containerRect.top) + "px";
@@ -4115,16 +3120,16 @@
     var runtime = getComposeRuntime();
     var deps = runtime.deps;
     var state = runtime.state;
-    var session = state.instanceComposeSession;
+    var session2 = state.instanceComposeSession;
     var ownerRoot;
-    if (session == null || session.root == null || cell == null) {
+    if (session2 == null || session2.root == null || cell == null) {
       return false;
     }
-    if (cell == session.root) {
+    if (cell == session2.root) {
       return true;
     }
     ownerRoot = findOwningElectricalRoot(cell);
-    return ownerRoot == session.root && deps.isPluginInternalCell(cell);
+    return ownerRoot == session2.root && deps.isPluginInternalCell(cell);
   }
   function isLockedComposedChild(cell) {
     var runtime = getComposeRuntime();
@@ -4324,7 +3329,7 @@
     refreshInstanceComposeOverlay
   };
 
-  // src/main/webapp/plugins/electricalSymbols/application/selection.js
+  // application/selection.js
   function getSelectedCell() {
     return getApp().ctx.graph.getSelectionCell();
   }
@@ -4349,7 +3354,7 @@
     getSelectedRoot
   };
 
-  // src/main/webapp/plugins/electricalSymbols/domain/symbolCore.js
+  // domain/symbolCore.js
   function buildSymbolCoreDeps() {
     var app = getApp();
     return {
@@ -4403,7 +3408,7 @@
     makeRootStyle
   };
 
-  // src/main/webapp/plugins/electricalSymbols/domain/symbolGraph.js
+  // domain/symbolGraph.js
   function buildSymbolGraphDeps() {
     var app = getApp();
     var ctx = app.ctx;
@@ -4694,7 +3699,7 @@
     };
   }
 
-  // src/main/webapp/plugins/electricalSymbols/domain/symbol.js
+  // domain/symbol.js
   function getSymbolDomain() {
     return createSymbolDomain();
   }
@@ -4717,7 +3722,7 @@
     syncRoot
   };
 
-  // src/main/webapp/plugins/electricalSymbols/runtime/viewportVirtualization.js
+  // runtime/viewportVirtualization.js
   var DEBUG = true;
   function debugLog() {
     if (DEBUG && typeof console !== "undefined") {
@@ -5107,7 +4112,7 @@
     }, INIT_DELAY_MS);
   }
 
-  // src/main/webapp/plugins/electricalSymbols/application/commands.js
+  // application/commands.js
   function getDefaultParentChildren() {
     var app = getApp();
     var graph = app.ctx.graph;
@@ -5264,28 +4269,6 @@
     }
     showStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC", false);
     setCanvasStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC");
-  }
-  function insertCabinetBlock(blockCell, blockInit) {
-    var app = getApp();
-    var graph = app.ctx.graph;
-    var model = app.ctx.model;
-    var segments;
-    model.beginUpdate();
-    try {
-      segments = cabinetDomainApi.insertCabinetBlockAfter(blockCell, blockInit);
-    } finally {
-      model.endUpdate();
-    }
-    if (segments == null) {
-      showStatus("\u672A\u627E\u5230\u8981\u63D2\u5165\u7684\u4F4D\u7F6E", true);
-      return false;
-    }
-    if (segments.length > 0) {
-      graph.scrollCellToVisible(segments[0]);
-    }
-    showStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC\u5757", false);
-    setCanvasStatus("\u5DF2\u63D2\u5165\u914D\u7535\u67DC\u5757");
-    return true;
   }
   function bindCabinetSwitch(blockCell, spec) {
     var app = getApp();
@@ -5460,6 +4443,29 @@
       }
       model.beginUpdate();
       try {
+        var unboundBlocks = {};
+        for (i = 0; i < cells.length; i++) {
+          var boundBlock = cabinetDomainApi.findBoundCabinetBlockForSwitch(
+            cells[i]
+          );
+          if (boundBlock == null) {
+            continue;
+          }
+          var blockKey = isCabinetSegment(boundBlock) ? String(boundBlock.id) + ":" + String(getAttr(cells[i], "instanceId")) : boundBlock.id != null ? String(boundBlock.id) : String(i);
+          if (!unboundBlocks[blockKey]) {
+            unboundBlocks[blockKey] = true;
+            if (isCabinetSegment(boundBlock)) {
+              cabinetDomainApi.unbindSwitchFromCabinetSwitch(
+                boundBlock,
+                cells[i],
+                false,
+                false
+              );
+            } else {
+              cabinetDomainApi.unbindSwitchFromBlock(boundBlock, false, false);
+            }
+          }
+        }
         graph.cellsRemoved(toRemove);
       } finally {
         model.endUpdate();
@@ -5473,7 +4479,6 @@
     clearCurrentPage,
     forceDeleteSelection,
     insertCabinet,
-    insertCabinetBlock,
     bindCabinetSwitch,
     unbindCabinetSwitch,
     insertFrame,
@@ -5483,7 +4488,7 @@
     updateCabinetModel
   };
 
-  // src/main/webapp/plugins/electricalSymbols/ui/shared/buttonFactory.js
+  // ui/shared/buttonFactory.js
   function createPluginButton(label, fn) {
     var button = mxUtils.button(label, fn);
     button.className = "geBtn";
@@ -5492,7 +4497,7 @@
     return button;
   }
 
-  // src/main/webapp/plugins/electricalSymbols/ui/cabinetDialog.js
+  // ui/cabinetDialog.js
   function buildCabinetDialogDeps() {
     var app = getApp();
     return {
@@ -5789,7 +4794,7 @@
     openCabinetBlockDialog
   };
 
-  // src/main/webapp/plugins/electricalSymbols/domain/snapshotGraph.js
+  // domain/snapshotGraph.js
   function buildSnapshotDeps() {
     var app = getApp();
     var ctx = app.ctx;
@@ -5802,6 +4807,12 @@
       LABEL_KIND: ctx.constants.LABEL_KIND,
       FRAME_LABEL_KIND: ctx.constants.FRAME_LABEL_KIND,
       CABINET_BODY_KIND: ctx.constants.CABINET_BODY_KIND,
+      CABINET_BLOCK_KIND: ctx.constants.CABINET_BLOCK_KIND,
+      CABINET_SWITCH_LINK_KIND: ctx.constants.CABINET_SWITCH_LINK_KIND,
+      CABINET_BUSBAR_KIND: ctx.constants.CABINET_BUSBAR_KIND,
+      CABINET_NAME_LABEL_KIND: ctx.constants.CABINET_NAME_LABEL_KIND,
+      CABINET_LOCATION_LABEL_KIND: ctx.constants.CABINET_LOCATION_LABEL_KIND,
+      CABINET_DESIGNATION_LABEL_KIND: ctx.constants.CABINET_DESIGNATION_LABEL_KIND,
       CABINET_GAP_KIND: ctx.constants.CABINET_GAP_KIND,
       FRAME_MARGIN_RATIO: ctx.constants.FRAME_MARGIN_RATIO,
       trim,
@@ -5812,6 +4823,7 @@
       getAttr,
       uniqueStrings,
       isCabinetGap,
+      isCabinetBlock,
       isDrawingFrame,
       isCabinetSegment,
       isElectricalRoot,
@@ -5822,6 +4834,7 @@
       findFrameById: frameDomainApi.findFrameById,
       extractCabinetModel: cabinetDomainApi.extractCabinetModel,
       findCabinetSegments: cabinetDomainApi.findCabinetSegments,
+      getSegmentBlocks: cabinetDomainApi.getSegmentBlocks,
       getPortMetaById: connectionConstraintsApi.getPortMetaById,
       findDrawingFrame: frameDomainApi.findDrawingFrame,
       findPortHostRoot,
@@ -5839,6 +4852,7 @@
       createDrawingFrameCell: frameDomainApi.createDrawingFrameCell,
       addTopLevelCell: frameDomainApi.addTopLevelCell,
       relayoutCabinetByModel: cabinetDomainApi.relayoutCabinetByModel,
+      reconcileCabinetSwitchLinks: cabinetDomainApi.reconcileCabinetSwitchLinks,
       normalizeSpec: specDomainApi.normalizeSpec,
       buildSymbolCell: symbolDomainApi.buildSymbolCell,
       resetPendingChangeRecords
@@ -5971,7 +4985,7 @@
         constraint = getStyleConstraintFromEdge(edge, source);
       }
       point = constraint != null ? constraint.point : null;
-      isGenericRoot = !deps.isElectricalRoot(root) && !deps.isCabinetSegment(root);
+      isGenericRoot = !deps.isElectricalRoot(root) && !deps.isCabinetSegment(root) && !deps.isCabinetBlock(root);
       genericBindings = isGenericRoot ? collectGenericPortBindings2(root) : null;
       ports = isGenericRoot ? genericBindings.map(function(binding2) {
         return binding2.port;
@@ -6014,7 +5028,7 @@
     }
     function isPluginInternalCell3(cell) {
       var kind = deps.trim(deps.getAttr(cell, "esKind"));
-      return deps.isCabinetGap(cell) || kind == deps.BODY_KIND || kind == deps.LABEL_KIND || kind == deps.FRAME_LABEL_KIND || kind == deps.CABINET_BODY_KIND || kind == deps.CABINET_GAP_KIND;
+      return deps.isCabinetGap(cell) || deps.isCabinetBlock(cell) || kind == deps.BODY_KIND || kind == deps.LABEL_KIND || kind == deps.FRAME_LABEL_KIND || kind == deps.CABINET_BODY_KIND || kind == deps.CABINET_BLOCK_KIND || kind == deps.CABINET_SWITCH_LINK_KIND || kind == deps.CABINET_BUSBAR_KIND || kind == deps.CABINET_NAME_LABEL_KIND || kind == deps.CABINET_LOCATION_LABEL_KIND || kind == deps.CABINET_DESIGNATION_LABEL_KIND || kind == deps.CABINET_GAP_KIND;
     }
     function shouldExportGenericObject3(cell) {
       return cell != null && model.isVertex(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isElectricalRoot(cell) && !isPluginInternalCell3(cell);
@@ -6047,6 +5061,10 @@
       }
       if (deps.isCabinetSegment(cell)) {
         return deps.trim(cell.id != null ? String(cell.id) : "") || deps.trim(deps.getAttr(cell, "logicalCabinetId")) || null;
+      }
+      if (deps.isCabinetBlock(cell)) {
+        var cabinetSegment = model.getParent(cell);
+        return deps.isCabinetSegment(cabinetSegment) ? resolveSnapshotObjectId(cabinetSegment) : null;
       }
       if (deps.isElectricalRoot(cell)) {
         return getSymbolObjectId(cell, currentDuplicateSymbolInstanceIds);
@@ -6342,19 +5360,26 @@
         currentDuplicateFrameIds = null;
       }
     }
-    function findCabinetSegmentForPort(logicalCabinetId, portId) {
+    function findCabinetPortHost(logicalCabinetId, portId) {
       var segments = deps.findCabinetSegments(logicalCabinetId);
       var i;
+      var j;
       for (i = 0; i < segments.length; i++) {
         if (deps.getPortMetaById(segments[i], portId) != null) {
           return segments[i];
+        }
+        var blocks = deps.getSegmentBlocks(segments[i]);
+        for (j = 0; j < blocks.length; j++) {
+          if (deps.getPortMetaById(blocks[j], portId) != null) {
+            return blocks[j];
+          }
         }
       }
       return null;
     }
     function buildConstraintForPort(root, portId) {
       var port = null;
-      if (deps.isElectricalRoot(root) || deps.isCabinetSegment(root)) {
+      if (deps.isElectricalRoot(root) || deps.isCabinetBlock(root) || deps.isCabinetSegment(root)) {
         port = deps.getPortMetaById(root, portId);
         if (port == null) {
           return null;
@@ -6427,7 +5452,7 @@
         return symbolMap[objectId];
       }
       if (portId.length > 0) {
-        return findCabinetSegmentForPort(
+        return findCabinetPortHost(
           cabinetLogicalIdMap != null && cabinetLogicalIdMap[objectId] != null ? cabinetLogicalIdMap[objectId] : objectId,
           portId
         );
@@ -6444,6 +5469,7 @@
       var frameMap = {};
       var symbolMap = {};
       var genericMap = {};
+      var restoredCabinetLogicalIds = {};
       state.suspendOperationRecording = true;
       deps.exitInstanceComposeMode(false);
       clearPageForImport();
@@ -6498,12 +5524,17 @@
           }
           for (i = 0; i < cabinetObjects.length; i++) {
             var cabinetObject = cabinetObjects[i];
+            var cabinetLogicalId = deps.trim(
+              cabinetObject.props != null ? cabinetObject.props.logicalCabinetId : null
+            ) || cabinetObject.id;
+            if (restoredCabinetLogicalIds[cabinetLogicalId]) {
+              continue;
+            }
+            restoredCabinetLogicalIds[cabinetLogicalId] = true;
             var cabinetModel = deps.cloneJson(
               cabinetObject.props != null ? cabinetObject.props.cabinetModel : {}
             );
-            cabinetModel.logicalCabinetId = deps.trim(
-              cabinetObject.props != null ? cabinetObject.props.logicalCabinetId : null
-            ) || cabinetObject.id;
+            cabinetModel.logicalCabinetId = cabinetLogicalId;
             cabinetModel.originFrameId = deps.trim(
               cabinetObject.props != null ? cabinetObject.props.originFrameId : null
             ) || cabinetObject.parentId;
@@ -6706,6 +5737,9 @@
               );
             }
           }
+          if (typeof deps.reconcileCabinetSwitchLinks == "function") {
+            deps.reconcileCabinetSwitchLinks();
+          }
         } finally {
           model.endUpdate();
           state.updatingModel = false;
@@ -6737,7 +5771,7 @@
     };
   }
 
-  // src/main/webapp/plugins/electricalSymbols/domain/snapshot.js
+  // domain/snapshot.js
   function getSnapshotDomain() {
     return createSnapshotDomain();
   }
@@ -6788,7 +5822,7 @@
     shouldExportGenericObject: shouldExportGenericObject2
   };
 
-  // src/main/webapp/plugins/electricalSymbols/domain/cabinetGraph.js
+  // domain/cabinetGraph.js
   function buildCabinetDeps() {
     var app = getApp();
     var ctx = app.ctx;
@@ -6862,9 +5896,11 @@
         return snapshotDomainApi.getEdgePortId(edge, root, source);
       },
       getPortMetaById: connectionConstraintsApi.getPortMetaById,
+      getPortLayoutForRoot: connectionConstraintsApi.getPortLayoutForRoot,
       parsePortLayout: specDomainApi.parsePortLayout,
       isMovableConnectedTerminal: connectionConstraintsApi.isMovableConnectedTerminal,
       moveCellToFrameByDelta: connectionConstraintsApi.moveCellToFrameByDelta,
+      moveConnectedGroupByDelta: connectionConstraintsApi.moveConnectedGroupByDelta,
       setConnectionConstraint: function(edge, root, source, constraint) {
         ctx.graph.setConnectionConstraint(edge, root, source, constraint);
       }
@@ -6874,6 +5910,9 @@
     var deps = arguments.length > 0 ? arguments[0] : buildCabinetDeps();
     var model = deps.model;
     var state = deps.state;
+    function getPortsForRoot(cell) {
+      return typeof deps.getPortLayoutForRoot == "function" ? deps.getPortLayoutForRoot(cell) : deps.parsePortLayout(deps.getAttr(cell, "portsJson"));
+    }
     function findCabinetSegment2(cell) {
       while (cell != null) {
         if (deps.isCabinetSegment(cell)) {
@@ -7007,17 +6046,19 @@
         deps.trim(cabinetModel.logicalCabinetId)
       );
       value.setAttribute("switchInstanceId", deps.trim(block.switchInstanceId));
+      value.setAttribute("switchSymbolId", deps.trim(block.switchSymbolId));
       value.setAttribute("blockOrder", String(block.order));
       value.setAttribute("blockHeight", String(Math.round(block.height)));
+      value.setAttribute("portOffsetY", String(block.portOffsetY || 0));
       value.setAttribute("label", deps.trim(block.title));
       value.setAttribute(
         "portsJson",
-        deps.serializePortLayout([
+        JSON.stringify([
           {
             // 出线接口在母线上，不在柜壁上
             id: block.portId,
             x: block.portX,
-            y: 0.5,
+            y: block.height > 0 ? 0.5 + Number(block.portOffsetY || 0) / block.height : 0.5,
             marker: "cross",
             direction: "right",
             ioMode: "out",
@@ -7081,12 +6122,9 @@
       var decorations = buildCabinetDecorations(cabinetModel, descriptor);
       var i;
       root.vertex = true;
-      root.setConnectable(false);
+      root.setConnectable(true);
       for (i = 0; i < decorations.length; i++) {
         root.insert(decorations[i]);
-      }
-      for (i = 0; i < descriptor.blocks.length; i++) {
-        root.insert(createCabinetBlockCell(cabinetModel, descriptor.blocks[i]));
       }
       return root;
     }
@@ -7139,39 +6177,34 @@
       var attachments = [];
       var i;
       var j;
-      var k;
       for (i = 0; i < segments.length; i++) {
-        var hosts = getSegmentBlocks2(segments[i]);
-        hosts.push(segments[i]);
-        for (j = 0; j < hosts.length; j++) {
-          var host = hosts[j];
-          var edgeCount = model.getEdgeCount(host);
-          for (k = 0; k < edgeCount; k++) {
-            var edge = model.getEdgeAt(host, k);
-            var sourceIsHost = model.getTerminal(edge, true) == host;
-            var targetIsHost = model.getTerminal(edge, false) == host;
-            if (!sourceIsHost && !targetIsHost) {
-              continue;
-            }
-            var key = mxCellPath.create(edge) + ":" + (sourceIsHost ? "S" : "T");
-            if (seen[key]) {
-              continue;
-            }
-            seen[key] = true;
-            var source = sourceIsHost;
-            var portId = deps.getEdgePortId(edge, host, source);
-            var port = deps.getPortMetaById(host, portId);
-            if (port == null) {
-              continue;
-            }
-            attachments.push({
-              edge,
-              source,
-              portId,
-              oldPortPosition: getPortAbsolutePosition2(host, port),
-              otherTerminal: model.getTerminal(edge, !source)
-            });
+        var host = segments[i];
+        var edgeCount = model.getEdgeCount(host);
+        for (j = 0; j < edgeCount; j++) {
+          var edge = model.getEdgeAt(host, j);
+          var sourceIsHost = model.getTerminal(edge, true) == host;
+          var targetIsHost = model.getTerminal(edge, false) == host;
+          if (!sourceIsHost && !targetIsHost) {
+            continue;
           }
+          var key = mxCellPath.create(edge) + ":" + (sourceIsHost ? "S" : "T");
+          if (seen[key]) {
+            continue;
+          }
+          seen[key] = true;
+          var source = sourceIsHost;
+          var portId = deps.getEdgePortId(edge, host, source);
+          var port = deps.getPortMetaById(host, portId);
+          if (port == null) {
+            continue;
+          }
+          attachments.push({
+            edge,
+            source,
+            portId,
+            oldPortPosition: getPortAbsolutePosition2(host, port),
+            otherTerminal: model.getTerminal(edge, !source)
+          });
         }
       }
       return attachments;
@@ -7180,23 +6213,18 @@
       var result = {};
       var i;
       var j;
-      var k;
       for (i = 0; i < segments.length; i++) {
         var segment = segments[i];
         var frame = deps.findDrawingFrame(segment);
-        var blocks = getSegmentBlocks2(segment);
-        for (j = 0; j < blocks.length; j++) {
-          var block = blocks[j];
-          var ports = deps.parsePortLayout(deps.getAttr(block, "portsJson"));
-          for (k = 0; k < ports.length; k++) {
-            result[deps.trim(ports[k].id)] = {
-              segment,
-              host: block,
-              port: ports[k],
-              frame,
-              absolutePosition: getPortAbsolutePosition2(block, ports[k])
-            };
-          }
+        var ports = getPortsForRoot(segment);
+        for (j = 0; j < ports.length; j++) {
+          result[deps.trim(ports[j].id)] = {
+            segment,
+            host: segment,
+            port: ports[j],
+            frame,
+            absolutePosition: getPortAbsolutePosition2(segment, ports[j])
+          };
         }
       }
       return result;
@@ -7230,13 +6258,30 @@
         if (deps.isMovableConnectedTerminal(attachment.otherTerminal)) {
           var moveKey = mxObjectIdentity.get(attachment.otherTerminal);
           if (!movedTerminals[moveKey]) {
-            movedTerminals[moveKey] = true;
-            deps.moveCellToFrameByDelta(
+            var deltaX = target.absolutePosition.x - attachment.oldPortPosition.x;
+            var deltaY = target.absolutePosition.y - attachment.oldPortPosition.y;
+            var movedGroup = typeof deps.moveConnectedGroupByDelta == "function" ? deps.moveConnectedGroupByDelta(
               attachment.otherTerminal,
               target.frame,
-              target.absolutePosition.x - attachment.oldPortPosition.x,
-              target.absolutePosition.y - attachment.oldPortPosition.y
-            );
+              deltaX,
+              deltaY
+            ) : null;
+            if (movedGroup != null && Array.isArray(movedGroup.vertices) && movedGroup.vertices.length > 0) {
+              var movedIndex;
+              for (movedIndex = 0; movedIndex < movedGroup.vertices.length; movedIndex++) {
+                movedTerminals[mxObjectIdentity.get(movedGroup.vertices[movedIndex])] = true;
+              }
+            } else {
+              if (typeof deps.moveCellToFrameByDelta == "function") {
+                deps.moveCellToFrameByDelta(
+                  attachment.otherTerminal,
+                  target.frame,
+                  deltaX,
+                  deltaY
+                );
+              }
+              movedTerminals[moveKey] = true;
+            }
           }
         }
       }
@@ -7372,6 +6417,52 @@
       }
       return null;
     }
+    function findBoundCabinetBlockForSwitch2(switchCell) {
+      if (switchCell == null || !deps.isElectricalRoot(switchCell)) {
+        return null;
+      }
+      var edgeCount = model.getEdgeCount(switchCell);
+      var i;
+      for (i = 0; i < edgeCount; i++) {
+        var edge = model.getEdgeAt(switchCell, i);
+        if (!deps.isCabinetSwitchLink(edge)) {
+          continue;
+        }
+        var source = model.getTerminal(edge, true);
+        var target = model.getTerminal(edge, false);
+        var other = source == switchCell ? target : source;
+        if (deps.isCabinetBlock(other) || deps.isCabinetSegment(other)) {
+          return other;
+        }
+      }
+      var instanceId = deps.trim(deps.getAttr(switchCell, "instanceId"));
+      var key;
+      if (instanceId.length == 0) {
+        return null;
+      }
+      var frames = deps.getAllDrawingFrames();
+      var i;
+      var j;
+      for (i = 0; i < frames.length; i++) {
+        for (j = 0; j < model.getChildCount(frames[i]); j++) {
+          var segment = model.getChildAt(frames[i], j);
+          if (!deps.isCabinetSegment(segment)) {
+            continue;
+          }
+          var cabinetModel = extractCabinetModel2(segment);
+          var blockIndex;
+          for (blockIndex = 0; blockIndex < cabinetModel.blocks.length; blockIndex++) {
+            if (deps.trim(cabinetModel.blocks[blockIndex].switchInstanceId) == instanceId) {
+              return segment;
+            }
+          }
+        }
+      }
+      return null;
+    }
+    function isSwitchBoundToCabinet2(switchCell) {
+      return findBoundCabinetBlockForSwitch2(switchCell) != null;
+    }
     function findSwitchInputPort(switchCell) {
       var ports = deps.parsePortLayout(deps.getAttr(switchCell, "portsJson"));
       var fallback = null;
@@ -7386,28 +6477,65 @@
       }
       return fallback;
     }
-    function placeSwitchInBlock(blockCell, switchCell) {
-      var frame = deps.findDrawingFrame(blockCell);
+    function getDescriptorForSegment(segment) {
+      var frame = deps.findDrawingFrame(segment);
       if (frame == null) {
+        return null;
+      }
+      var descriptors = buildCabinetPageDescriptors(
+        extractCabinetModel2(segment),
+        deps.getFrameConfig(frame)
+      );
+      var index = deps.toInt(deps.getAttr(segment, "segmentIndex"), 0);
+      return descriptors[index] || null;
+    }
+    function findBlockByPortId(cabinetModel, portId) {
+      var target = deps.trim(portId);
+      var i;
+      for (i = 0; i < cabinetModel.blocks.length; i++) {
+        if (deps.trim(cabinetModel.blocks[i].portId) == target) {
+          return cabinetModel.blocks[i];
+        }
+      }
+      return null;
+    }
+    function placeSwitchInBlock(segment, descriptorBlock, switchCell) {
+      var frame = deps.findDrawingFrame(segment);
+      if (frame == null || descriptorBlock == null) {
         return;
       }
-      var blockRect = getCellAbsoluteGeometry2(blockCell);
+      var segmentRect = getCellAbsoluteGeometry2(segment);
+      var blockRect = {
+        x: segmentRect.x,
+        y: segmentRect.y + descriptorBlock.localY,
+        width: descriptorBlock.width,
+        height: descriptorBlock.height
+      };
       var switchGeometry = model.getGeometry(switchCell);
       if (switchGeometry == null) {
         return;
       }
-      var cabinetModel = extractCabinetModel2(blockCell);
+      var cabinetModel = extractCabinetModel2(segment);
       var busbarX = Math.round(blockRect.width * cabinetModel.busbarRatio);
+      var inputPort = findSwitchInputPort(switchCell);
+      var segmentPort = deps.getPortMetaById(segment, descriptorBlock.portId);
+      var targetPortYRatio = segmentPort != null && blockRect.height > 0 ? (segmentRect.y + segmentPort.y * segmentRect.height - blockRect.y) / blockRect.height : 0.5;
       var placement = computeSwitchPlacementInBlock(
         blockRect,
         { width: switchGeometry.width, height: switchGeometry.height },
-        { busbarX, switchLead: cabinetModel.switchLead }
+        {
+          busbarX,
+          switchLead: cabinetModel.switchLead,
+          inputPortYRatio: inputPort != null ? Number(inputPort.y) : 0.5,
+          targetPortYRatio
+        }
       );
       var frameRect = getCellAbsoluteGeometry2(frame);
       var nextGeometry = switchGeometry.clone();
       nextGeometry.x = blockRect.x + placement.x - frameRect.x;
       nextGeometry.y = blockRect.y + placement.y - frameRect.y;
       nextGeometry.width = placement.width;
+      nextGeometry.height = placement.height;
       if (model.getParent(switchCell) !== frame) {
         model.add(frame, switchCell);
       }
@@ -7431,27 +6559,26 @@
         model.add(frame, switchCell);
       }
     }
-    function findSwitchLink(blockCell) {
-      var edgeCount = model.getEdgeCount(blockCell);
+    function findSwitchLink(segment, portId) {
+      var edgeCount = model.getEdgeCount(segment);
       var i;
       for (i = 0; i < edgeCount; i++) {
-        var edge = model.getEdgeAt(blockCell, i);
-        if (deps.isCabinetSwitchLink(edge)) {
+        var edge = model.getEdgeAt(segment, i);
+        if (deps.isCabinetSwitchLink(edge) && model.getTerminal(edge, true) == segment && deps.trim(deps.getEdgePortId(edge, segment, true)) == deps.trim(portId)) {
           return edge;
         }
       }
       return null;
     }
-    function ensureSwitchLink(blockCell, switchCell) {
-      var frame = deps.findDrawingFrame(blockCell);
-      if (frame == null || switchCell == null) {
+    function ensureSwitchLink(segment, descriptorBlock, switchCell) {
+      var frame = deps.findDrawingFrame(segment);
+      if (frame == null || descriptorBlock == null || switchCell == null) {
         return null;
       }
-      var blockPortId = deps.trim(deps.getAttr(blockCell, "portId"));
-      var blockPorts = deps.parsePortLayout(deps.getAttr(blockCell, "portsJson"));
-      var blockPort = blockPorts.length > 0 ? blockPorts[0] : null;
+      var blockPortId = deps.trim(descriptorBlock.portId);
+      var blockPort = deps.getPortMetaById(segment, blockPortId);
       var switchPort = findSwitchInputPort(switchCell);
-      var edge = findSwitchLink(blockCell);
+      var edge = findSwitchLink(segment, blockPortId);
       if (edge == null) {
         var value = deps.createNode(deps.cabinetSwitchLinkTag);
         value.setAttribute("esKind", deps.cabinetSwitchLinkKind);
@@ -7460,21 +6587,30 @@
         edge.edge = true;
         model.add(frame, edge);
       }
-      edge.value.setAttribute("blockId", deps.trim(deps.getAttr(blockCell, "blockId")));
+      if (edge.value == null || typeof edge.value.setAttribute != "function") {
+        edge.value = deps.createNode(deps.cabinetSwitchLinkTag);
+      }
+      if (model.getParent(edge) !== frame) {
+        model.add(frame, edge);
+      }
+      model.setStyle(edge, makeCabinetSwitchLinkStyle());
+      edge.value.setAttribute("esKind", deps.cabinetSwitchLinkKind);
+      edge.value.setAttribute("label", "");
+      edge.value.setAttribute("blockId", deps.trim(descriptorBlock.id));
       edge.value.setAttribute(
         "logicalCabinetId",
-        deps.trim(deps.getAttr(blockCell, "logicalCabinetId"))
+        deps.trim(deps.getAttr(segment, "logicalCabinetId"))
       );
       edge.value.setAttribute(
         "switchInstanceId",
         deps.trim(deps.getAttr(switchCell, "instanceId"))
       );
-      model.setTerminal(edge, blockCell, true);
+      model.setTerminal(edge, segment, true);
       model.setTerminal(edge, switchCell, false);
       if (blockPort != null) {
         deps.setConnectionConstraint(
           edge,
-          blockCell,
+          segment,
           true,
           new mxConnectionConstraint(
             new mxPoint(blockPort.x, blockPort.y),
@@ -7498,13 +6634,22 @@
       return edge;
     }
     function syncBoundSwitches(segments) {
+      var logicalCabinetIds = {};
+      var retainedLinks = {};
       var i;
       var j;
       for (i = 0; i < segments.length; i++) {
-        var blocks = getSegmentBlocks2(segments[i]);
+        var logicalCabinetId = deps.trim(
+          deps.getAttr(segments[i], "logicalCabinetId")
+        );
+        if (logicalCabinetId.length > 0) {
+          logicalCabinetIds[logicalCabinetId] = true;
+        }
+        var descriptor = getDescriptorForSegment(segments[i]);
+        var blocks = descriptor != null ? descriptor.blocks : [];
         for (j = 0; j < blocks.length; j++) {
-          var blockCell = blocks[j];
-          var instanceId = deps.trim(deps.getAttr(blockCell, "switchInstanceId"));
+          var descriptorBlock = blocks[j];
+          var instanceId = deps.trim(descriptorBlock.switchInstanceId);
           if (instanceId.length == 0) {
             continue;
           }
@@ -7512,10 +6657,52 @@
           if (switchCell == null) {
             continue;
           }
-          placeSwitchInBlock(blockCell, switchCell);
-          ensureSwitchLink(blockCell, switchCell);
+          placeSwitchInBlock(segments[i], descriptorBlock, switchCell);
+          var link = ensureSwitchLink(segments[i], descriptorBlock, switchCell);
+          if (link != null) {
+            retainedLinks[mxObjectIdentity.get(link)] = true;
+          }
         }
       }
+      var staleLinks = [];
+      var key;
+      var allCells = model.cells || {};
+      for (key in allCells) {
+        if (!Object.prototype.hasOwnProperty.call(allCells, key)) {
+          continue;
+        }
+        var candidate = allCells[key];
+        if (!deps.isCabinetSwitchLink(candidate)) {
+          continue;
+        }
+        var sourceTerminal = model.getTerminal(candidate, true);
+        var candidateLogicalId = deps.trim(
+          deps.getAttr(candidate, "logicalCabinetId")
+        );
+        if (candidateLogicalId.length == 0 && (deps.isCabinetBlock(sourceTerminal) || deps.isCabinetSegment(sourceTerminal))) {
+          candidateLogicalId = deps.trim(
+            deps.getAttr(sourceTerminal, "logicalCabinetId")
+          );
+        }
+        if (logicalCabinetIds[candidateLogicalId] && !retainedLinks[mxObjectIdentity.get(candidate)]) {
+          staleLinks.push(candidate);
+        }
+      }
+      for (i = 0; i < staleLinks.length; i++) {
+        model.remove(staleLinks[i]);
+      }
+    }
+    function reconcileCabinetSwitchLinks2() {
+      var segments = [];
+      var key;
+      var allCells = model.cells || {};
+      for (key in allCells) {
+        if (Object.prototype.hasOwnProperty.call(allCells, key) && deps.isCabinetSegment(allCells[key])) {
+          segments.push(allCells[key]);
+        }
+      }
+      syncBoundSwitches(segments);
+      return segments;
     }
     function bindSwitchToBlock2(blockCell, spec) {
       var segment = findCabinetSegment2(blockCell);
@@ -7561,6 +6748,33 @@
       var nextModel = setBlockSwitchBinding(extractCabinetModel2(segment), blockId, null);
       return nextModel != null ? relayoutCabinetByModel2(nextModel) : null;
     }
+    function unbindSwitchFromCabinetSwitch2(segment, switchCell, removeSwitch, skipRelayout) {
+      if (!deps.isCabinetSegment(segment) || switchCell == null) {
+        return null;
+      }
+      var instanceId = deps.trim(deps.getAttr(switchCell, "instanceId"));
+      var cabinetModel = extractCabinetModel2(segment);
+      var block = null;
+      var i;
+      for (i = 0; i < cabinetModel.blocks.length; i++) {
+        if (deps.trim(cabinetModel.blocks[i].switchInstanceId) == instanceId) {
+          block = cabinetModel.blocks[i];
+          break;
+        }
+      }
+      if (block == null) {
+        return null;
+      }
+      var link = findSwitchLink(segment, block.portId);
+      if (link != null) {
+        model.remove(link);
+      }
+      if (removeSwitch) {
+        model.remove(switchCell);
+      }
+      var nextModel = setBlockSwitchBinding(cabinetModel, block.id, null);
+      return !skipRelayout && nextModel != null ? relayoutCabinetByModel2(nextModel) : nextModel;
+    }
     function insertCabinetBlockAfter2(blockCell, blockInit) {
       var segment = findCabinetSegment2(blockCell);
       if (segment == null) {
@@ -7575,6 +6789,302 @@
         return null;
       }
       return relayoutCabinetByModel2(nextModel);
+    }
+    function cloneCellElementValue(cell) {
+      var value = cell != null ? cell.value : null;
+      return value != null && typeof value.cloneNode == "function" ? value.cloneNode(true) : value;
+    }
+    function setCellElementAttributes(cell, attributes) {
+      var value = cloneCellElementValue(cell);
+      var key;
+      if (value == null || typeof value.setAttribute != "function") {
+        return;
+      }
+      for (key in attributes) {
+        if (Object.prototype.hasOwnProperty.call(attributes, key)) {
+          value.setAttribute(key, String(attributes[key]));
+        }
+      }
+      model.setValue(cell, value);
+    }
+    function findDescriptorBlock(descriptor, blockId) {
+      var blocks = descriptor != null ? descriptor.blocks : null;
+      var i;
+      if (!Array.isArray(blocks)) {
+        return null;
+      }
+      for (i = 0; i < blocks.length; i++) {
+        if (deps.trim(blocks[i].id) == deps.trim(blockId)) {
+          return blocks[i];
+        }
+      }
+      return null;
+    }
+    function moveCabinetPortByDelta2(blockCell, deltaY) {
+      var segment = findCabinetSegment2(blockCell);
+      var requestedDelta = Number(deltaY);
+      if (segment == null || !deps.isCabinetBlock(blockCell) || !isFinite(requestedDelta) || Math.abs(requestedDelta) < 1e-4) {
+        return null;
+      }
+      var blockPorts = getPortsForRoot(blockCell);
+      var blockPort = blockPorts.length > 0 ? blockPorts[0] : null;
+      var frame = deps.findDrawingFrame(segment);
+      if (blockPort == null || frame == null) {
+        return null;
+      }
+      var segmentRect = getCellAbsoluteGeometry2(segment);
+      var currentPortPosition = getPortAbsolutePosition2(blockCell, blockPort);
+      var verticalInset = Math.min(2, Math.max(0, segmentRect.height / 2));
+      var boundedPortY = deps.clamp(
+        currentPortPosition.y + requestedDelta,
+        segmentRect.y + verticalInset,
+        segmentRect.y + segmentRect.height - verticalInset
+      );
+      var boundedDelta = boundedPortY - currentPortPosition.y;
+      if (Math.abs(boundedDelta) < 1e-4) {
+        return {
+          deltaY: 0,
+          blockCell,
+          switchCell: null,
+          movedGroup: null
+        };
+      }
+      var switchInstanceId = deps.trim(
+        deps.getAttr(blockCell, "switchInstanceId")
+      );
+      var switchCell = findSwitchCellByInstanceId2(switchInstanceId);
+      var movedGroup = null;
+      var actualDelta = boundedDelta;
+      var cabinetModel;
+      var logicalCabinetId;
+      var blockId = deps.trim(deps.getAttr(blockCell, "blockId"));
+      var descriptors;
+      var segments;
+      var targetModelBlock = null;
+      var targetDescriptorBlock = null;
+      var i;
+      var j;
+      model.beginUpdate();
+      try {
+        if (switchCell != null && typeof deps.moveConnectedGroupByDelta == "function") {
+          movedGroup = deps.moveConnectedGroupByDelta(
+            switchCell,
+            frame,
+            0,
+            boundedDelta,
+            { lockX: true }
+          );
+          if (movedGroup != null && movedGroup.delta != null) {
+            actualDelta = Number(movedGroup.delta.y) || 0;
+          }
+        }
+        if (Math.abs(actualDelta) < 1e-4) {
+          return {
+            deltaY: 0,
+            blockCell,
+            switchCell,
+            movedGroup
+          };
+        }
+        cabinetModel = extractCabinetModel2(segment);
+        logicalCabinetId = deps.trim(cabinetModel.logicalCabinetId);
+        for (i = 0; i < cabinetModel.blocks.length; i++) {
+          if (deps.trim(cabinetModel.blocks[i].id) == blockId) {
+            targetModelBlock = cabinetModel.blocks[i];
+            targetModelBlock.portOffsetY = Number(targetModelBlock.portOffsetY || 0) + actualDelta;
+            break;
+          }
+        }
+        if (targetModelBlock == null) {
+          return null;
+        }
+        descriptors = buildCabinetPageDescriptors(
+          cabinetModel,
+          deps.getFrameConfig(frame)
+        );
+        segments = findCabinetSegments2(logicalCabinetId);
+        for (i = 0; i < segments.length; i++) {
+          var segmentIndex = deps.toInt(
+            deps.getAttr(segments[i], "segmentIndex"),
+            i
+          );
+          var descriptor = descriptors[segmentIndex];
+          if (descriptor == null) {
+            continue;
+          }
+          var serializedSegmentPorts = deps.serializePortLayout(
+            buildSegmentPortLayout(descriptor)
+          );
+          setCellElementAttributes(segments[i], {
+            cabinetModelJson: JSON.stringify(cabinetModel),
+            portsJson: serializedSegmentPorts,
+            portLayout: serializedSegmentPorts
+          });
+          var segmentBlocks = getSegmentBlocks2(segments[i]);
+          for (j = 0; j < segmentBlocks.length; j++) {
+            if (deps.trim(deps.getAttr(segmentBlocks[j], "blockId")) != blockId) {
+              continue;
+            }
+            targetDescriptorBlock = findDescriptorBlock(descriptor, blockId);
+            if (targetDescriptorBlock == null) {
+              continue;
+            }
+            var blockGeometry = model.getGeometry(segmentBlocks[j]);
+            var displayHeight = blockGeometry != null && blockGeometry.height > 0 ? blockGeometry.height : targetDescriptorBlock.height;
+            var serializedBlockPorts = JSON.stringify([
+              {
+                id: targetDescriptorBlock.portId,
+                x: targetDescriptorBlock.portX,
+                y: displayHeight > 0 ? 0.5 + targetModelBlock.portOffsetY / displayHeight : 0.5,
+                marker: "cross",
+                direction: "right",
+                ioMode: "out",
+                order: targetDescriptorBlock.order
+              }
+            ]);
+            setCellElementAttributes(segmentBlocks[j], {
+              portOffsetY: targetModelBlock.portOffsetY,
+              portsJson: serializedBlockPorts
+            });
+          }
+        }
+        blockPorts = getPortsForRoot(blockCell);
+        blockPort = blockPorts.length > 0 ? blockPorts[0] : null;
+        var link = findSwitchLink(blockCell);
+        if (link != null && blockPort != null) {
+          deps.setConnectionConstraint(
+            link,
+            blockCell,
+            true,
+            new mxConnectionConstraint(
+              new mxPoint(blockPort.x, blockPort.y),
+              false,
+              blockPort.id
+            )
+          );
+          var linkGeometry = model.getGeometry(link);
+          if (linkGeometry != null && linkGeometry.points != null) {
+            linkGeometry = linkGeometry.clone();
+            linkGeometry.points = null;
+            model.setGeometry(link, linkGeometry);
+          }
+        }
+      } finally {
+        model.endUpdate();
+      }
+      return {
+        deltaY: actualDelta,
+        blockCell,
+        switchCell,
+        movedGroup
+      };
+    }
+    function moveCabinetSegmentPortByDelta(segment, portId, deltaY) {
+      var requestedDelta = Number(deltaY);
+      var frame = deps.findDrawingFrame(segment);
+      var port = deps.getPortMetaById(segment, portId);
+      if (!deps.isCabinetSegment(segment) || frame == null || port == null || !isFinite(requestedDelta) || Math.abs(requestedDelta) < 1e-4) {
+        return null;
+      }
+      var segmentRect = getCellAbsoluteGeometry2(segment);
+      var currentPosition = getPortAbsolutePosition2(segment, port);
+      var nextAbsoluteY = deps.clamp(
+        currentPosition.y + requestedDelta,
+        segmentRect.y + Math.min(2, segmentRect.height / 2),
+        segmentRect.y + segmentRect.height - Math.min(2, segmentRect.height / 2)
+      );
+      var boundedDelta = nextAbsoluteY - currentPosition.y;
+      var cabinetModel = extractCabinetModel2(segment);
+      var modelBlock = findBlockByPortId(cabinetModel, portId);
+      if (modelBlock == null || Math.abs(boundedDelta) < 1e-4) {
+        return { deltaY: 0, segment, portId, switchCell: null, movedGroup: null };
+      }
+      var switchCell = findSwitchCellByInstanceId2(modelBlock.switchInstanceId);
+      var directTerminal = switchCell;
+      var edgeCount = model.getEdgeCount(segment);
+      var i;
+      if (directTerminal == null) {
+        for (i = 0; i < edgeCount; i++) {
+          var candidateEdge = model.getEdgeAt(segment, i);
+          var candidateSource = model.getTerminal(candidateEdge, true) == segment;
+          if (deps.trim(deps.getEdgePortId(candidateEdge, segment, candidateSource)) == deps.trim(portId)) {
+            directTerminal = model.getTerminal(candidateEdge, !candidateSource);
+            break;
+          }
+        }
+      }
+      var movedGroup = null;
+      var actualDelta = boundedDelta;
+      model.beginUpdate();
+      try {
+        if (directTerminal != null && typeof deps.moveConnectedGroupByDelta == "function") {
+          movedGroup = deps.moveConnectedGroupByDelta(
+            directTerminal,
+            frame,
+            0,
+            boundedDelta,
+            { lockX: true }
+          );
+          if (movedGroup != null && movedGroup.delta != null) {
+            actualDelta = Number(movedGroup.delta.y) || 0;
+          }
+        }
+        if (Math.abs(actualDelta) < 1e-4) {
+          return { deltaY: 0, segment, portId, switchCell, movedGroup };
+        }
+        modelBlock.portOffsetY = Number(modelBlock.portOffsetY || 0) + actualDelta;
+        var descriptors = buildCabinetPageDescriptors(
+          cabinetModel,
+          deps.getFrameConfig(frame)
+        );
+        var segments = findCabinetSegments2(cabinetModel.logicalCabinetId);
+        for (i = 0; i < segments.length; i++) {
+          var descriptor = descriptors[deps.toInt(deps.getAttr(segments[i], "segmentIndex"), i)];
+          if (descriptor == null) {
+            continue;
+          }
+          var serializedPorts = deps.serializePortLayout(
+            buildSegmentPortLayout(descriptor)
+          );
+          setCellElementAttributes(segments[i], {
+            cabinetModelJson: JSON.stringify(cabinetModel),
+            portsJson: serializedPorts,
+            portLayout: serializedPorts
+          });
+          var refreshedPort = deps.getPortMetaById(segments[i], portId);
+          var refreshedEdgeCount = model.getEdgeCount(segments[i]);
+          var edgeIndex;
+          if (refreshedPort == null) {
+            continue;
+          }
+          for (edgeIndex = 0; edgeIndex < refreshedEdgeCount; edgeIndex++) {
+            var edge = model.getEdgeAt(segments[i], edgeIndex);
+            var source = model.getTerminal(edge, true) == segments[i];
+            if (deps.trim(deps.getEdgePortId(edge, segments[i], source)) != deps.trim(portId)) {
+              continue;
+            }
+            deps.setConnectionConstraint(
+              edge,
+              segments[i],
+              source,
+              new mxConnectionConstraint(
+                new mxPoint(refreshedPort.x, refreshedPort.y),
+                false,
+                refreshedPort.id
+              )
+            );
+            var edgeGeometry = model.getGeometry(edge);
+            if (edgeGeometry != null && edgeGeometry.points != null) {
+              edgeGeometry = edgeGeometry.clone();
+              edgeGeometry.points = null;
+              model.setGeometry(edge, edgeGeometry);
+            }
+          }
+        }
+      } finally {
+        model.endUpdate();
+      }
+      return { deltaY: actualDelta, segment, portId, switchCell, movedGroup };
     }
     function applyCabinetBlockHeight2(blockCell, height) {
       var segment = findCabinetSegment2(blockCell);
@@ -7618,11 +7128,14 @@
       applyCabinetBlockHeight: applyCabinetBlockHeight2,
       applyCabinetWidth: applyCabinetWidth2,
       bindSwitchToBlock: bindSwitchToBlock2,
+      findBoundCabinetBlockForSwitch: findBoundCabinetBlockForSwitch2,
       findSwitchCellByInstanceId: findSwitchCellByInstanceId2,
       findSwitchLink,
       insertCabinetBlockAfter: insertCabinetBlockAfter2,
+      moveCabinetPortByDelta: moveCabinetSegmentPortByDelta,
       syncBoundSwitches,
       unbindSwitchFromBlock: unbindSwitchFromBlock2,
+      unbindSwitchFromCabinetSwitch: unbindSwitchFromCabinetSwitch2,
       buildCabinetPageDescriptors,
       buildCabinetPortMap: buildCabinetPortMap2,
       buildCabinetSegmentCell: buildCabinetSegmentCell2,
@@ -7634,12 +7147,14 @@
       getCellAbsoluteGeometry: getCellAbsoluteGeometry2,
       getPortAbsolutePosition: getPortAbsolutePosition2,
       normalizeCabinetModel,
+      reconcileCabinetSwitchLinks: reconcileCabinetSwitchLinks2,
       relayoutCabinetByModel: relayoutCabinetByModel2,
-      restoreCabinetAttachments: restoreCabinetAttachments2
+      restoreCabinetAttachments: restoreCabinetAttachments2,
+      isSwitchBoundToCabinet: isSwitchBoundToCabinet2
     };
   }
 
-  // src/main/webapp/plugins/electricalSymbols/domain/cabinet.js
+  // domain/cabinet.js
   function getCabinetDomain() {
     return createCabinetDomain();
   }
@@ -7688,11 +7203,26 @@
   function unbindSwitchFromBlock() {
     return getCabinetDomain().unbindSwitchFromBlock.apply(null, arguments);
   }
+  function unbindSwitchFromCabinetSwitch() {
+    return getCabinetDomain().unbindSwitchFromCabinetSwitch.apply(null, arguments);
+  }
   function findSwitchCellByInstanceId() {
     return getCabinetDomain().findSwitchCellByInstanceId.apply(null, arguments);
   }
+  function findBoundCabinetBlockForSwitch() {
+    return getCabinetDomain().findBoundCabinetBlockForSwitch.apply(null, arguments);
+  }
+  function isSwitchBoundToCabinet() {
+    return getCabinetDomain().isSwitchBoundToCabinet.apply(null, arguments);
+  }
+  function reconcileCabinetSwitchLinks() {
+    return getCabinetDomain().reconcileCabinetSwitchLinks.apply(null, arguments);
+  }
   function insertCabinetBlockAfter() {
     return getCabinetDomain().insertCabinetBlockAfter.apply(null, arguments);
+  }
+  function moveCabinetPortByDelta() {
+    return getCabinetDomain().moveCabinetPortByDelta.apply(null, arguments);
   }
   function getSegmentBlocks() {
     return getCabinetDomain().getSegmentBlocks.apply(null, arguments);
@@ -7702,6 +7232,7 @@
     applyCabinetWidth,
     bindSwitchToBlock,
     buildCabinetPageDescriptors: buildCabinetPageDescriptors2,
+    findBoundCabinetBlockForSwitch,
     findSwitchCellByInstanceId,
     buildCabinetPortMap,
     buildCabinetSegmentCell,
@@ -7713,7 +7244,11 @@
     getPortAbsolutePosition,
     getSegmentBlocks,
     insertCabinetBlockAfter,
+    moveCabinetPortByDelta,
+    isSwitchBoundToCabinet,
+    reconcileCabinetSwitchLinks,
     unbindSwitchFromBlock,
+    unbindSwitchFromCabinetSwitch,
     normalizeCabinetModel,
     relayoutCabinetByModel,
     restoreCabinetAttachments
@@ -7729,12 +7264,12 @@
       clamp,
       parsePortLayout: specDomainApi.parsePortLayout,
       getAttr,
-      buildPortLayout: specDomainApi.buildPortLayout,
       findPortHostRoot,
       normalizePortDirection: specDomainApi.normalizePortDirection,
       normalizePortIoMode: specDomainApi.normalizePortIoMode,
       isDrawingFrame,
       isCabinetSegment,
+      isCabinetBlock,
       isCabinetGap,
       findDrawingFrame: frameDomainApi.findDrawingFrame,
       getCellAbsoluteGeometry: function(cell) {
@@ -7759,6 +7294,27 @@
       oldValidateConnection: graph.connectionHandler.validateConnection
     };
   }
+  function getPortLayoutForRoot(root) {
+    var deps = getConstraintRuntime().deps;
+    var raw = deps.getAttr(root, "portsJson");
+    var ports = deps.parsePortLayout(raw);
+    if (!deps.isCabinetBlock(root) || raw == null || raw.length == 0) {
+      return ports;
+    }
+    try {
+      var source = JSON.parse(raw);
+      var items = Array.isArray(source) ? source : source != null && Array.isArray(source.items) ? source.items : [];
+      var i;
+      for (i = 0; i < ports.length && i < items.length; i++) {
+        var rawY = Number(items[i] != null ? items[i].y : NaN);
+        if (isFinite(rawY)) {
+          ports[i].y = rawY;
+        }
+      }
+    } catch (e) {
+    }
+    return ports;
+  }
   function getElectricalConstraints(cell) {
     var runtime = getConstraintRuntime();
     var deps = runtime.deps;
@@ -7769,10 +7325,10 @@
     if (root == null) {
       return null;
     }
-    layout = deps.buildPortLayout(
-      { ports: deps.parsePortLayout(deps.getAttr(root, "portsJson")) },
-      deps.parsePortLayout(deps.getAttr(root, "portLayout"))
-    );
+    layout = getPortLayoutForRoot(root);
+    if (layout.length == 0) {
+      layout = deps.parsePortLayout(deps.getAttr(root, "portLayout"));
+    }
     for (i = 0; i < layout.length; i++) {
       var point = layout[i];
       constraints.push(
@@ -7787,7 +7343,7 @@
   }
   function getPortMetaByConstraint(root, constraint) {
     var deps = getConstraintRuntime().deps;
-    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
+    var ports = getPortLayoutForRoot(root);
     var name = constraint != null ? deps.trim(constraint.name) : "";
     var i;
     for (i = 0; i < ports.length; i++) {
@@ -7799,7 +7355,7 @@
   }
   function getPortMetaById(root, portId) {
     var deps = getConstraintRuntime().deps;
-    var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
+    var ports = getPortLayoutForRoot(root);
     var target = deps.trim(portId);
     var i;
     for (i = 0; i < ports.length; i++) {
@@ -7848,7 +7404,7 @@
     var runtime = getConstraintRuntime();
     var deps = runtime.deps;
     var model = runtime.model;
-    return cell != null && model.isVertex(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isCabinetGap(cell);
+    return cell != null && model.isVertex(cell) && !deps.isDrawingFrame(cell) && !deps.isCabinetSegment(cell) && !deps.isCabinetBlock(cell) && !deps.isCabinetGap(cell);
   }
   function clampCellGeometryToFrame(geometry, frame) {
     var runtime = getConstraintRuntime();
@@ -7918,7 +7474,10 @@
         var edgeId = mxObjectIdentity.get(edge);
         var source = model.getTerminal(edge, true);
         var target = model.getTerminal(edge, false);
-        var other = source == cell ? target : source;
+        if (source != cell) {
+          continue;
+        }
+        var other = target;
         if (!edgeMap[edgeId]) {
           edgeMap[edgeId] = true;
           edges.push(edge);
@@ -8031,33 +7590,36 @@
       model.setGeometry(edge, geometry);
     }
   }
-  function moveConnectedGroupToCabinetPort(edge, source, oldRoot, oldPortId, newRoot, newPort) {
+  function moveConnectedGroupByDelta(startCell, targetFrame, deltaX, deltaY, options) {
     var runtime = getConstraintRuntime();
-    var deps = runtime.deps;
     var model = runtime.model;
     var state = runtime.state;
-    var otherTerminal = model.getTerminal(edge, !source);
-    var oldPort = getPortMetaById(oldRoot, oldPortId);
-    var targetFrame = deps.findDrawingFrame(newRoot);
     var group;
     var delta;
     var movedMap = {};
     var i;
-    if (state.updatingModel || !deps.isCabinetSegment(oldRoot) || !deps.isCabinetSegment(newRoot) || oldPort == null || newPort == null || !isMovableConnectedTerminal(otherTerminal) || targetFrame == null) {
-      return;
+    if (state.updatingModel || !isMovableConnectedTerminal(startCell) || targetFrame == null) {
+      return null;
     }
-    group = collectConnectedMovableGroup(otherTerminal);
+    group = collectConnectedMovableGroup(startCell);
     if (group.vertices.length == 0) {
-      return;
+      return null;
     }
     delta = adjustGroupDeltaToFrame(
       group.vertices,
       targetFrame,
-      deps.getPortAbsolutePosition(newRoot, newPort).x - deps.getPortAbsolutePosition(oldRoot, oldPort).x,
-      deps.getPortAbsolutePosition(newRoot, newPort).y - deps.getPortAbsolutePosition(oldRoot, oldPort).y
+      deltaX,
+      deltaY
     );
+    if (options != null && options.lockX === true) {
+      delta.x = 0;
+    }
     if (Math.abs(delta.x) < 1e-4 && Math.abs(delta.y) < 1e-4) {
-      return;
+      return {
+        vertices: group.vertices,
+        edges: group.edges,
+        delta
+      };
     }
     state.updatingModel = true;
     model.beginUpdate();
@@ -8086,6 +7648,29 @@
       model.endUpdate();
       state.updatingModel = false;
     }
+    return {
+      vertices: group.vertices,
+      edges: group.edges,
+      delta
+    };
+  }
+  function moveConnectedGroupToCabinetPort(edge, source, oldRoot, oldPortId, newRoot, newPort) {
+    var runtime = getConstraintRuntime();
+    var deps = runtime.deps;
+    var model = runtime.model;
+    var state = runtime.state;
+    var otherTerminal = model.getTerminal(edge, !source);
+    var oldPort = getPortMetaById(oldRoot, oldPortId);
+    var targetFrame = deps.findDrawingFrame(newRoot);
+    if (state.updatingModel || !(deps.isCabinetSegment(oldRoot) || deps.isCabinetBlock(oldRoot)) || !(deps.isCabinetSegment(newRoot) || deps.isCabinetBlock(newRoot)) || oldPort == null || newPort == null || !isMovableConnectedTerminal(otherTerminal) || targetFrame == null) {
+      return;
+    }
+    return moveConnectedGroupByDelta(
+      otherTerminal,
+      targetFrame,
+      deps.getPortAbsolutePosition(newRoot, newPort).x - deps.getPortAbsolutePosition(oldRoot, oldPort).x,
+      deps.getPortAbsolutePosition(newRoot, newPort).y - deps.getPortAbsolutePosition(oldRoot, oldPort).y
+    );
   }
   function installGraphBehavior(extraDeps) {
     var runtime = getConstraintRuntime();
@@ -8173,14 +7758,16 @@
     getElectricalConstraints,
     getPortMetaByConstraint,
     getPortMetaById,
+    getPortLayoutForRoot,
     isMovableConnectedTerminal,
     installGraphBehavior,
     mapPortDirectionToConstraint,
     moveCellToFrameByDelta,
+    moveConnectedGroupByDelta,
     moveConnectedGroupToCabinetPort
   };
 
-  // src/main/webapp/plugins/electricalSymbols/ui/backendDialogs.js
+  // ui/backendDialogs.js
   function buildBackendDialogDeps() {
     var app = getApp();
     return {
@@ -8626,7 +8213,6 @@
   }
 
   // runtime/hostBridge.js
-  // src/main/webapp/plugins/electricalSymbols/runtime/hostBridge.js
   function parseHostMessage(data) {
     if (data === null) {
       return null;
@@ -8805,10 +8391,12 @@
       }) : [];
     }
     function portAllows(port, direction) {
-      var mode = String(port != null ? port.ioMode || "both" : "both").toLowerCase();
+      var mode = String(
+        port != null ? port.ioMode || "both" : "both"
+      ).toLowerCase();
       return mode == "both" || mode == direction;
     }
-    function getPortViewPoint(root, port, offset) {
+    function getPortViewPoint2(root, port, offset) {
       var geometry = model.getGeometry(root);
       var view = graph.view;
       if (geometry == null || view == null) {
@@ -8921,12 +8509,8 @@
             } else {
               directionValid = false;
             }
-            var movedPoint = getPortViewPoint(
-              movedRoot,
-              movedPort,
-              movedOffset
-            );
-            var otherPoint = getPortViewPoint(otherRoot, otherPort);
+            var movedPoint = getPortViewPoint2(movedRoot, movedPort, movedOffset);
+            var otherPoint = getPortViewPoint2(otherRoot, otherPort);
             if (movedPoint == null || otherPoint == null) {
               continue;
             }
@@ -9150,7 +8734,7 @@
       var parent = sourceParent == targetParent ? sourceParent : graph.getDefaultParent();
       var sourcePortId = String(candidate.sourcePort.id);
       var targetPortId = String(candidate.targetPort.id);
-      var style = "endArrow=none;html=1;rounded=0;edgeStyle=none;noEdgeStyle=1;orthogonalLoop=0;eidLayoutManaged=1;strokeColor=#111111;strokeWidth=1.3;sourcePortId=" + sourcePortId + ";targetPortId=" + targetPortId + ";";
+      var style = "endArrow=none;startArrow=none;html=1;rounded=0;edgeStyle=none;noEdgeStyle=1;orthogonalLoop=0;eidLayoutManaged=1;eidPortSnapLink=1;strokeColor=none;strokeWidth=0;opacity=0;sourcePortId=" + sourcePortId + ";targetPortId=" + targetPortId + ";";
       var edge = graph.insertEdge(
         parent,
         null,
@@ -9163,7 +8747,71 @@
       applyEdgeConstraintByPortId(edge, false, targetPortId);
       return edge;
     }
-    function snapMovedElectricalPorts(cells) {
+    function normalizeMagneticCircuitEdge(edge) {
+      if (edge == null || !model.isEdge(edge)) {
+        return false;
+      }
+      var sourceRoot = findPortHostRoot(model.getTerminal(edge, true));
+      var targetRoot = findPortHostRoot(model.getTerminal(edge, false));
+      var sourceRole = getElectricalBusinessRole(sourceRoot);
+      var targetRole = getElectricalBusinessRole(targetRoot);
+      if (!isCompatiblePortPair(sourceRole, targetRole)) {
+        return false;
+      }
+      var sourcePortId = snapshotDomainApi.getEdgePortId(
+        edge,
+        sourceRoot,
+        true
+      );
+      var targetPortId = snapshotDomainApi.getEdgePortId(
+        edge,
+        targetRoot,
+        false
+      );
+      if (sourcePortId == null || String(sourcePortId).length == 0 || targetPortId == null || String(targetPortId).length == 0) {
+        return false;
+      }
+      clearEdgePoints(edge);
+      var style = model.getStyle(edge) || "";
+      style = mxUtils.setStyle(style, "endArrow", "none");
+      style = mxUtils.setStyle(style, "startArrow", "none");
+      style = mxUtils.setStyle(style, "rounded", "0");
+      style = mxUtils.setStyle(style, "edgeStyle", null);
+      style = mxUtils.setStyle(style, "noEdgeStyle", "1");
+      style = mxUtils.setStyle(style, "orthogonalLoop", "0");
+      style = mxUtils.setStyle(style, "jettySize", "0");
+      style = mxUtils.setStyle(style, "sourceJettySize", "0");
+      style = mxUtils.setStyle(style, "targetJettySize", "0");
+      style = mxUtils.setStyle(style, "eidLayoutManaged", "1");
+      style = mxUtils.setStyle(style, "eidPortSnapLink", "1");
+      style = mxUtils.setStyle(style, "strokeColor", "none");
+      style = mxUtils.setStyle(style, "strokeWidth", "0");
+      style = mxUtils.setStyle(style, "opacity", "0");
+      style = mxUtils.setStyle(style, "sourcePortId", String(sourcePortId));
+      style = mxUtils.setStyle(style, "targetPortId", String(targetPortId));
+      model.setStyle(edge, style);
+      applyEdgeConstraintByPortId(edge, true, sourcePortId);
+      applyEdgeConstraintByPortId(edge, false, targetPortId);
+      return true;
+    }
+    function normalizeMagneticCircuitEdges() {
+      if (model == null || model.cells == null) {
+        return 0;
+      }
+      var normalized = 0;
+      model.beginUpdate();
+      try {
+        for (var cellId in model.cells) {
+          if (Object.prototype.hasOwnProperty.call(model.cells, cellId) && normalizeMagneticCircuitEdge(model.cells[cellId])) {
+            normalized += 1;
+          }
+        }
+      } finally {
+        model.endUpdate();
+      }
+      return normalized;
+    }
+    function snapMovedElectricalPorts(cells, suppressFailureFeedback) {
       if (!Array.isArray(cells) || cells.length == 0) {
         return 0;
       }
@@ -9237,7 +8885,7 @@
           code: "connected",
           message: "\u5DF2\u5438\u9644\u5E76\u8FDE\u63A5\uFF1A" + roleLabel(connectedAnchor.sourceRole) + " \u2192 " + roleLabel(connectedAnchor.targetRole)
         });
-      } else if (feedbackPair != null) {
+      } else if (feedbackPair != null && !suppressFailureFeedback) {
         emitHostEvent("eid-port-snap-feedback", {
           status: feedbackPair.directionValid && feedbackPair.compatible && !feedbackPair.sourceOccupied && !feedbackPair.targetOccupied ? "info" : "warning",
           code: "not-connected",
@@ -9245,6 +8893,94 @@
         });
       }
       return connectedCount;
+    }
+    function detachMovedElectricalPorts(cells) {
+      if (!Array.isArray(cells) || cells.length == 0) {
+        return 0;
+      }
+      var movedRoots = [];
+      var movedIds = {};
+      var edgeMap = {};
+      var threshold = Number(constants.CANVAS_PORT_DETACH_THRESHOLD_PX) || 72;
+      var i;
+      for (i = 0; i < cells.length; i++) {
+        var movedRoot = findElectricalRoot(cells[i]);
+        var movedRootId = movedRoot != null && movedRoot.id != null ? String(movedRoot.id) : "";
+        if (movedRootId.length > 0 && !movedIds[movedRootId]) {
+          movedIds[movedRootId] = true;
+          movedRoots.push(movedRoot);
+        }
+      }
+      for (var cellId in model.cells) {
+        if (!Object.prototype.hasOwnProperty.call(model.cells, cellId)) {
+          continue;
+        }
+        var candidateEdge = model.cells[cellId];
+        if (candidateEdge != null && candidateEdge.id != null && model.isEdge(candidateEdge) && isLayoutManagedEdge(candidateEdge)) {
+          edgeMap[String(candidateEdge.id)] = candidateEdge;
+        }
+      }
+      var edgesToRemove = [];
+      var removedPairs = [];
+      for (var edgeId in edgeMap) {
+        if (!Object.prototype.hasOwnProperty.call(edgeMap, edgeId)) {
+          continue;
+        }
+        var edge = edgeMap[edgeId];
+        var sourceRoot = findPortHostRoot(model.getTerminal(edge, true));
+        var targetRoot = findPortHostRoot(model.getTerminal(edge, false));
+        var sourceRootId = sourceRoot != null && sourceRoot.id != null ? String(sourceRoot.id) : "";
+        var targetRootId = targetRoot != null && targetRoot.id != null ? String(targetRoot.id) : "";
+        if (!movedIds[sourceRootId] && !movedIds[targetRootId]) {
+          continue;
+        }
+        var sourceRole = getElectricalBusinessRole(sourceRoot);
+        var targetRole = getElectricalBusinessRole(targetRoot);
+        if (!isCompatiblePortPair(sourceRole, targetRole)) {
+          continue;
+        }
+        var sourcePortId = snapshotDomainApi.getEdgePortId(
+          edge,
+          sourceRoot,
+          true
+        );
+        var targetPortId = snapshotDomainApi.getEdgePortId(
+          edge,
+          targetRoot,
+          false
+        );
+        var sourcePort = getElectricalPorts(sourceRoot).filter(function(port) {
+          return String(port.id) == String(sourcePortId);
+        })[0];
+        var targetPort = getElectricalPorts(targetRoot).filter(function(port) {
+          return String(port.id) == String(targetPortId);
+        })[0];
+        if (sourcePort == null || targetPort == null) {
+          continue;
+        }
+        var sourcePoint = getPortViewPoint2(sourceRoot, sourcePort);
+        var targetPoint = getPortViewPoint2(targetRoot, targetPort);
+        if (sourcePoint == null || targetPoint == null) {
+          continue;
+        }
+        var dx = targetPoint.x - sourcePoint.x;
+        var dy = targetPoint.y - sourcePoint.y;
+        if (Math.sqrt(dx * dx + dy * dy) > threshold) {
+          edgesToRemove.push(edge);
+          removedPairs.push({ sourceRole, targetRole });
+        }
+      }
+      if (edgesToRemove.length == 0) {
+        return 0;
+      }
+      graph.removeCells(edgesToRemove, true);
+      var firstPair = removedPairs[0];
+      emitHostEvent("eid-port-snap-feedback", {
+        status: "info",
+        code: "disconnected",
+        message: "\u8FDE\u63A5\u70B9\u5DF2\u62C9\u5F00\uFF0C\u5DF2\u81EA\u52A8\u65AD\u5F00\uFF1A" + roleLabel(firstPair.sourceRole) + " \u2192 " + roleLabel(firstPair.targetRole)
+      });
+      return edgesToRemove.length;
     }
     function isManagedLayoutPortId(id) {
       return String(id || "").indexOf(MANAGED_LAYOUT_PORT_PREFIX) === 0;
@@ -9543,13 +9279,16 @@
       resetEdgeAutoStyle(edge);
       clearLayoutRouteMetadata(edge);
     }
+    function isCabinetSwitchLink2(edge) {
+      return String(getAttr(edge, "esKind") || "") == String(constants.CABINET_SWITCH_LINK_KIND || "cabinetSwitchLink");
+    }
     function isLayoutManagedEdge(edge) {
       var style;
       if (edge == null || model == null) {
         return false;
       }
-      style = model.getStyle(edge) || "";
-      return mxUtils.getValue(style, "eidLayoutManaged", "0") === "1";
+      style = graph.getCellStyle(edge) || {};
+      return String(mxUtils.getValue(style, "eidLayoutManaged", "0")) === "1";
     }
     function applyEdgeConstraintByPortId(edge, source, portId) {
       var terminal;
@@ -9646,9 +9385,21 @@
       for (var edgeId in edgeMap) {
         if (edgeMap.hasOwnProperty(edgeId)) {
           var edge = edgeMap[edgeId];
-          var edgeStyle = model.getStyle(edge) || "";
-          var sourcePortId = mxUtils.getValue(edgeStyle, "sourcePortId", "");
-          var targetPortId = mxUtils.getValue(edgeStyle, "targetPortId", "");
+          if (normalizeMagneticCircuitEdge(edge)) {
+            continue;
+          }
+          var sourceRoot = findPortHostRoot(model.getTerminal(edge, true));
+          var targetRoot = findPortHostRoot(model.getTerminal(edge, false));
+          var sourcePortId = snapshotDomainApi.getEdgePortId(
+            edge,
+            sourceRoot,
+            true
+          );
+          var targetPortId = snapshotDomainApi.getEdgePortId(
+            edge,
+            targetRoot,
+            false
+          );
           clearEdgePoints(edge);
           resetEdgeAutoStyle(edge);
           applyEdgeConstraintByPortId(edge, true, sourcePortId);
@@ -9787,7 +9538,9 @@
         snapshotDomainApi.deserializeGeometry(object.geometry),
         props.style || ""
       );
-      cell.setId(snapshotDomainApi.normalizeGenericStableId(String(object.id || "")));
+      cell.setId(
+        snapshotDomainApi.normalizeGenericStableId(String(object.id || ""))
+      );
       cell.vertex = props.vertex == null ? true : !!props.vertex;
       cell.edge = false;
       cell.setConnectable(props.connectable == null ? true : !!props.connectable);
@@ -10145,7 +9898,10 @@
                     edgeGeo.points = [];
                     for (var pi = 1; pi < pts.length - 1; pi++) {
                       edgeGeo.points.push(
-                        new mxPoint(Number(pts[pi].x) || 0, Number(pts[pi].y) || 0)
+                        new mxPoint(
+                          Number(pts[pi].x) || 0,
+                          Number(pts[pi].y) || 0
+                        )
                       );
                     }
                   }
@@ -10273,7 +10029,7 @@
             var scrollTop = Number(graph.container.scrollTop) || 0;
             var viewInfoPorts = getElectricalPorts(viewInfoRoot).map(
               function(port) {
-                var point2 = getPortViewPoint(viewInfoRoot, port);
+                var point2 = getPortViewPoint2(viewInfoRoot, port);
                 return {
                   id: String(port.id),
                   ioMode: String(port.ioMode || "both"),
@@ -10330,7 +10086,9 @@
           }
           if (payload.action === "applyDiagramSnapshotPatch" && payload.snapshotPatch != null) {
             evt.stopImmediatePropagation();
-            var patchedSnapshot = applyDiagramSnapshotPatch(payload.snapshotPatch);
+            var patchedSnapshot = applyDiagramSnapshotPatch(
+              payload.snapshotPatch
+            );
             postResult(evt.source, payload, {
               snapshot: patchedSnapshot
             });
@@ -10341,6 +10099,7 @@
             withAllFramesExpanded(function() {
               snapshotDomainApi.restoreDiagramSnapshot(payload.snapshot);
             });
+            normalizeMagneticCircuitEdges();
             var restoredSnapshot = payload.skipSnapshot === true ? null : withAllFramesExpanded(function() {
               return snapshotDomainApi.exportDiagramSnapshot();
             });
@@ -10404,16 +10163,60 @@
                     );
                   }
                   var batchStyle = batchModel.getStyle(batchEdge) || "";
-                  batchStyle = mxUtils.setStyle(batchStyle, "jettySize", "auto");
-                  batchStyle = mxUtils.setStyle(batchStyle, "sourceJettySize", "auto");
-                  batchStyle = mxUtils.setStyle(batchStyle, "targetJettySize", "auto");
-                  batchStyle = mxUtils.setStyle(batchStyle, "noEdgeStyle", null);
+                  if (isCabinetSwitchLink2(batchEdge)) {
+                    batchStyle = mxUtils.setStyle(batchStyle, "jettySize", "0");
+                    batchStyle = mxUtils.setStyle(
+                      batchStyle,
+                      "sourceJettySize",
+                      "0"
+                    );
+                    batchStyle = mxUtils.setStyle(
+                      batchStyle,
+                      "targetJettySize",
+                      "0"
+                    );
+                    batchStyle = mxUtils.setStyle(
+                      batchStyle,
+                      "noEdgeStyle",
+                      "1"
+                    );
+                    batchStyle = mxUtils.setStyle(
+                      batchStyle,
+                      "edgeStyle",
+                      null
+                    );
+                  } else {
+                    batchStyle = mxUtils.setStyle(
+                      batchStyle,
+                      "jettySize",
+                      "auto"
+                    );
+                    batchStyle = mxUtils.setStyle(
+                      batchStyle,
+                      "sourceJettySize",
+                      "auto"
+                    );
+                    batchStyle = mxUtils.setStyle(
+                      batchStyle,
+                      "targetJettySize",
+                      "auto"
+                    );
+                    batchStyle = mxUtils.setStyle(
+                      batchStyle,
+                      "noEdgeStyle",
+                      null
+                    );
+                    batchStyle = mxUtils.setStyle(
+                      batchStyle,
+                      "edgeStyle",
+                      "orthogonalEdgeStyle"
+                    );
+                  }
                   batchStyle = mxUtils.setStyle(
                     batchStyle,
-                    "edgeStyle",
-                    "orthogonalEdgeStyle"
+                    "eidLayoutManaged",
+                    "1"
                   );
-                  batchStyle = mxUtils.setStyle(batchStyle, "eidLayoutManaged", "1");
                   batchStyle = mxUtils.setStyle(batchStyle, "rounded", "0");
                   batchModel.setStyle(batchEdge, batchStyle);
                   appliedRouteCount++;
@@ -10518,7 +10321,7 @@
                   var sourceConstraint;
                   var targetConstraint;
                   var useNativeRouting;
-                  var useManualRouteStyle;
+                  var useStraightRouteStyle;
                   var keepLayoutManagedFlag;
                   var j;
                   if (edge == null || !Array.isArray(route.points) || !edgeBelongsToLayoutFrame(edge, frame)) {
@@ -10572,9 +10375,9 @@
                     applyEdgeConstraintByPoint(edge, false, targetConstraint);
                   }
                   nextStyle = model2.getStyle(edge) || nextStyle;
-                  useManualRouteStyle = !useNativeRouting && (isSnakeLayout && route.manual || nextPoints.length > 0);
+                  useStraightRouteStyle = isCabinetSwitchLink2(edge) || !useNativeRouting && (isSnakeLayout && route.manual || nextPoints.length > 0);
                   keepLayoutManagedFlag = hasSourcePortBinding || hasTargetPortBinding || sourceConstraint != null || targetConstraint != null || nextPoints.length > 0 || useNativeRouting;
-                  if (useManualRouteStyle) {
+                  if (useStraightRouteStyle) {
                     nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "0");
                     nextStyle = mxUtils.setStyle(
                       nextStyle,
@@ -10658,8 +10461,14 @@
         return;
       }
       var movedCells = evt != null ? evt.getProperty("cells") : null;
-      snapMovedElectricalPorts(movedCells);
-      clearConnectedEdgesForCells(movedCells);
+      window.setTimeout(function() {
+        if (runtimeState.updatingModel) {
+          return;
+        }
+        var detachedCount = detachMovedElectricalPorts(movedCells);
+        snapMovedElectricalPorts(movedCells, detachedCount > 0);
+        clearConnectedEdgesForCells(movedCells);
+      }, 0);
     });
     var modelChangeDebounce = null;
     var pendingStructuralModelChange = false;
@@ -10704,7 +10513,7 @@
     emitHostEvent("eid-ready");
   }
 
-  // src/main/webapp/plugins/electricalSymbols/services/backendSession.js
+  // services/backendSession.js
   function normalizeBackendBaseUrl(url, constants) {
     var normalized = trim(url).replace(/\/+$/, "");
     if (normalized.length == 0) {
@@ -10724,13 +10533,13 @@
       if (!raw) {
         return;
       }
-      var session = JSON.parse(raw);
-      var normalizedLastSnapshot = normalizeSnapshotGenericIds2(session.lastSnapshot);
-      state.backendBaseUrl = normalizeBackendBaseUrl(session.baseUrl, constants);
-      state.backendActorId = trim(session.actorId) || "local-user";
-      state.backendDiagramId = trim(session.diagramId);
-      state.backendDiagramTitle = trim(session.diagramTitle);
-      state.backendDiagramVersion = Math.max(0, toInt(session.diagramVersion, 0));
+      var session2 = JSON.parse(raw);
+      var normalizedLastSnapshot = normalizeSnapshotGenericIds2(session2.lastSnapshot);
+      state.backendBaseUrl = normalizeBackendBaseUrl(session2.baseUrl, constants);
+      state.backendActorId = trim(session2.actorId) || "local-user";
+      state.backendDiagramId = trim(session2.diagramId);
+      state.backendDiagramTitle = trim(session2.diagramTitle);
+      state.backendDiagramVersion = Math.max(0, toInt(session2.diagramVersion, 0));
       state.backendLastSnapshot = isObject(normalizedLastSnapshot) ? cloneJson(normalizedLastSnapshot) : null;
     } catch (e) {
       state.backendBaseUrl = constants.BACKEND_DEFAULT_BASE_URL;
@@ -10778,7 +10587,7 @@
     saveBackendSession(state, constants, normalizeSnapshotGenericIds2);
   }
 
-  // src/main/webapp/plugins/electricalSymbols/services/backendRemoteApi.js
+  // services/backendRemoteApi.js
   function emitBackendSavePayload(deps, payload) {
     if (deps == null || typeof deps.emitBackendSavePayload !== "function") {
       return;
@@ -10977,7 +10786,7 @@
     deps.showStatus("\u5DF2\u4ECE\u540E\u7AEF\u52A0\u8F7D\u56FE\u7EB8\uFF0C\u7248\u672C\uFF1A" + String(snapshot.version), false);
   }
 
-  // src/main/webapp/plugins/electricalSymbols/services/backend.js
+  // services/backend.js
   function buildBackendServiceDeps() {
     var app = getApp();
     var ctx = app.ctx;
@@ -11170,7 +10979,7 @@
     syncBackendState: syncBackendStateCompat
   };
 
-  // src/main/webapp/plugins/electricalSymbols/services/libraryGraphCodec.js
+  // services/libraryGraphCodec.js
   function createLibraryEntry(graph, buildSymbolCell2, spec) {
     var root = buildSymbolCell2(spec);
     var bounds = graph.getBoundingBoxFromGeometry([root]);
@@ -11228,7 +11037,7 @@
     return -1;
   }
 
-  // src/main/webapp/plugins/electricalSymbols/services/libraryStorage.js
+  // services/libraryStorage.js
   function loadStoredLibrary(ui, state, libraryTitle, callback, openInSidebar) {
     StorageFile.getFileContent(
       ui,
@@ -11279,7 +11088,7 @@
     );
   }
 
-  // src/main/webapp/plugins/electricalSymbols/services/libraryStore.js
+  // services/libraryStore.js
   function buildLibraryStoreDeps() {
     var app = getApp();
     var ctx = app.ctx;
@@ -11415,7 +11224,7 @@
     saveLibraryImages: saveLibraryImagesCompat
   };
 
-  // src/main/webapp/plugins/electricalSymbols/ui/createInstanceDialog.js
+  // ui/createInstanceDialog.js
   function getCreateInstanceDeps() {
     return {
       trim,
@@ -11731,7 +11540,6 @@
   }
 
   // ui/exportSvgDialog.js
-  // src/main/webapp/plugins/electricalSymbols/ui/exportSvgDialog.js
   function buildExportDialogDeps() {
     var app = getApp();
     return {
@@ -11897,7 +11705,7 @@
     wnd.setVisible(true);
   }
 
-  // src/main/webapp/plugins/electricalSymbols/ui/exportDialog.js
+  // ui/exportDialog.js
   function buildExportDialogDeps2() {
     var app = getApp();
     return {
@@ -12001,7 +11809,7 @@
     wnd.setVisible(true);
   }
 
-  // src/main/webapp/plugins/electricalSymbols/ui/frameDialog.js
+  // ui/frameDialog.js
   function buildFrameDialogDeps() {
     var app = getApp();
     return {
@@ -12089,7 +11897,7 @@
     wnd.setVisible(true);
   }
 
-  // src/main/webapp/plugins/electricalSymbols/ui/shared/previewSurface.js
+  // ui/shared/previewSurface.js
   function clamp3(value, min, max) {
     return Math.max(min, Math.min(max, value));
   }
@@ -12343,7 +12151,7 @@
     };
   }
 
-  // src/main/webapp/plugins/electricalSymbols/ui/instanceEditor.js
+  // ui/instanceEditor.js
   function buildInstanceEditorDeps() {
     var app = getApp();
     var ctx = app.ctx;
@@ -12812,7 +12620,7 @@
     state.instanceWindow = wnd;
   }
 
-  // src/main/webapp/plugins/electricalSymbols/services/draftStore.js
+  // services/draftStore.js
   function buildDraftStoreDeps() {
     var app = getApp();
     return {
@@ -12921,7 +12729,7 @@
     scheduleEditorDraftSave
   };
 
-  // src/main/webapp/plugins/electricalSymbols/ui/templateEditor.js
+  // ui/templateEditor.js
   function getTemplateEditorDeps() {
     var app = getApp();
     var ctx = app.ctx;
@@ -14403,7 +14211,7 @@
     updateSelectedItem
   };
 
-  // src/main/webapp/plugins/electricalSymbols/ui/templateBrowser.js
+  // ui/templateBrowser.js
   function buildTemplateBrowserDeps() {
     var app = getApp();
     return {
@@ -14638,7 +14446,7 @@
     });
   }
 
-  // src/main/webapp/plugins/electricalSymbols/application/actions.js
+  // application/actions.js
   function execute(fn, resetDeleteFlag) {
     try {
       return fn();
@@ -14906,7 +14714,6 @@
   };
 
   // runtime/modelSync.js
-  // src/main/webapp/plugins/electricalSymbols/runtime/modelSync.js
   function buildModelSyncDeps() {
     var app = getApp();
     return {
@@ -15007,7 +14814,7 @@
     recordCanvasOperation
   };
 
-  // src/main/webapp/plugins/electricalSymbols/runtime/canvasFeatures.js
+  // runtime/canvasFeatures.js
   var ACTION_ITEMS = [
     {
       resourceKey: "electricalComposeInstance",
@@ -15055,8 +14862,12 @@
     var graphGetMovableCells = graph.getMovableCells;
     var menu = ui.menus.get("extras");
     var oldExtrasMenu = menu.funct;
+    function isCabinetBoundSwitchCell(cell) {
+      var root = isElectricalRoot(cell) ? cell : findElectricalRoot(cell);
+      return root != null && cabinetDomainApi.isSwitchBoundToCabinet(root);
+    }
     graph.isCellDeletable = function(cell) {
-      if (isDrawingFrame(cell) || isCabinetSegment(cell) || isPluginInternalCell(cell)) {
+      if (isDrawingFrame(cell) || isCabinetSegment(cell) || isPluginInternalCell(cell) || isCabinetBoundSwitchCell(cell)) {
         return !!state.allowProtectedDelete;
       }
       return graphIsCellDeletable.apply(this, arguments);
@@ -15072,12 +14883,15 @@
       return _origRemoveCells.call(this, cells, includeEdges);
     };
     graph.isCellMovable = function(cell) {
-      if (composeModeApi.isBlockedComposeTarget(cell) || composeModeApi.isLockedComposedChild(cell)) {
+      if (isCabinetBoundSwitchCell(cell) || composeModeApi.isBlockedComposeTarget(cell) || composeModeApi.isLockedComposedChild(cell)) {
         return false;
       }
       return graphIsCellMovable.apply(this, arguments);
     };
     graph.isCellResizable = function(cell) {
+      if (isCabinetBoundSwitchCell(cell)) {
+        return false;
+      }
       if (isElectricalRoot(cell)) {
         return true;
       }
@@ -15152,7 +14966,7 @@
       var filtered = [];
       var i;
       for (i = 0; i < result.length; i++) {
-        if (!composeModeApi.isBlockedComposeTarget(result[i])) {
+        if (!isCabinetBoundSwitchCell(result[i]) && !composeModeApi.isBlockedComposeTarget(result[i])) {
           filtered.push(result[i]);
         }
       }
@@ -15218,57 +15032,57 @@
     };
     graph.addMouseListener({
       mouseDown: function(sender, me) {
-        var session = state.instanceComposeSession;
+        var session2 = state.instanceComposeSession;
         var eventCell;
-        if (session == null) {
+        if (session2 == null) {
           return;
         }
         eventCell = me.getCell();
-        session.pointerDown = false;
-        session.dragging = false;
-        session.startPoint = null;
-        session.dragCandidates = [];
+        session2.pointerDown = false;
+        session2.dragging = false;
+        session2.startPoint = null;
+        session2.dragCandidates = [];
         if (composeModeApi.isBlockedComposeTarget(eventCell)) {
           composeModeApi.refreshInstanceComposeOverlay();
           return;
         }
-        session.dragCandidates = composeModeApi.collectComposeDragCandidates(
-          session.root,
+        session2.dragCandidates = composeModeApi.collectComposeDragCandidates(
+          session2.root,
           eventCell
         );
-        if (session.dragCandidates.length == 0) {
+        if (session2.dragCandidates.length == 0) {
           composeModeApi.refreshInstanceComposeOverlay();
           return;
         }
-        session.pointerDown = true;
-        session.startPoint = {
+        session2.pointerDown = true;
+        session2.startPoint = {
           x: me.getGraphX(),
           y: me.getGraphY()
         };
       },
       mouseMove: function(sender, me) {
-        var session = state.instanceComposeSession;
+        var session2 = state.instanceComposeSession;
         var dx;
         var dy;
-        if (session == null || !session.pointerDown || session.startPoint == null || session.dragCandidates.length == 0) {
+        if (session2 == null || !session2.pointerDown || session2.startPoint == null || session2.dragCandidates.length == 0) {
           return;
         }
-        dx = Math.abs(me.getGraphX() - session.startPoint.x);
-        dy = Math.abs(me.getGraphY() - session.startPoint.y);
+        dx = Math.abs(me.getGraphX() - session2.startPoint.x);
+        dy = Math.abs(me.getGraphY() - session2.startPoint.y);
         if (dx > 2 || dy > 2) {
-          session.dragging = true;
+          session2.dragging = true;
           composeModeApi.refreshInstanceComposeOverlay();
         }
       },
       mouseUp: function() {
-        var session = state.instanceComposeSession;
-        if (session == null) {
+        var session2 = state.instanceComposeSession;
+        if (session2 == null) {
           return;
         }
-        session.pointerDown = false;
-        session.dragging = false;
-        session.startPoint = null;
-        session.dragCandidates = [];
+        session2.pointerDown = false;
+        session2.dragging = false;
+        session2.startPoint = null;
+        session2.dragCandidates = [];
         composeModeApi.refreshInstanceComposeOverlay();
       }
     });
@@ -15291,138 +15105,290 @@
     model.addListener(mxEvent.CHANGE, modelSyncApi.handleModelChange);
   }
 
-  // runtime/cabinetOverlays.js
-  var OVERLAY_SIZE = 18;
-  var PLUS_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#2a5c9c" stroke="#ffffff" stroke-width="1"/><path d="M9 5.4v7.2M5.4 9h7.2" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round"/></svg>';
-  var SWITCH_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#a85c22" stroke="#ffffff" stroke-width="1"/><path d="M4.9 12.2L11.2 6.6" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round"/><path d="M11.4 12.2h1.8" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round"/><circle cx="4.8" cy="12.2" r="1.2" fill="#ffffff"/><circle cx="13.2" cy="12.2" r="1.2" fill="#ffffff"/></svg>';
-  var iconCache = {};
-  function getIconImage(key, svg) {
-    if (iconCache[key] == null) {
-      iconCache[key] = new mxImage(
-        "data:image/svg+xml," + encodeURIComponent(svg),
-        OVERLAY_SIZE,
-        OVERLAY_SIZE
-      );
+  // runtime/cabinetPortDrag.js
+  var HIT_RADIUS = 18;
+  var GUIDE_SIZE = 18;
+  var session = null;
+  var guide = null;
+  function canDrag(ctx) {
+    return ctx != null && ctx.graph != null && ctx.model != null && typeof ctx.graph.isEnabled == "function" && ctx.graph.isEnabled() && !isPrintMode() && !isOverviewMode();
+  }
+  function getPortViewPoint(ctx, segment, port) {
+    var state = ctx.graph.view.getState(segment);
+    if (state == null || port == null) {
+      return null;
     }
-    return iconCache[key];
+    return {
+      x: state.x + Number(port.x) * state.width,
+      y: state.y + Number(port.y) * state.height
+    };
   }
-  function createInsertOverlay() {
-    var overlay = new mxCellOverlay(
-      getIconImage("plus", PLUS_ICON_SVG),
-      "\u5728\u6B64\u5757\u4E0B\u65B9\u63D2\u5165\u65B0\u5757",
-      mxConstants.ALIGN_CENTER,
-      mxConstants.ALIGN_BOTTOM,
-      new mxPoint(0, 0),
-      "pointer"
-    );
-    overlay.addListener(mxEvent.CLICK, function(sender, evt) {
-      var cell = evt.getProperty("cell");
-      var nativeEvent = evt.getProperty("event");
-      if (cell != null) {
-        cabinetBlockDialogApi.openCabinetBlockDialog(cell, nativeEvent);
-      }
-    });
-    return overlay;
-  }
-  function createBindSwitchOverlay() {
-    var overlay = new mxCellOverlay(
-      getIconImage("switch", SWITCH_ICON_SVG),
-      "\u4E3A\u6B64\u5757\u7ED1\u5B9A\u5F00\u5173",
-      mxConstants.ALIGN_RIGHT,
-      mxConstants.ALIGN_MIDDLE,
-      new mxPoint(-12, 0),
-      "pointer"
-    );
-    overlay.addListener(mxEvent.CLICK, function(sender, evt) {
-      var cell = evt.getProperty("cell");
-      var nativeEvent = evt.getProperty("event");
-      if (cell != null) {
-        switchPickerApi.openSwitchPickerDialog(cell, nativeEvent);
-      }
-    });
-    return overlay;
-  }
-  function hasSwitchBound(cell) {
-    return trim(getAttr(cell, "switchInstanceId")).length > 0;
-  }
-  function countOverlays(cell) {
-    return Array.isArray(cell.overlays) ? cell.overlays.length : 0;
-  }
-  function syncBlockOverlay(cell) {
-    var graph = getApp().ctx.graph;
-    if (!isCabinetBlock(cell)) {
-      return;
-    }
-    if (isPrintMode() || isOverviewMode()) {
-      if (countOverlays(cell) > 0) {
-        graph.removeCellOverlays(cell);
-      }
-      return;
-    }
-    var expected = hasSwitchBound(cell) ? 1 : 2;
-    if (countOverlays(cell) === expected) {
-      return;
-    }
-    graph.removeCellOverlays(cell);
-    graph.addCellOverlay(cell, createInsertOverlay());
-    if (!hasSwitchBound(cell)) {
-      graph.addCellOverlay(cell, createBindSwitchOverlay());
-    }
-  }
-  function refreshCabinetOverlays() {
-    var model = getApp().ctx.model;
+  function findNearestPort(ctx, graphPoint) {
     var frames = frameDomainApi.getAllDrawingFrames();
+    var nearest = null;
+    var nearestDistance = HIT_RADIUS + 1;
     var i;
     var j;
-    var k;
     for (i = 0; i < frames.length; i++) {
-      for (j = 0; j < model.getChildCount(frames[i]); j++) {
-        var segment = model.getChildAt(frames[i], j);
+      for (j = 0; j < ctx.model.getChildCount(frames[i]); j++) {
+        var segment = ctx.model.getChildAt(frames[i], j);
         if (!isCabinetSegment(segment)) {
           continue;
         }
-        var blocks = cabinetDomainApi.getSegmentBlocks(segment);
-        for (k = 0; k < blocks.length; k++) {
-          syncBlockOverlay(blocks[k]);
+        var ports = connectionConstraintsApi.getPortLayoutForRoot(segment);
+        var k;
+        for (k = 0; k < ports.length; k++) {
+          var point = getPortViewPoint(ctx, segment, ports[k]);
+          if (point == null) {
+            continue;
+          }
+          var dx = point.x - graphPoint.x;
+          var dy = point.y - graphPoint.y;
+          var distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance <= HIT_RADIUS && distance < nearestDistance) {
+            nearestDistance = distance;
+            nearest = {
+              segment,
+              port: ports[k],
+              point
+            };
+          }
         }
       }
     }
+    return nearest;
   }
-  function syncSegmentOverlays(segment) {
-    var blocks = cabinetDomainApi.getSegmentBlocks(segment);
-    var i;
-    for (i = 0; i < blocks.length; i++) {
-      syncBlockOverlay(blocks[i]);
+  function ensureGuide(ctx) {
+    if (guide != null) {
+      return guide;
+    }
+    guide = document.createElement("div");
+    guide.setAttribute("data-eid-cabinet-port-drag-handle", "1");
+    guide.setAttribute("title", "\u4E0A\u4E0B\u62D6\u52A8\u8BE5\u56DE\u8DEF");
+    guide.style.position = "absolute";
+    guide.style.width = GUIDE_SIZE + "px";
+    guide.style.height = GUIDE_SIZE + "px";
+    guide.style.boxSizing = "border-box";
+    guide.style.border = "2px solid #1677ff";
+    guide.style.borderRadius = "50%";
+    guide.style.background = "rgba(22, 119, 255, 0.12)";
+    guide.style.boxShadow = "0 0 0 2px rgba(255, 255, 255, 0.9)";
+    guide.style.pointerEvents = "none";
+    guide.style.zIndex = "10000";
+    guide.style.display = "none";
+    ctx.graph.container.appendChild(guide);
+    return guide;
+  }
+  function hideGuide(ctx) {
+    if (guide != null) {
+      guide.style.display = "none";
+    }
+    if (ctx != null && ctx.graph != null && ctx.graph.container != null) {
+      ctx.graph.container.removeAttribute("data-eid-cabinet-port-hover");
+      if (session == null) {
+        ctx.graph.container.style.cursor = "";
+      }
     }
   }
-  function handleModelChange2(sender, evt) {
-    var edit = evt != null ? evt.getProperty("edit") : null;
-    var changes = edit != null ? edit.changes : null;
-    var i;
-    if (!Array.isArray(changes)) {
+  function showGuide(ctx, hit, active) {
+    var element = ensureGuide(ctx);
+    var point = getPortViewPoint(ctx, hit.segment, hit.port) || hit.point;
+    element.style.left = Math.round(point.x - GUIDE_SIZE / 2) + "px";
+    element.style.top = Math.round(point.y - GUIDE_SIZE / 2) + "px";
+    element.style.background = active ? "rgba(22, 119, 255, 0.32)" : "rgba(22, 119, 255, 0.12)";
+    element.style.display = "block";
+    ctx.graph.container.style.cursor = "ns-resize";
+    ctx.graph.container.setAttribute("data-eid-cabinet-port-hover", "1");
+  }
+  function toGraphPoint(ctx, evt) {
+    return mxUtils.convertPoint(
+      ctx.graph.container,
+      mxEvent.getClientX(evt),
+      mxEvent.getClientY(evt)
+    );
+  }
+  function consume(evt) {
+    if (evt == null) {
       return;
     }
-    for (i = 0; i < changes.length; i++) {
-      var change = changes[i];
-      if (change.constructor == mxRootChange) {
-        refreshCabinetOverlays();
-        return;
-      }
-      if (change.constructor != mxChildChange || change.parent == null) {
-        continue;
-      }
-      if (isCabinetSegment(change.child)) {
-        syncSegmentOverlays(change.child);
-      } else if (isCabinetBlock(change.child)) {
-        syncBlockOverlay(change.child);
-      }
+    if (typeof evt.preventDefault == "function") {
+      evt.preventDefault();
+    }
+    if (typeof evt.stopPropagation == "function") {
+      evt.stopPropagation();
+    }
+    if (typeof evt.stopImmediatePropagation == "function") {
+      evt.stopImmediatePropagation();
     }
   }
-  function installCabinetOverlays(ctx) {
-    ctx.model.addListener(mxEvent.CHANGE, handleModelChange2);
-    onLodChanged(refreshCabinetOverlays);
-    onPrintModeChanged(refreshCabinetOverlays);
-    refreshCabinetOverlays();
+  function refreshView(ctx) {
+    ctx.graph.view.invalidate();
+    ctx.graph.view.validate();
+  }
+  function moveSessionTo(ctx, clientY) {
+    if (session == null) {
+      return;
+    }
+    var scale = ctx.graph.view.scale || 1;
+    var desiredTotal = (Number(clientY) - session.startClientY) / scale;
+    var incremental = desiredTotal - session.appliedDeltaY;
+    if (Math.abs(incremental) < 1e-4) {
+      return;
+    }
+    var result = cabinetDomainApi.moveCabinetPortByDelta(
+      session.segment,
+      session.port.id,
+      incremental
+    );
+    if (result != null) {
+      session.appliedDeltaY += Number(result.deltaY) || 0;
+    }
+    var ports = connectionConstraintsApi.getPortLayoutForRoot(session.segment);
+    var i;
+    for (i = 0; i < ports.length; i++) {
+      if (String(ports[i].id) == String(session.port.id)) {
+        session.port = ports[i];
+        break;
+      }
+    }
+    refreshView(ctx);
+    showGuide(ctx, session, true);
+  }
+  function finishDrag(ctx, cancelled) {
+    if (session == null) {
+      return;
+    }
+    if (session.pointerId != null && session.pointerTarget != null && typeof session.pointerTarget.releasePointerCapture == "function") {
+      try {
+        session.pointerTarget.releasePointerCapture(session.pointerId);
+      } catch (e) {
+      }
+    }
+    if (cancelled && Math.abs(session.appliedDeltaY) > 1e-4) {
+      cabinetDomainApi.moveCabinetPortByDelta(
+        session.segment,
+        session.port.id,
+        -session.appliedDeltaY
+      );
+    }
+    session = null;
+    ctx.graph.container.removeAttribute("data-eid-cabinet-port-dragging");
+    refreshView(ctx);
+    hideGuide(ctx);
+  }
+  function installCabinetPortDrag(ctx) {
+    var container = ctx.graph.container;
+    if (container == null) {
+      return;
+    }
+    container.setAttribute("data-eid-cabinet-port-drag-enabled", "1");
+    function handleHover(evt) {
+      if (session != null || !canDrag(ctx)) {
+        return;
+      }
+      var bounds = container.getBoundingClientRect();
+      var clientX = mxEvent.getClientX(evt);
+      var clientY = mxEvent.getClientY(evt);
+      if (clientX < bounds.left || clientX > bounds.right || clientY < bounds.top || clientY > bounds.bottom) {
+        hideGuide(ctx);
+        return;
+      }
+      var hit = findNearestPort(ctx, toGraphPoint(ctx, evt));
+      if (hit != null) {
+        showGuide(ctx, hit, false);
+      } else {
+        hideGuide(ctx);
+      }
+    }
+    function handleMouseDown(evt) {
+      if (session != null) {
+        return;
+      }
+      if (!canDrag(ctx) || evt.button != null && evt.button !== 0) {
+        return;
+      }
+      var hit = findNearestPort(ctx, toGraphPoint(ctx, evt));
+      if (hit == null) {
+        return;
+      }
+      ctx.graph.stopEditing(false);
+      session = {
+        segment: hit.segment,
+        port: hit.port,
+        point: hit.point,
+        pointerId: evt.pointerId != null && isFinite(Number(evt.pointerId)) ? Number(evt.pointerId) : null,
+        pointerTarget: evt.target || null,
+        startClientY: Number(mxEvent.getClientY(evt)),
+        appliedDeltaY: 0
+      };
+      if (session.pointerId != null && session.pointerTarget != null && typeof session.pointerTarget.setPointerCapture == "function") {
+        try {
+          session.pointerTarget.setPointerCapture(session.pointerId);
+        } catch (e) {
+        }
+      }
+      container.setAttribute("data-eid-cabinet-port-dragging", "1");
+      showGuide(ctx, session, true);
+      consume(evt);
+    }
+    function handleMouseMove(evt) {
+      if (session == null) {
+        return;
+      }
+      moveSessionTo(ctx, mxEvent.getClientY(evt));
+      consume(evt);
+    }
+    function handleMouseUp(evt) {
+      if (session == null) {
+        return;
+      }
+      moveSessionTo(ctx, mxEvent.getClientY(evt));
+      finishDrag(ctx, false);
+      consume(evt);
+    }
+    function handleKeyDown(evt) {
+      if (session != null && (evt.key == "Escape" || evt.keyCode == 27)) {
+        finishDrag(ctx, true);
+        consume(evt);
+      }
+    }
+    function handleWindowBlur() {
+      if (session != null) {
+        finishDrag(ctx, true);
+      }
+    }
+    function hideWhenUnavailable() {
+      if (session != null && (!canDrag(ctx) || !ctx.model.contains(session.segment))) {
+        finishDrag(ctx, true);
+      } else if (!canDrag(ctx)) {
+        hideGuide(ctx);
+      }
+    }
+    if (typeof window.PointerEvent == "function") {
+      document.addEventListener("pointerdown", handleMouseDown, true);
+      document.addEventListener("pointermove", handleHover, true);
+      window.addEventListener("pointermove", handleMouseMove, true);
+      window.addEventListener("pointerup", handleMouseUp, true);
+    } else {
+      document.addEventListener("mousedown", handleMouseDown, true);
+      document.addEventListener("mousemove", handleHover, true);
+      window.addEventListener("mousemove", handleMouseMove, true);
+      window.addEventListener("mouseup", handleMouseUp, true);
+    }
+    window.addEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("blur", handleWindowBlur);
+    container.addEventListener("mouseleave", function() {
+      if (session == null) {
+        hideGuide(ctx);
+      }
+    });
+    ctx.model.addListener(mxEvent.CHANGE, function() {
+      if (session == null) {
+        hideGuide(ctx);
+      }
+    });
+    onLodChanged(hideWhenUnavailable);
+    onPrintModeChanged(hideWhenUnavailable);
   }
 
   // runtime/clipboardSanitizer.js
@@ -15550,7 +15516,6 @@
   }
 
   // runtime/clipboardOverride.js
-  // src/main/webapp/plugins/electricalSymbols/runtime/clipboardOverride.js
   function collectExistingCodes(model) {
     var codes = {};
     var cells = model.cells;
@@ -16107,7 +16072,7 @@
     };
   }
 
-  // src/main/webapp/plugins/electricalSymbols/bootstrap/createApp.js
+  // bootstrap/createApp.js
   function applyEmbeddedEditorLayout(ui) {
     if (ui == null) {
       return;
@@ -16272,7 +16237,7 @@
     installClipboardOverride(app.ctx);
     installViewportVirtualization(app.ctx);
     installPrintMode(app.ctx);
-    installCabinetOverlays(app.ctx);
+    installCabinetPortDrag(app.ctx);
     pruneToolbarButtons(ui);
     installCustomToolbarButtons(ui);
     if (ui.menubarContainer != null) {
@@ -16291,7 +16256,7 @@
     });
   }
 
-  // src/main/webapp/plugins/electricalSymbols/bootstrap/installElectricalSymbols.js
+  // bootstrap/installElectricalSymbols.js
   function installElectricalSymbols(ctx) {
     var app = createApp(ctx);
     var initialSnapshot;
@@ -16304,7 +16269,7 @@
     }
   }
 
-  // src/main/webapp/plugins/electricalSymbols/index.js
+  // index.js
   Draw.loadPlugin(function(ui) {
     var ctx = createPluginContext(ui);
     registerElectricalResources();

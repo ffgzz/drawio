@@ -753,8 +753,9 @@ export function installHostBridge(ctx) {
     var sourcePortId = String(candidate.sourcePort.id);
     var targetPortId = String(candidate.targetPort.id);
     var style =
-      "endArrow=none;html=1;rounded=0;edgeStyle=none;noEdgeStyle=1;" +
-      "orthogonalLoop=0;eidLayoutManaged=1;strokeColor=#111111;strokeWidth=1.3;" +
+      "endArrow=none;startArrow=none;html=1;rounded=0;edgeStyle=none;noEdgeStyle=1;" +
+      "orthogonalLoop=0;eidLayoutManaged=1;eidPortSnapLink=1;" +
+      "strokeColor=none;strokeWidth=0;opacity=0;" +
       "sourcePortId=" +
       sourcePortId +
       ";targetPortId=" +
@@ -774,7 +775,88 @@ export function installHostBridge(ctx) {
     return edge;
   }
 
-  function snapMovedElectricalPorts(cells) {
+  function normalizeMagneticCircuitEdge(edge) {
+    if (edge == null || !model.isEdge(edge)) {
+      return false;
+    }
+
+    var sourceRoot = findPortHostRoot(model.getTerminal(edge, true));
+    var targetRoot = findPortHostRoot(model.getTerminal(edge, false));
+    var sourceRole = getElectricalBusinessRole(sourceRoot);
+    var targetRole = getElectricalBusinessRole(targetRoot);
+
+    if (!isCompatiblePortPair(sourceRole, targetRole)) {
+      return false;
+    }
+
+    var sourcePortId = snapshotDomainApi.getEdgePortId(
+      edge,
+      sourceRoot,
+      true,
+    );
+    var targetPortId = snapshotDomainApi.getEdgePortId(
+      edge,
+      targetRoot,
+      false,
+    );
+
+    if (
+      sourcePortId == null ||
+      String(sourcePortId).length == 0 ||
+      targetPortId == null ||
+      String(targetPortId).length == 0
+    ) {
+      return false;
+    }
+
+    clearEdgePoints(edge);
+    var style = model.getStyle(edge) || "";
+    style = mxUtils.setStyle(style, "endArrow", "none");
+    style = mxUtils.setStyle(style, "startArrow", "none");
+    style = mxUtils.setStyle(style, "rounded", "0");
+    style = mxUtils.setStyle(style, "edgeStyle", null);
+    style = mxUtils.setStyle(style, "noEdgeStyle", "1");
+    style = mxUtils.setStyle(style, "orthogonalLoop", "0");
+    style = mxUtils.setStyle(style, "jettySize", "0");
+    style = mxUtils.setStyle(style, "sourceJettySize", "0");
+    style = mxUtils.setStyle(style, "targetJettySize", "0");
+    style = mxUtils.setStyle(style, "eidLayoutManaged", "1");
+    style = mxUtils.setStyle(style, "eidPortSnapLink", "1");
+    style = mxUtils.setStyle(style, "strokeColor", "none");
+    style = mxUtils.setStyle(style, "strokeWidth", "0");
+    style = mxUtils.setStyle(style, "opacity", "0");
+    style = mxUtils.setStyle(style, "sourcePortId", String(sourcePortId));
+    style = mxUtils.setStyle(style, "targetPortId", String(targetPortId));
+    model.setStyle(edge, style);
+    applyEdgeConstraintByPortId(edge, true, sourcePortId);
+    applyEdgeConstraintByPortId(edge, false, targetPortId);
+    return true;
+  }
+
+  function normalizeMagneticCircuitEdges() {
+    if (model == null || model.cells == null) {
+      return 0;
+    }
+
+    var normalized = 0;
+    model.beginUpdate();
+    try {
+      for (var cellId in model.cells) {
+        if (
+          Object.prototype.hasOwnProperty.call(model.cells, cellId) &&
+          normalizeMagneticCircuitEdge(model.cells[cellId])
+        ) {
+          normalized += 1;
+        }
+      }
+    } finally {
+      model.endUpdate();
+    }
+
+    return normalized;
+  }
+
+  function snapMovedElectricalPorts(cells, suppressFailureFeedback) {
     if (!Array.isArray(cells) || cells.length == 0) {
       return 0;
     }
@@ -875,7 +957,7 @@ export function installHostBridge(ctx) {
           " → " +
           roleLabel(connectedAnchor.targetRole),
       });
-    } else if (feedbackPair != null) {
+    } else if (feedbackPair != null && !suppressFailureFeedback) {
       emitHostEvent("eid-port-snap-feedback", {
         status:
           feedbackPair.directionValid &&
@@ -890,6 +972,126 @@ export function installHostBridge(ctx) {
     }
 
     return connectedCount;
+  }
+
+  function detachMovedElectricalPorts(cells) {
+    if (!Array.isArray(cells) || cells.length == 0) {
+      return 0;
+    }
+
+    var movedRoots = [];
+    var movedIds = {};
+    var edgeMap = {};
+    var threshold =
+      Number(constants.CANVAS_PORT_DETACH_THRESHOLD_PX) || 72;
+    var i;
+
+    for (i = 0; i < cells.length; i++) {
+      var movedRoot = findElectricalRoot(cells[i]);
+      var movedRootId =
+        movedRoot != null && movedRoot.id != null ? String(movedRoot.id) : "";
+
+      if (movedRootId.length > 0 && !movedIds[movedRootId]) {
+        movedIds[movedRootId] = true;
+        movedRoots.push(movedRoot);
+      }
+    }
+
+    // Restored snapshots may keep an edge terminal on a generated port child,
+    // so graph.getConnections(root) is not reliable for every valid file.
+    // Resolve every managed edge through findPortHostRoot and then keep only
+    // those incident to a moved electrical root.
+    for (var cellId in model.cells) {
+      if (!Object.prototype.hasOwnProperty.call(model.cells, cellId)) {
+        continue;
+      }
+      var candidateEdge = model.cells[cellId];
+      if (
+        candidateEdge != null &&
+        candidateEdge.id != null &&
+        model.isEdge(candidateEdge) &&
+        isLayoutManagedEdge(candidateEdge)
+      ) {
+        edgeMap[String(candidateEdge.id)] = candidateEdge;
+      }
+    }
+
+    var edgesToRemove = [];
+    var removedPairs = [];
+    for (var edgeId in edgeMap) {
+      if (!Object.prototype.hasOwnProperty.call(edgeMap, edgeId)) {
+        continue;
+      }
+
+      var edge = edgeMap[edgeId];
+      var sourceRoot = findPortHostRoot(model.getTerminal(edge, true));
+      var targetRoot = findPortHostRoot(model.getTerminal(edge, false));
+      var sourceRootId =
+        sourceRoot != null && sourceRoot.id != null ? String(sourceRoot.id) : "";
+      var targetRootId =
+        targetRoot != null && targetRoot.id != null ? String(targetRoot.id) : "";
+      if (!movedIds[sourceRootId] && !movedIds[targetRootId]) {
+        continue;
+      }
+      var sourceRole = getElectricalBusinessRole(sourceRoot);
+      var targetRole = getElectricalBusinessRole(targetRoot);
+
+      // Cabinet leads and ordinary drawing lines are not magnetic electrical
+      // symbol connections. Only detach the two business chain pairs.
+      if (!isCompatiblePortPair(sourceRole, targetRole)) {
+        continue;
+      }
+
+      var sourcePortId = snapshotDomainApi.getEdgePortId(
+        edge,
+        sourceRoot,
+        true,
+      );
+      var targetPortId = snapshotDomainApi.getEdgePortId(
+        edge,
+        targetRoot,
+        false,
+      );
+      var sourcePort = getElectricalPorts(sourceRoot).filter(function (port) {
+        return String(port.id) == String(sourcePortId);
+      })[0];
+      var targetPort = getElectricalPorts(targetRoot).filter(function (port) {
+        return String(port.id) == String(targetPortId);
+      })[0];
+      if (sourcePort == null || targetPort == null) {
+        continue;
+      }
+      var sourcePoint = getPortViewPoint(sourceRoot, sourcePort);
+      var targetPoint = getPortViewPoint(targetRoot, targetPort);
+
+      if (sourcePoint == null || targetPoint == null) {
+        continue;
+      }
+
+      var dx = targetPoint.x - sourcePoint.x;
+      var dy = targetPoint.y - sourcePoint.y;
+      if (Math.sqrt(dx * dx + dy * dy) > threshold) {
+        edgesToRemove.push(edge);
+        removedPairs.push({ sourceRole: sourceRole, targetRole: targetRole });
+      }
+    }
+
+    if (edgesToRemove.length == 0) {
+      return 0;
+    }
+
+    graph.removeCells(edgesToRemove, true);
+    var firstPair = removedPairs[0];
+    emitHostEvent("eid-port-snap-feedback", {
+      status: "info",
+      code: "disconnected",
+      message:
+        "连接点已拉开，已自动断开：" +
+        roleLabel(firstPair.sourceRole) +
+        " → " +
+        roleLabel(firstPair.targetRole),
+    });
+    return edgesToRemove.length;
   }
 
   function isManagedLayoutPortId(id) {
@@ -1280,6 +1482,13 @@ export function installHostBridge(ctx) {
     clearLayoutRouteMetadata(edge);
   }
 
+  function isCabinetSwitchLink(edge) {
+    return (
+      String(getAttr(edge, "esKind") || "") ==
+      String(constants.CABINET_SWITCH_LINK_KIND || "cabinetSwitchLink")
+    );
+  }
+
   function isLayoutManagedEdge(edge) {
     var style;
 
@@ -1287,8 +1496,11 @@ export function installHostBridge(ctx) {
       return false;
     }
 
-    style = model.getStyle(edge) || "";
-    return mxUtils.getValue(style, "eidLayoutManaged", "0") === "1";
+    // mxUtils.getValue expects the parsed cell-style map. model.getStyle
+    // returns the raw semicolon-delimited string, which made every managed
+    // edge look unmanaged and prevented drag-away detachment from running.
+    style = graph.getCellStyle(edge) || {};
+    return String(mxUtils.getValue(style, "eidLayoutManaged", "0")) === "1";
   }
 
   function applyEdgeConstraintByPortId(edge, source, portId) {
@@ -1423,9 +1635,22 @@ export function installHostBridge(ctx) {
     for (var edgeId in edgeMap) {
       if (edgeMap.hasOwnProperty(edgeId)) {
         var edge = edgeMap[edgeId];
-        var edgeStyle = model.getStyle(edge) || "";
-        var sourcePortId = mxUtils.getValue(edgeStyle, "sourcePortId", "");
-        var targetPortId = mxUtils.getValue(edgeStyle, "targetPortId", "");
+        if (normalizeMagneticCircuitEdge(edge)) {
+          continue;
+        }
+
+        var sourceRoot = findPortHostRoot(model.getTerminal(edge, true));
+        var targetRoot = findPortHostRoot(model.getTerminal(edge, false));
+        var sourcePortId = snapshotDomainApi.getEdgePortId(
+          edge,
+          sourceRoot,
+          true,
+        );
+        var targetPortId = snapshotDomainApi.getEdgePortId(
+          edge,
+          targetRoot,
+          false,
+        );
 
         clearEdgePoints(edge);
         resetEdgeAutoStyle(edge);
@@ -2372,6 +2597,12 @@ export function installHostBridge(ctx) {
           withAllFramesExpanded(function () {
             snapshotDomainApi.restoreDiagramSnapshot(payload.snapshot);
           });
+          // Breaker→cable and cable→load edges only preserve the business
+          // topology. Their ports are physically snapped together, so drawing
+          // an additional routed segment creates the small L-shaped line seen
+          // beside the symbols. Normalize old and new snapshots to invisible,
+          // port-bound semantic links.
+          normalizeMagneticCircuitEdges();
           // Large generated drafts immediately apply their edge routes and then
           // request one final snapshot.  Avoid serializing the whole graph here
           // as well when the host explicitly opts out.
@@ -2482,23 +2713,55 @@ export function installHostBridge(ctx) {
                   );
                 }
                 var batchStyle = batchModel.getStyle(batchEdge) || "";
-                batchStyle = mxUtils.setStyle(batchStyle, "jettySize", "auto");
-                batchStyle = mxUtils.setStyle(
-                  batchStyle,
-                  "sourceJettySize",
-                  "auto",
-                );
-                batchStyle = mxUtils.setStyle(
-                  batchStyle,
-                  "targetJettySize",
-                  "auto",
-                );
-                batchStyle = mxUtils.setStyle(batchStyle, "noEdgeStyle", null);
-                batchStyle = mxUtils.setStyle(
-                  batchStyle,
-                  "edgeStyle",
-                  "orthogonalEdgeStyle",
-                );
+                if (isCabinetSwitchLink(batchEdge)) {
+                  batchStyle = mxUtils.setStyle(batchStyle, "jettySize", "0");
+                  batchStyle = mxUtils.setStyle(
+                    batchStyle,
+                    "sourceJettySize",
+                    "0",
+                  );
+                  batchStyle = mxUtils.setStyle(
+                    batchStyle,
+                    "targetJettySize",
+                    "0",
+                  );
+                  batchStyle = mxUtils.setStyle(
+                    batchStyle,
+                    "noEdgeStyle",
+                    "1",
+                  );
+                  batchStyle = mxUtils.setStyle(
+                    batchStyle,
+                    "edgeStyle",
+                    null,
+                  );
+                } else {
+                  batchStyle = mxUtils.setStyle(
+                    batchStyle,
+                    "jettySize",
+                    "auto",
+                  );
+                  batchStyle = mxUtils.setStyle(
+                    batchStyle,
+                    "sourceJettySize",
+                    "auto",
+                  );
+                  batchStyle = mxUtils.setStyle(
+                    batchStyle,
+                    "targetJettySize",
+                    "auto",
+                  );
+                  batchStyle = mxUtils.setStyle(
+                    batchStyle,
+                    "noEdgeStyle",
+                    null,
+                  );
+                  batchStyle = mxUtils.setStyle(
+                    batchStyle,
+                    "edgeStyle",
+                    "orthogonalEdgeStyle",
+                  );
+                }
                 batchStyle = mxUtils.setStyle(
                   batchStyle,
                   "eidLayoutManaged",
@@ -2635,7 +2898,7 @@ export function installHostBridge(ctx) {
                 var sourceConstraint;
                 var targetConstraint;
                 var useNativeRouting;
-                var useManualRouteStyle;
+                var useStraightRouteStyle;
                 var keepLayoutManagedFlag;
                 var j;
 
@@ -2716,9 +2979,14 @@ export function installHostBridge(ctx) {
                   applyEdgeConstraintByPoint(edge, false, targetConstraint);
                 }
                 nextStyle = model.getStyle(edge) || nextStyle;
-                useManualRouteStyle =
-                  !useNativeRouting &&
-                  ((isSnakeLayout && route.manual) || nextPoints.length > 0);
+                // Cabinet-to-switch leads are intentionally single straight
+                // segments. The orthogonal router adds an oversized jetty for
+                // this short parent-to-symbol edge and doubles back across the
+                // switch, visually filling the SVG's open contact gap.
+                useStraightRouteStyle =
+                  isCabinetSwitchLink(edge) ||
+                  (!useNativeRouting &&
+                    ((isSnakeLayout && route.manual) || nextPoints.length > 0));
                 keepLayoutManagedFlag =
                   hasSourcePortBinding ||
                   hasTargetPortBinding ||
@@ -2726,7 +2994,7 @@ export function installHostBridge(ctx) {
                   targetConstraint != null ||
                   nextPoints.length > 0 ||
                   useNativeRouting;
-                if (useManualRouteStyle) {
+                if (useStraightRouteStyle) {
                   nextStyle = mxUtils.setStyle(nextStyle, "jettySize", "0");
                   nextStyle = mxUtils.setStyle(
                     nextStyle,
@@ -2819,8 +3087,18 @@ export function installHostBridge(ctx) {
     }
 
     var movedCells = evt != null ? evt.getProperty("cells") : null;
-    snapMovedElectricalPorts(movedCells);
-    clearConnectedEdgesForCells(movedCells);
+    // mxGraph dispatches CELLS_MOVED while finishing its model transaction.
+    // Read port geometry on the next task so both programmatic and real mouse
+    // drags are measured from the committed cell position, not the previous
+    // cached location.
+    window.setTimeout(function () {
+      if (runtimeState.updatingModel) {
+        return;
+      }
+      var detachedCount = detachMovedElectricalPorts(movedCells);
+      snapMovedElectricalPorts(movedCells, detachedCount > 0);
+      clearConnectedEdgesForCells(movedCells);
+    }, 0);
   });
 
   // Notify the React host after user graph edits. Host-driven restores set

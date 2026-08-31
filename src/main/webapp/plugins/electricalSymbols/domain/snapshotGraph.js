@@ -21,6 +21,7 @@ import {
 import { createNode, getAttr } from "../utils/xml.js";
 import {
   findPortHostRoot,
+  isCabinetBlock,
   isCabinetGap,
   isCabinetSegment,
   isDrawingFrame,
@@ -54,6 +55,13 @@ function buildSnapshotDeps() {
     LABEL_KIND: ctx.constants.LABEL_KIND,
     FRAME_LABEL_KIND: ctx.constants.FRAME_LABEL_KIND,
     CABINET_BODY_KIND: ctx.constants.CABINET_BODY_KIND,
+    CABINET_BLOCK_KIND: ctx.constants.CABINET_BLOCK_KIND,
+    CABINET_SWITCH_LINK_KIND: ctx.constants.CABINET_SWITCH_LINK_KIND,
+    CABINET_BUSBAR_KIND: ctx.constants.CABINET_BUSBAR_KIND,
+    CABINET_NAME_LABEL_KIND: ctx.constants.CABINET_NAME_LABEL_KIND,
+    CABINET_LOCATION_LABEL_KIND: ctx.constants.CABINET_LOCATION_LABEL_KIND,
+    CABINET_DESIGNATION_LABEL_KIND:
+      ctx.constants.CABINET_DESIGNATION_LABEL_KIND,
     CABINET_GAP_KIND: ctx.constants.CABINET_GAP_KIND,
     FRAME_MARGIN_RATIO: ctx.constants.FRAME_MARGIN_RATIO,
     trim,
@@ -64,6 +72,7 @@ function buildSnapshotDeps() {
     getAttr,
     uniqueStrings,
     isCabinetGap,
+    isCabinetBlock,
     isDrawingFrame,
     isCabinetSegment,
     isElectricalRoot,
@@ -74,6 +83,7 @@ function buildSnapshotDeps() {
     findFrameById: frameDomainApi.findFrameById,
     extractCabinetModel: cabinetDomainApi.extractCabinetModel,
     findCabinetSegments: cabinetDomainApi.findCabinetSegments,
+    getSegmentBlocks: cabinetDomainApi.getSegmentBlocks,
     getPortMetaById: connectionConstraintsApi.getPortMetaById,
     findDrawingFrame: frameDomainApi.findDrawingFrame,
     findPortHostRoot,
@@ -91,6 +101,8 @@ function buildSnapshotDeps() {
     createDrawingFrameCell: frameDomainApi.createDrawingFrameCell,
     addTopLevelCell: frameDomainApi.addTopLevelCell,
     relayoutCabinetByModel: cabinetDomainApi.relayoutCabinetByModel,
+    reconcileCabinetSwitchLinks:
+      cabinetDomainApi.reconcileCabinetSwitchLinks,
     normalizeSpec: specDomainApi.normalizeSpec,
     buildSymbolCell: symbolDomainApi.buildSymbolCell,
     resetPendingChangeRecords,
@@ -275,7 +287,10 @@ export function createSnapshotDomain() {
     }
 
     point = constraint != null ? constraint.point : null;
-    isGenericRoot = !deps.isElectricalRoot(root) && !deps.isCabinetSegment(root);
+    isGenericRoot =
+      !deps.isElectricalRoot(root) &&
+      !deps.isCabinetSegment(root) &&
+      !deps.isCabinetBlock(root);
     genericBindings = isGenericRoot ? collectGenericPortBindings(root) : null;
     ports = isGenericRoot
       ? genericBindings.map(function (binding) {
@@ -353,16 +368,24 @@ export function createSnapshotDomain() {
   }
 
 
-  // 统一过滤插件内部辅助 cell，避免把 body/label/gap 当成业务对象导出。
+  // 统一过滤插件内部辅助 cell，避免把图元子节点或柜内布局件
+  // 当成独立业务对象导出。柜体本身只由 cabinetModel 和稳定 portId 恢复。
   function isPluginInternalCell(cell) {
     var kind = deps.trim(deps.getAttr(cell, "esKind"));
 
     return (
       deps.isCabinetGap(cell) ||
+      deps.isCabinetBlock(cell) ||
       kind == deps.BODY_KIND ||
       kind == deps.LABEL_KIND ||
       kind == deps.FRAME_LABEL_KIND ||
       kind == deps.CABINET_BODY_KIND ||
+      kind == deps.CABINET_BLOCK_KIND ||
+      kind == deps.CABINET_SWITCH_LINK_KIND ||
+      kind == deps.CABINET_BUSBAR_KIND ||
+      kind == deps.CABINET_NAME_LABEL_KIND ||
+      kind == deps.CABINET_LOCATION_LABEL_KIND ||
+      kind == deps.CABINET_DESIGNATION_LABEL_KIND ||
       kind == deps.CABINET_GAP_KIND
     );
   }
@@ -419,6 +442,17 @@ export function createSnapshotDomain() {
         deps.trim(deps.getAttr(cell, "logicalCabinetId")) ||
         null
       );
+    }
+
+    // 块是新柜体模型里真正的端口宿主，但快照只序列化逻辑柜段，
+    // 不单独序列化柜内布局 cell。边因此用所属柜段作 objectId，再由
+    // 稳定 portId 在恢复时找回具体的块。
+    if (deps.isCabinetBlock(cell)) {
+      var cabinetSegment = model.getParent(cell);
+
+      return deps.isCabinetSegment(cabinetSegment)
+        ? resolveSnapshotObjectId(cabinetSegment)
+        : null;
     }
 
     if (deps.isElectricalRoot(cell)) {
@@ -798,13 +832,23 @@ export function createSnapshotDomain() {
   }
 
 
-  function findCabinetSegmentForPort(logicalCabinetId, portId) {
+  function findCabinetPortHost(logicalCabinetId, portId) {
     var segments = deps.findCabinetSegments(logicalCabinetId);
     var i;
+    var j;
 
     for (i = 0; i < segments.length; i++) {
       if (deps.getPortMetaById(segments[i], portId) != null) {
         return segments[i];
+      }
+
+      // 只用于读取块化过渡期保存的旧 XML；新图不再创建块 cell。
+      var blocks = deps.getSegmentBlocks(segments[i]);
+
+      for (j = 0; j < blocks.length; j++) {
+        if (deps.getPortMetaById(blocks[j], portId) != null) {
+          return blocks[j];
+        }
       }
     }
 
@@ -814,7 +858,11 @@ export function createSnapshotDomain() {
   function buildConstraintForPort(root, portId) {
     var port = null;
 
-    if (deps.isElectricalRoot(root) || deps.isCabinetSegment(root)) {
+    if (
+      deps.isElectricalRoot(root) ||
+      deps.isCabinetBlock(root) ||
+      deps.isCabinetSegment(root)
+    ) {
       port = deps.getPortMetaById(root, portId);
 
       if (port == null) {
@@ -919,7 +967,7 @@ export function createSnapshotDomain() {
     }
 
     if (portId.length > 0) {
-      return findCabinetSegmentForPort(
+      return findCabinetPortHost(
         cabinetLogicalIdMap != null && cabinetLogicalIdMap[objectId] != null
           ? cabinetLogicalIdMap[objectId]
           : objectId,
@@ -940,6 +988,7 @@ export function createSnapshotDomain() {
     var frameMap = {};
     var symbolMap = {};
     var genericMap = {};
+    var restoredCabinetLogicalIds = {};
 
     state.suspendOperationRecording = true;
     deps.exitInstanceComposeMode(false);
@@ -1015,15 +1064,25 @@ export function createSnapshotDomain() {
 
         for (i = 0; i < cabinetObjects.length; i++) {
           var cabinetObject = cabinetObjects[i];
-          var cabinetModel = deps.cloneJson(
-            cabinetObject.props != null ? cabinetObject.props.cabinetModel : {},
-          );
-          cabinetModel.logicalCabinetId =
+          var cabinetLogicalId =
             deps.trim(
               cabinetObject.props != null
                 ? cabinetObject.props.logicalCabinetId
                 : null,
             ) || cabinetObject.id;
+
+          // 一个跨页配电柜在快照里每个 segment 都有一个 cabinet
+          // object，但它们共享同一份完整 CabinetModel。只需重建一次，
+          // 否则 N 页柜会连续销毁/重建 N 次，造成 cell id 和连线抖动。
+          if (restoredCabinetLogicalIds[cabinetLogicalId]) {
+            continue;
+          }
+
+          restoredCabinetLogicalIds[cabinetLogicalId] = true;
+          var cabinetModel = deps.cloneJson(
+            cabinetObject.props != null ? cabinetObject.props.cabinetModel : {},
+          );
+          cabinetModel.logicalCabinetId = cabinetLogicalId;
           cabinetModel.originFrameId =
             deps.trim(
               cabinetObject.props != null
@@ -1270,6 +1329,12 @@ export function createSnapshotDomain() {
               ),
             );
           }
+        }
+
+        // 恢复顺序是柜体 → 开关 → 边。柜体刚创建时尚找不到开关，
+        // 所以要在所有边恢复后再收口一次：补缺、修端点、清重复。
+        if (typeof deps.reconcileCabinetSwitchLinks == "function") {
+          deps.reconcileCabinetSwitchLinks();
         }
       } finally {
         model.endUpdate();

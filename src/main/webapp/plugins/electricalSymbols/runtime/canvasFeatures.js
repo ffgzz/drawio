@@ -5,6 +5,7 @@
 // 顶部动作栏按钮顺序在这里集中维护。
 import { actionApi } from "../application/actions.js";
 import {
+  findElectricalRoot,
   isCabinetBlock,
   isCabinetSegment,
   isCabinetSwitchLink,
@@ -73,6 +74,14 @@ export function installCanvasFeatures(ctx) {
   var menu = ui.menus.get("extras");
   var oldExtrasMenu = menu.funct;
 
+  function isCabinetBoundSwitchCell(cell) {
+    var root = isElectricalRoot(cell) ? cell : findElectricalRoot(cell);
+
+    return (
+      root != null && cabinetDomainApi.isSwitchBoundToCabinet(root)
+    );
+  }
+
   graph.isCellDeletable = function (cell) {
     // 配电柜段与图框同级保护：既然不允许单独复制，也不允许被 Delete / Ctrl+X 删掉。
     // 插件自身的清屏、快照恢复会先置 state.allowProtectedDelete = true，
@@ -80,7 +89,8 @@ export function installCanvasFeatures(ctx) {
     if (
       isDrawingFrame(cell) ||
       isCabinetSegment(cell) ||
-      isPluginInternalCell(cell)
+      isPluginInternalCell(cell) ||
+      isCabinetBoundSwitchCell(cell)
     ) {
       return !!state.allowProtectedDelete;
     }
@@ -110,6 +120,7 @@ export function installCanvasFeatures(ctx) {
 
   graph.isCellMovable = function (cell) {
     if (
+      isCabinetBoundSwitchCell(cell) ||
       composeModeApi.isBlockedComposeTarget(cell) ||
       composeModeApi.isLockedComposedChild(cell)
     ) {
@@ -120,6 +131,10 @@ export function installCanvasFeatures(ctx) {
   };
 
   graph.isCellResizable = function (cell) {
+    if (isCabinetBoundSwitchCell(cell)) {
+      return false;
+    }
+
     if (isElectricalRoot(cell)) {
       return true;
     }
@@ -221,7 +236,10 @@ export function installCanvasFeatures(ctx) {
     var i;
 
     for (i = 0; i < result.length; i++) {
-      if (!composeModeApi.isBlockedComposeTarget(result[i])) {
+      if (
+        !isCabinetBoundSwitchCell(result[i]) &&
+        !composeModeApi.isBlockedComposeTarget(result[i])
+      ) {
         filtered.push(result[i]);
       }
     }

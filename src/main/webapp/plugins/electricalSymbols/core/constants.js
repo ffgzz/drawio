@@ -37,6 +37,10 @@ export const ELECTRICAL_CONSTANTS = Object.freeze({
   // a compatible port. 18px was too precise at normal zoom and made the
   // feature feel unavailable, especially on Retina displays.
   CANVAS_PORT_SNAP_THRESHOLD_PX: 36,
+  // Use a larger release threshold than the snap radius so a small adjustment
+  // does not immediately tear down a valid circuit, while an intentional drag
+  // clearly away from the peer port does disconnect it.
+  CANVAS_PORT_DETACH_THRESHOLD_PX: 72,
   CANVAS_PORT_SNAP_PREVIEW_RADIUS_PX: 160,
   TEMPLATE_DRAFT_STORAGE_KEY: "electrical-symbol-template-draft",
   FRAME_DEFAULT_WIDTH: 820,

@@ -69,12 +69,32 @@ export function unbindSwitchFromBlock() {
   return getCabinetDomain().unbindSwitchFromBlock.apply(null, arguments);
 }
 
+export function unbindSwitchFromCabinetSwitch() {
+  return getCabinetDomain().unbindSwitchFromCabinetSwitch.apply(null, arguments);
+}
+
 export function findSwitchCellByInstanceId() {
   return getCabinetDomain().findSwitchCellByInstanceId.apply(null, arguments);
 }
 
+export function findBoundCabinetBlockForSwitch() {
+  return getCabinetDomain().findBoundCabinetBlockForSwitch.apply(null, arguments);
+}
+
+export function isSwitchBoundToCabinet() {
+  return getCabinetDomain().isSwitchBoundToCabinet.apply(null, arguments);
+}
+
+export function reconcileCabinetSwitchLinks() {
+  return getCabinetDomain().reconcileCabinetSwitchLinks.apply(null, arguments);
+}
+
 export function insertCabinetBlockAfter() {
   return getCabinetDomain().insertCabinetBlockAfter.apply(null, arguments);
+}
+
+export function moveCabinetPortByDelta() {
+  return getCabinetDomain().moveCabinetPortByDelta.apply(null, arguments);
 }
 
 export function getSegmentBlocks() {
@@ -86,6 +106,7 @@ export var cabinetDomainApi = {
   applyCabinetWidth,
   bindSwitchToBlock,
   buildCabinetPageDescriptors,
+  findBoundCabinetBlockForSwitch,
   findSwitchCellByInstanceId,
   buildCabinetPortMap,
   buildCabinetSegmentCell,
@@ -97,7 +118,11 @@ export var cabinetDomainApi = {
   getPortAbsolutePosition,
   getSegmentBlocks,
   insertCabinetBlockAfter,
+  moveCabinetPortByDelta,
+  isSwitchBoundToCabinet,
+  reconcileCabinetSwitchLinks,
   unbindSwitchFromBlock,
+  unbindSwitchFromCabinetSwitch,
   normalizeCabinetModel,
   relayoutCabinetByModel,
   restoreCabinetAttachments,

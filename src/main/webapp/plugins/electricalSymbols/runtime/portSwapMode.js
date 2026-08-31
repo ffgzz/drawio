@@ -12,7 +12,9 @@ import { connectionConstraintsApi } from "./connectionConstraints.js";
 import { specDomainApi } from "../domain/spec.js";
 import {
   findPortHostRoot,
+  isCabinetBlock,
   isCabinetSegment,
+  isCabinetSwitchLink,
   setCanvasStatus,
   showStatus,
 } from "../core/runtimeHelpers.js";
@@ -28,8 +30,13 @@ function getPortSwapDeps() {
     parsePortLayout: specDomainApi.parsePortLayout,
     getAttr,
     findCabinetSegments: cabinetDomainApi.findCabinetSegments,
+    getSegmentBlocks: cabinetDomainApi.getSegmentBlocks,
+    extractCabinetModel: cabinetDomainApi.extractCabinetModel,
+    relayoutCabinetByModel: cabinetDomainApi.relayoutCabinetByModel,
     findPortHostRoot,
+    isCabinetBlock,
     isCabinetSegment,
+    isCabinetSwitchLink,
     isMovableConnectedTerminal: connectionConstraintsApi.isMovableConnectedTerminal,
     closeCabinetBlockDialog: function () {
       return cabinetBlockDialogApi.closeCabinetBlockDialog();
@@ -73,8 +80,10 @@ function buildPortSwapContextFromEdge(edge) {
   var targetTerminal = model.getTerminal(edge, false);
   var sourceRoot = deps.findPortHostRoot(sourceTerminal);
   var targetRoot = deps.findPortHostRoot(targetTerminal);
-  var sourceCabinet = deps.isCabinetSegment(sourceRoot);
-  var targetCabinet = deps.isCabinetSegment(targetRoot);
+  var sourceCabinet =
+    deps.isCabinetSegment(sourceRoot) || deps.isCabinetBlock(sourceRoot);
+  var targetCabinet =
+    deps.isCabinetSegment(targetRoot) || deps.isCabinetBlock(targetRoot);
 
   if (sourceCabinet == targetCabinet) {
     return null;
@@ -185,60 +194,71 @@ function renderPortSwapOverlay(session) {
   container.style.zIndex = "3";
 
   for (i = 0; i < segments.length; i++) {
-    var stateView = graph.view.getState(segments[i]);
-    var ports = deps.parsePortLayout(deps.getAttr(segments[i], "portsJson"));
+    var hosts = deps.getSegmentBlocks(segments[i]);
 
-    if (stateView == null) {
-      continue;
+    // 兼容块化之前端口直接挂在柜段上的旧图。
+    if (hosts.length == 0) {
+      hosts = [segments[i]];
     }
 
-    for (j = 0; j < ports.length; j++) {
-      var marker = document.createElement("div");
-      var portId = deps.trim(ports[j].id);
-      var selected = deps.trim(ports[j].id) == deps.trim(session.portId);
-      var occupied =
-        !selected && isCabinetPortOccupied(segments[i], portId, session.edge);
-      marker.style.position = "absolute";
-      marker.style.width = "14px";
-      marker.style.height = "14px";
-      marker.style.borderRadius = "50%";
-      marker.style.boxSizing = "border-box";
-      marker.style.border = selected
-        ? "2px solid #1a73e8"
-        : occupied
-          ? "2px solid #94a3b8"
-          : "2px solid #16a34a";
-      marker.style.background = selected
-        ? "rgba(26,115,232,0.15)"
-        : occupied
-          ? "rgba(148,163,184,0.18)"
-          : "rgba(22,163,74,0.18)";
-      marker.style.pointerEvents = "auto";
-      marker.style.cursor = selected || occupied ? "default" : "pointer";
-      marker.style.left =
-        Math.round(stateView.x + ports[j].x * stateView.width - 7) + "px";
-      marker.style.top =
-        Math.round(stateView.y + ports[j].y * stateView.height - 7) + "px";
-      marker.title = selected
-        ? "当前挂点"
-        : occupied
-          ? "该挂点已连接其他设备，不能再选择"
-          : "点击切换到该挂点";
+    for (j = 0; j < hosts.length; j++) {
+      var host = hosts[j];
+      var stateView = graph.view.getState(host);
+      var ports = deps.parsePortLayout(deps.getAttr(host, "portsJson"));
+      var k;
 
-      if (!selected && !occupied) {
-        mxEvent.addListener(
-          marker,
-          "click",
-          (function (root, port) {
-            return function (evt) {
-              mxEvent.consume(evt);
-              commitPortSwap(state.portSwapSession, root, port);
-            };
-          })(segments[i], deps.cloneJson(ports[j])),
-        );
+      if (stateView == null) {
+        continue;
       }
 
-      container.appendChild(marker);
+      for (k = 0; k < ports.length; k++) {
+        var marker = document.createElement("div");
+        var portId = deps.trim(ports[k].id);
+        var selected = portId == deps.trim(session.portId);
+        var occupied =
+          !selected && isCabinetPortOccupied(host, portId, session.edge);
+        marker.style.position = "absolute";
+        marker.style.width = "14px";
+        marker.style.height = "14px";
+        marker.style.borderRadius = "50%";
+        marker.style.boxSizing = "border-box";
+        marker.style.border = selected
+          ? "2px solid #1a73e8"
+          : occupied
+            ? "2px solid #94a3b8"
+            : "2px solid #16a34a";
+        marker.style.background = selected
+          ? "rgba(26,115,232,0.15)"
+          : occupied
+            ? "rgba(148,163,184,0.18)"
+            : "rgba(22,163,74,0.18)";
+        marker.style.pointerEvents = "auto";
+        marker.style.cursor = selected || occupied ? "default" : "pointer";
+        marker.style.left =
+          Math.round(stateView.x + ports[k].x * stateView.width - 7) + "px";
+        marker.style.top =
+          Math.round(stateView.y + ports[k].y * stateView.height - 7) + "px";
+        marker.title = selected
+          ? "当前挂点"
+          : occupied
+            ? "该挂点已连接其他设备，不能再选择"
+            : "点击切换到该挂点";
+
+        if (!selected && !occupied) {
+          mxEvent.addListener(
+            marker,
+            "click",
+            (function (root, port) {
+              return function (evt) {
+                mxEvent.consume(evt);
+                commitPortSwap(state.portSwapSession, root, port);
+              };
+            })(host, deps.cloneJson(ports[k])),
+          );
+        }
+
+        container.appendChild(marker);
+      }
     }
   }
 
@@ -307,7 +327,7 @@ export function installGraphClickBehavior() {
           : "";
 
       if (
-        deps.isCabinetSegment(portRoot) &&
+        (deps.isCabinetSegment(portRoot) || deps.isCabinetBlock(portRoot)) &&
         deps.trim(deps.getAttr(portRoot, "logicalCabinetId")) == sessionLogicalId
       ) {
         var nextPort = getNearestCabinetPortFromClick(portRoot, mouseEvent);
@@ -398,6 +418,65 @@ export function applyEdgePortConstraintMetadata(edge, root, source, constraint) 
   model.setStyle(edge, style);
 }
 
+function buildReboundCabinetModel(edge, oldRoot, newRoot, oldPortId, newPortId) {
+  var runtime = getPortSwapRuntime();
+  var deps = runtime.deps;
+
+  if (
+    !deps.isCabinetSwitchLink(edge) ||
+    !(deps.isCabinetBlock(oldRoot) || deps.isCabinetSegment(oldRoot)) ||
+    !(deps.isCabinetBlock(newRoot) || deps.isCabinetSegment(newRoot))
+  ) {
+    return null;
+  }
+
+  var oldLogicalId = deps.trim(deps.getAttr(oldRoot, "logicalCabinetId"));
+  var newLogicalId = deps.trim(deps.getAttr(newRoot, "logicalCabinetId"));
+
+  if (oldLogicalId.length == 0 || oldLogicalId != newLogicalId) {
+    return { error: "只能在同一个配电柜内更换开关挂点" };
+  }
+
+  var cabinetModel = deps.extractCabinetModel(oldRoot);
+  var oldBlockId = deps.trim(deps.getAttr(oldRoot, "blockId"));
+  var newBlockId = deps.trim(deps.getAttr(newRoot, "blockId"));
+  var oldBlock = null;
+  var newBlock = null;
+  var i;
+
+  for (i = 0; i < cabinetModel.blocks.length; i++) {
+    if (
+      deps.trim(cabinetModel.blocks[i].id) == oldBlockId ||
+      deps.trim(cabinetModel.blocks[i].portId) == deps.trim(oldPortId)
+    ) {
+      oldBlock = cabinetModel.blocks[i];
+    }
+    if (
+      deps.trim(cabinetModel.blocks[i].id) == newBlockId ||
+      deps.trim(cabinetModel.blocks[i].portId) == deps.trim(newPortId)
+    ) {
+      newBlock = cabinetModel.blocks[i];
+    }
+  }
+
+  if (oldBlock == null || newBlock == null) {
+    return { error: "目标挂点不属于当前配电柜模型" };
+  }
+  if (deps.trim(oldBlock.switchInstanceId).length == 0) {
+    return { error: "当前柜块没有绑定可移动的开关" };
+  }
+  if (deps.trim(newBlock.switchInstanceId).length > 0) {
+    return { error: "目标挂点已经绑定其他开关" };
+  }
+
+  newBlock.switchInstanceId = deps.trim(oldBlock.switchInstanceId);
+  newBlock.switchSymbolId = deps.trim(oldBlock.switchSymbolId);
+  oldBlock.switchInstanceId = "";
+  oldBlock.switchSymbolId = "";
+
+  return { cabinetModel };
+}
+
 export function commitPortSwap(session, newRoot, newPort) {
   var runtime = getPortSwapRuntime();
   var deps = runtime.deps;
@@ -407,6 +486,13 @@ export function commitPortSwap(session, newRoot, newPort) {
   var source = !!session.source;
   var oldRoot = session.cabinetRoot;
   var oldPortId = deps.trim(session.portId);
+  var rebound = buildReboundCabinetModel(
+    edge,
+    oldRoot,
+    newRoot,
+    oldPortId,
+    newPort != null ? newPort.id : "",
+  );
   var constraint = new mxConnectionConstraint(
     new mxPoint(newPort.x, newPort.y),
     false,
@@ -427,6 +513,12 @@ export function commitPortSwap(session, newRoot, newPort) {
   if (isCabinetPortOccupied(newRoot, newPort.id, edge)) {
     deps.showStatus("目标挂点已连接其他设备，不能重复选择", true);
     deps.setCanvasStatus("目标挂点已连接其他设备，不能重复选择");
+    return;
+  }
+
+  if (rebound != null && rebound.error != null) {
+    deps.showStatus(rebound.error, true);
+    deps.setCanvasStatus(rebound.error);
     return;
   }
 
@@ -451,6 +543,9 @@ export function commitPortSwap(session, newRoot, newPort) {
     newRoot,
     newPort,
   );
+  if (rebound != null && rebound.cabinetModel != null) {
+    deps.relayoutCabinetByModel(rebound.cabinetModel);
+  }
   exitPortSwapMode();
   deps.showStatus("已更换挂点", false);
   deps.setCanvasStatus("已更换挂点");

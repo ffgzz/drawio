@@ -27,12 +27,12 @@ function getConstraintDeps() {
     clamp,
     parsePortLayout: specDomainApi.parsePortLayout,
     getAttr,
-    buildPortLayout: specDomainApi.buildPortLayout,
     findPortHostRoot,
     normalizePortDirection: specDomainApi.normalizePortDirection,
     normalizePortIoMode: specDomainApi.normalizePortIoMode,
     isDrawingFrame,
     isCabinetSegment,
+    isCabinetBlock,
     isCabinetGap,
     findDrawingFrame: frameDomainApi.findDrawingFrame,
     getCellAbsoluteGeometry: function (cell) {
@@ -60,6 +60,43 @@ function getConstraintRuntime() {
   };
 }
 
+/**
+ * 普通图元的端口必须落在 0..1 内，但柜体回路端口可以被用户
+ * 拖出原柜块范围（块不重排，回路可重叠）。先用公共规则归一化
+ * id/方向/标记，再仅对 cabinetBlock 恢复原始 y。
+ */
+export function getPortLayoutForRoot(root) {
+  var deps = getConstraintRuntime().deps;
+  var raw = deps.getAttr(root, "portsJson");
+  var ports = deps.parsePortLayout(raw);
+
+  if (!deps.isCabinetBlock(root) || raw == null || raw.length == 0) {
+    return ports;
+  }
+
+  try {
+    var source = JSON.parse(raw);
+    var items = Array.isArray(source)
+      ? source
+      : source != null && Array.isArray(source.items)
+        ? source.items
+        : [];
+    var i;
+
+    for (i = 0; i < ports.length && i < items.length; i++) {
+      var rawY = Number(items[i] != null ? items[i].y : NaN);
+
+      if (isFinite(rawY)) {
+        ports[i].y = rawY;
+      }
+    }
+  } catch (e) {
+    // 旧数据不合法时保留通用解析结果。
+  }
+
+  return ports;
+}
+
 // 从端口布局生成 mxGraph 可识别的连接约束数组。
 export function getElectricalConstraints(cell) {
   var runtime = getConstraintRuntime();
@@ -73,10 +110,11 @@ export function getElectricalConstraints(cell) {
     return null;
   }
 
-  layout = deps.buildPortLayout(
-    { ports: deps.parsePortLayout(deps.getAttr(root, "portsJson")) },
-    deps.parsePortLayout(deps.getAttr(root, "portLayout")),
-  );
+  layout = getPortLayoutForRoot(root);
+
+  if (layout.length == 0) {
+    layout = deps.parsePortLayout(deps.getAttr(root, "portLayout"));
+  }
 
   for (i = 0; i < layout.length; i++) {
     var point = layout[i];
@@ -94,7 +132,7 @@ export function getElectricalConstraints(cell) {
 
 export function getPortMetaByConstraint(root, constraint) {
   var deps = getConstraintRuntime().deps;
-  var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
+  var ports = getPortLayoutForRoot(root);
   var name = constraint != null ? deps.trim(constraint.name) : "";
   var i;
 
@@ -109,7 +147,7 @@ export function getPortMetaByConstraint(root, constraint) {
 
 export function getPortMetaById(root, portId) {
   var deps = getConstraintRuntime().deps;
-  var ports = deps.parsePortLayout(deps.getAttr(root, "portsJson"));
+  var ports = getPortLayoutForRoot(root);
   var target = deps.trim(portId);
   var i;
 
@@ -176,6 +214,7 @@ export function isMovableConnectedTerminal(cell) {
     model.isVertex(cell) &&
     !deps.isDrawingFrame(cell) &&
     !deps.isCabinetSegment(cell) &&
+    !deps.isCabinetBlock(cell) &&
     !deps.isCabinetGap(cell)
   );
 }
@@ -264,7 +303,15 @@ function collectConnectedMovableGroup(startCell) {
       var edgeId = mxObjectIdentity.get(edge);
       var source = model.getTerminal(edge, true);
       var target = model.getTerminal(edge, false);
-      var other = source == cell ? target : source;
+
+      // 柜块重排只应沿“开关输出 → 电缆 → 负载”向下游搬移。
+      // 如果按无向连通分量遍历，双路供电负载会把另一条输入
+      // 的电缆和已绑定开关也一起拖走，导致另一个柜块脱钩。
+      if (source != cell) {
+        continue;
+      }
+
+      var other = target;
 
       if (!edgeMap[edgeId]) {
         edgeMap[edgeId] = true;
@@ -409,21 +456,25 @@ export function clearEdgePoints(edge) {
   }
 }
 
-export function moveConnectedGroupToCabinetPort(
-  edge,
-  source,
-  oldRoot,
-  oldPortId,
-  newRoot,
-  newPort,
+/**
+ * 把一个已连接的电气图元组整体平移到目标图框。
+ *
+ * 配电柜重排时不能只搬母线后的第一个开关，否则开关后面的
+ * 电缆和负载会留在旧位置，连线就会被拉斜或跨页。这里复用端口
+ * 更换的整组遍历规则，但直接使用已计算好的位移量。
+ *
+ * @returns {Object|null} 实际搬移的 vertices / edges / delta；无需搬移时返回 null。
+ */
+export function moveConnectedGroupByDelta(
+  startCell,
+  targetFrame,
+  deltaX,
+  deltaY,
+  options,
 ) {
   var runtime = getConstraintRuntime();
-  var deps = runtime.deps;
   var model = runtime.model;
   var state = runtime.state;
-  var otherTerminal = model.getTerminal(edge, !source);
-  var oldPort = getPortMetaById(oldRoot, oldPortId);
-  var targetFrame = deps.findDrawingFrame(newRoot);
   var group;
   var delta;
   var movedMap = {};
@@ -431,33 +482,37 @@ export function moveConnectedGroupToCabinetPort(
 
   if (
     state.updatingModel ||
-    !deps.isCabinetSegment(oldRoot) ||
-    !deps.isCabinetSegment(newRoot) ||
-    oldPort == null ||
-    newPort == null ||
-    !isMovableConnectedTerminal(otherTerminal) ||
+    !isMovableConnectedTerminal(startCell) ||
     targetFrame == null
   ) {
-    return;
+    return null;
   }
 
-  group = collectConnectedMovableGroup(otherTerminal);
+  group = collectConnectedMovableGroup(startCell);
 
   if (group.vertices.length == 0) {
-    return;
+    return null;
   }
 
   delta = adjustGroupDeltaToFrame(
     group.vertices,
     targetFrame,
-    deps.getPortAbsolutePosition(newRoot, newPort).x -
-      deps.getPortAbsolutePosition(oldRoot, oldPort).x,
-    deps.getPortAbsolutePosition(newRoot, newPort).y -
-      deps.getPortAbsolutePosition(oldRoot, oldPort).y,
+    deltaX,
+    deltaY,
   );
 
+  // 柜体端口拖动是严格的纵向交互。即使某个历史图元已经
+  // 越出图框水平边界，也不能让边界校正暗中产生横向位移。
+  if (options != null && options.lockX === true) {
+    delta.x = 0;
+  }
+
   if (Math.abs(delta.x) < 0.0001 && Math.abs(delta.y) < 0.0001) {
-    return;
+    return {
+      vertices: group.vertices,
+      edges: group.edges,
+      delta,
+    };
   }
 
   state.updatingModel = true;
@@ -493,6 +548,50 @@ export function moveConnectedGroupToCabinetPort(
     model.endUpdate();
     state.updatingModel = false;
   }
+
+  return {
+    vertices: group.vertices,
+    edges: group.edges,
+    delta,
+  };
+}
+
+export function moveConnectedGroupToCabinetPort(
+  edge,
+  source,
+  oldRoot,
+  oldPortId,
+  newRoot,
+  newPort,
+) {
+  var runtime = getConstraintRuntime();
+  var deps = runtime.deps;
+  var model = runtime.model;
+  var state = runtime.state;
+  var otherTerminal = model.getTerminal(edge, !source);
+  var oldPort = getPortMetaById(oldRoot, oldPortId);
+  var targetFrame = deps.findDrawingFrame(newRoot);
+
+  if (
+    state.updatingModel ||
+    !(deps.isCabinetSegment(oldRoot) || deps.isCabinetBlock(oldRoot)) ||
+    !(deps.isCabinetSegment(newRoot) || deps.isCabinetBlock(newRoot)) ||
+    oldPort == null ||
+    newPort == null ||
+    !isMovableConnectedTerminal(otherTerminal) ||
+    targetFrame == null
+  ) {
+    return;
+  }
+
+  return moveConnectedGroupByDelta(
+    otherTerminal,
+    targetFrame,
+    deps.getPortAbsolutePosition(newRoot, newPort).x -
+      deps.getPortAbsolutePosition(oldRoot, oldPort).x,
+    deps.getPortAbsolutePosition(newRoot, newPort).y -
+      deps.getPortAbsolutePosition(oldRoot, oldPort).y,
+  );
 }
 
 export function installGraphBehavior(extraDeps) {
@@ -610,9 +709,11 @@ export var connectionConstraintsApi = {
   getElectricalConstraints,
   getPortMetaByConstraint,
   getPortMetaById,
+  getPortLayoutForRoot,
   isMovableConnectedTerminal,
   installGraphBehavior,
   mapPortDirectionToConstraint,
   moveCellToFrameByDelta,
+  moveConnectedGroupByDelta,
   moveConnectedGroupToCabinetPort,
 };
