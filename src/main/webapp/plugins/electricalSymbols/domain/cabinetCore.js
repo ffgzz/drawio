@@ -384,7 +384,7 @@ export function normalizeCabinetModel(raw, frameConfig) {
       toInt(raw.busbarInsetY, ELECTRICAL_CONSTANTS.CABINET_BUSBAR_INSET_Y),
     ),
     switchLead: Math.max(
-      8,
+      0,
       toInt(raw.switchLead, ELECTRICAL_CONSTANTS.CABINET_SWITCH_LEAD),
     ),
     blocks,
@@ -491,11 +491,10 @@ export function setBlockSwitchBinding(cabinetModel, blockId, binding) {
 }
 
 /**
- * 开关在块内的摆位：左端距母线一段固定的引出线长度，
+ * 开关在块内的摆位：左端直接贴在母线上，
  * 输入端口与块中心的出线端口对齐。未提供端口位置时退回整个开关垂直居中。
  *
- * 这样柜体被拉宽时开关不动、引出线不变，多出来的宽度落在开关右侧到柜壁之间——
- * 与 CAD 图纸一致（支路线从母线引出，经过开关，再穿出柜壁去下游）。
+ * switchLead 参数仅为兼容旧序列化数据而保留，不再影响布局。
  *
  * @param {Object} blockRect  {width, height}
  * @param {Object} switchSize {width, height}
@@ -504,8 +503,7 @@ export function setBlockSwitchBinding(cabinetModel, blockId, binding) {
  */
 export function computeSwitchPlacementInBlock(blockRect, switchSize, options) {
   var busbarX = options != null ? toInt(options.busbarX, 0) : 0;
-  var lead = options != null ? Math.max(0, toInt(options.switchLead, 0)) : 0;
-  var available = Math.max(8, blockRect.width - busbarX - lead);
+  var available = Math.max(8, blockRect.width - busbarX);
   var requestedWidth = Math.max(8, switchSize.width);
   var requestedHeight = Math.max(8, switchSize.height);
   var fitScale = Math.min(1, available / requestedWidth);
@@ -526,7 +524,7 @@ export function computeSwitchPlacementInBlock(blockRect, switchSize, options) {
   var y = blockRect.height * targetPortYRatio - height * inputPortYRatio;
 
   return {
-    x: busbarX + lead,
+    x: busbarX,
     y: y,
     width,
     height,

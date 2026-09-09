@@ -228,6 +228,13 @@ export function createCabinetDomain() {
     var nameLabel = buildCabinetNameLabel(cabinetModel);
 
     if (nameLabel.length > 0 && busbarX > 8) {
+      var nameLabelHeight = Math.min(
+        descriptor.busbar.height,
+        Math.max(
+          120,
+          Math.min(320, Math.round(descriptor.busbar.height * 0.34)),
+        ),
+      );
       cells.push(
         createCabinetDecorationCell(
           deps.cabinetNameLabelKind,
@@ -236,7 +243,7 @@ export function createCabinetDomain() {
             0,
             descriptor.busbar.y,
             Math.max(12, busbarX - Math.round(deps.busbarWidth / 2) - 2),
-            descriptor.busbar.height,
+            nameLabelHeight,
           ),
           escapeLabelHtml(nameLabel),
         ),

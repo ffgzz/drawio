@@ -2494,7 +2494,13 @@ export function installHostBridge(ctx) {
           var viewInfoCell = resolveLayoutCell(
             payload.cellId != null ? String(payload.cellId) : "",
           );
-          var viewInfoRoot = findElectricalRoot(viewInfoCell);
+          // Edges must be inspected directly because walking to an electrical
+          // root would return the containing frame instead of the requested
+          // route. Symbols still resolve to their electrical root as before.
+          var viewInfoRoot =
+            viewInfoCell != null && graph.getModel().isEdge(viewInfoCell)
+              ? viewInfoCell
+              : findElectricalRoot(viewInfoCell) || viewInfoCell;
 
           if (viewInfoRoot == null) {
             throw new Error("未找到要读取的测试图元");

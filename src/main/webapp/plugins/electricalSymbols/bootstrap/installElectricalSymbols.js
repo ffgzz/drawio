@@ -6,12 +6,15 @@ import { activateAppRuntime, createApp } from "./createApp.js";
 import { setApp } from "../core/appRuntime.js";
 import { backendServiceApi } from "../services/backend.js";
 import { snapshotDomainApi } from "../domain/snapshot.js";
+import { installEidDrawingStandard } from "../runtime/eidDrawingStandard.js";
 
 // 安装流程非常短，便于后续排查初始化顺序问题。
 export function installElectricalSymbols(ctx) {
   var app = createApp(ctx);
   var initialSnapshot;
   setApp(app);
+
+  installEidDrawingStandard(ctx);
 
   // 从本地存储里恢复上一次后端连接/图纸会话信息，放回插件 state
   backendServiceApi.loadBackendSession();

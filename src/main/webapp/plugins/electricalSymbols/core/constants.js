@@ -58,8 +58,8 @@ export const ELECTRICAL_CONSTANTS = Object.freeze({
   CABINET_BUSBAR_RATIO: 0.28,
   // 母线上下不到顶不到底的留白
   CABINET_BUSBAR_INSET_Y: 34,
-  // 母线到开关左端的引出线长度
-  CABINET_SWITCH_LEAD: 52,
+  // 开关直接贴母线，不再预留引出线
+  CABINET_SWITCH_LEAD: 0,
   // 柜体首块之上、末块之下的留白（编号文字要占顶部这一段）
   CABINET_HEAD_PADDING: 44,
   // 换页折断标识的深度

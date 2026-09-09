@@ -6,6 +6,7 @@ import { setCanvasStatus } from "../core/runtimeHelpers.js";
 import { connectionConstraintsApi } from "../runtime/connectionConstraints.js";
 import { installCanvasFeatures, ACTION_ITEMS } from "../runtime/canvasFeatures.js";
 import { installCabinetPortDrag } from "../runtime/cabinetPortDrag.js";
+import { installCellTooltipSuppression } from "../runtime/cellTooltips.js";
 import { installPrintMode } from "../runtime/printMode.js";
 import { installClipboardOverride } from "../runtime/clipboardOverride.js";
 import { installFrameBinding } from "../runtime/frameBinding.js";
@@ -241,6 +242,7 @@ export function activateAppRuntime(app) {
   var ui = app.ctx.ui;
 
   applyEmbeddedEditorLayout(ui);
+  installCellTooltipSuppression(app.ctx);
   installHostBridge(app.ctx);
 
   portSwapModeApi.installGraphClickBehavior();

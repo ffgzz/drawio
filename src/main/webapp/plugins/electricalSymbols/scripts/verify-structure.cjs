@@ -80,7 +80,19 @@ const connectionConstraintsFile = path.join(
   "runtime",
   "connectionConstraints.js",
 );
+const cellTooltipsFile = path.join(rootDir, "runtime", "cellTooltips.js");
+const eidDrawingStandardFile = path.join(
+  rootDir,
+  "runtime",
+  "eidDrawingStandard.js",
+);
 const createAppFile = path.join(rootDir, "bootstrap", "createApp.js");
+const installElectricalSymbolsFile = path.join(
+  rootDir,
+  "bootstrap",
+  "installElectricalSymbols.js",
+);
+const hostBridgeFile = path.join(rootDir, "runtime", "hostBridge.js");
 
 addRegexCheck(
   "cabinet-segment-port-host",
@@ -94,6 +106,100 @@ addRegexCheck(
   allFiles,
   /\bcreatePluginBundle\b|\bcreateUiRuntime\b|\bbundle\.ui\b|\bbundle\.runtime\b/,
   "不应回引旧 bundle/createUiRuntime 结构",
+);
+
+addRequiredFragmentsCheck("electrical-cell-tooltip-suppression", cellTooltipsFile, [
+  {
+    text: 'getAttr(cell, "esKind")',
+    message: "Tooltip 屏蔽必须识别插件内部构件",
+  },
+  {
+    text: "isElectricalTooltipCell(ctx, cell)",
+    message: "Tooltip 覆写必须仅针对电气图元",
+  },
+  {
+    text: "graph.setTooltips(false);",
+    message: "集成页必须默认关闭 Drawio 画布 Tooltip handler",
+  },
+  {
+    text: "return originalGetTooltipForCell.apply(this, arguments);",
+    message: "普通单元必须保留 Drawio 原生 Tooltip",
+  },
+]);
+addRequiredFragmentsCheck("electrical-cell-tooltip-install", createAppFile, [
+  {
+    text: "installCellTooltipSuppression(app.ctx);",
+    message: "插件启动时必须安装 Tooltip 屏蔽",
+  },
+]);
+
+addRequiredFragmentsCheck("eid-drawing-standard", eidDrawingStandardFile, [
+  {
+    text: "urlParams.eidStandard",
+    message: "EID 标准必须由 eidStandard=1 显式开启",
+  },
+  {
+    text: "graph.view.setUnit(mxConstants.MILLIMETERS);",
+    message: "画布尺寸显示必须使用 Draw.io 内建毫米换算",
+  },
+  {
+    text: "Editor.pageSizeUnit = mxConstants.MILLIMETERS;",
+    message: "页面尺寸对话框必须显示毫米",
+  },
+  {
+    text: "STANDARD_FONT_HEIGHT_MM * mxConstants.PIXELS_PER_MM",
+    message: "2.5mm 字高必须换算成 Draw.io 原生模型单位",
+  },
+  {
+    text: "var STANDARD_LINE_WIDTH_MM = 0.25;",
+    message: "EID 可见描边必须使用 CAD 默认 0.25mm 线宽",
+  },
+  {
+    text: "STANDARD_LINE_WIDTH_MM * mxConstants.PIXELS_PER_MM",
+    message: "0.25mm 线宽必须换算成 Draw.io 原生模型单位",
+  },
+  {
+    text: 'shape === "text"',
+    message: "纯文本 cell 必须继续保持无边框",
+  },
+  {
+    text: 'strokeColor === "none"',
+    message: "隐藏线与 SVG 图元外层必须继续保持无描边",
+  },
+  {
+    text: "mxConstants.STYLE_STROKE_OPACITY",
+    message: "strokeOpacity=0 的语义隐藏线不得被恢复",
+  },
+  {
+    text: "standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth)",
+    message: "内嵌 SVG 只能在样式层统一黑色、字体和可见线宽",
+  },
+  {
+    text: 'explicitStyleValue(style, "fillColor") === "#00b7c3"',
+    message: "配电柜母线的细长填充图元必须按黑色线条处理",
+  },
+]);
+addRequiredFragmentsCheck(
+  "eid-drawing-standard-install",
+  installElectricalSymbolsFile,
+  [
+    {
+      text: "installEidDrawingStandard(ctx);",
+      message: "插件启动时必须安装 EID 标准层",
+    },
+  ],
+);
+addRegexCheck(
+  "eid-standard-keeps-native-model-scale",
+  [eidDrawingStandardFile],
+  /mxConstants\.(?:PIXELS_PER_MM|PIXELS_PER_INCH|PAGE_FORMAT_A4_PORTRAIT|PAGE_FORMAT_A4_LANDSCAPE)\s*=|(?:mxGraph\.prototype|graph)\.(?:pageFormat|pageScale|gridSize)\s*=|setAttribute\(\s*["'](?:drawingUnit|gridSize|pageScale|pageWidth|pageHeight)["']|(?:get|set)Geometry\(|new\s+mxGeometry\b/,
+  "EID 标准层只能改显示单位与样式，不得改换算常量、页面、网格或几何",
+);
+addRegexCheck(
+  "host-export-keeps-native-model-scale",
+  [hostBridgeFile],
+  /setAttribute\(\s*["']drawingUnit["']/,
+  "宿主导出不得将 Draw.io 原生坐标标记为毫米坐标",
 );
 
 addRequiredFragmentsCheck("cabinet-snapshot-port-host", snapshotGraphFile, [

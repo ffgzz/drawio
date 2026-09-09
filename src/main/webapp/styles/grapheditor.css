@@ -1791,8 +1791,8 @@ a.geStatus>div {
 	overflow: hidden;
 	overflow-x: auto;
 	margin: 0 8px;
-	-ms-overflow-style: none;
-	scrollbar-width: none;
+	-ms-overflow-style: auto;
+	scrollbar-width: thin;
 	left: 0px;
 }
 
