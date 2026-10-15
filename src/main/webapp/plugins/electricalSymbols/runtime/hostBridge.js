@@ -1398,6 +1398,27 @@ export function installHostBridge(ctx) {
       : text + ";" + FRAME_DECORATION_STYLE_FLAG + ";";
   }
 
+  /**
+   * Values a title block takes from the sheet rather than from the user.
+   *
+   * The page number is decided by where the frame sits in its group, so the
+   * template marks those slots and they are filled here instead of being typed
+   * into the insert dialog, where they could contradict the drawing.
+   */
+  function resolveAutoLabelText(frame, label) {
+    if (label.auto == "pageNumber") {
+      return String(frameDomainApi.getFramePageNumber(frame));
+    }
+
+    if (label.auto == "pageCount") {
+      return "/" + frameDomainApi.getMaxFramePageNumberInGroup(
+        frameDomainApi.getFrameGroupId(frame),
+      );
+    }
+
+    return label.text != null ? String(label.text) : "";
+  }
+
   function createFrameTemplateLabelCell(frame, label) {
     var frameConfig = frameDomainApi.getFrameConfig(frame);
     var width = Math.max(40, Math.round(Number(label.width) || 120));
@@ -1414,13 +1435,17 @@ export function installHostBridge(ctx) {
       constants.FRAME_LABEL_TAG,
       "frameTemplateLabel",
       label.id != null ? String(label.id) : "",
-      label.text != null ? String(label.text) : "",
+      resolveAutoLabelText(frame, label),
     );
     var style = mxUtils.setStyle(
       makeFrameLabelStyle(),
       "align",
       label.align != null ? String(label.align) : "center",
     );
+
+    if (Number(label.fontSize) > 0) {
+      style = mxUtils.setStyle(style, "fontSize", Number(label.fontSize));
+    }
     var fieldPath = label.fieldPath != null ? String(label.fieldPath) : "";
     var cell;
 
@@ -2189,6 +2214,10 @@ export function installHostBridge(ctx) {
             payload.config,
             selectedFrame,
             frameDomainApi.getAllDrawingFrames(),
+            {
+              id: payload.frameTemplateId || null,
+              svgData: payload.frameSvgData || null,
+            },
           );
           var insertedFrame = frameDomainApi.findDrawingFrame(
             ctx.graph.getSelectionCell(),

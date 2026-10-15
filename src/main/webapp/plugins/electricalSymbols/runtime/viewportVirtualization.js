@@ -12,6 +12,7 @@
  * 不修改任何 model 数据——undo/redo/clipboard 安全。
  */
 import { getApp } from "../core/appRuntime.js";
+import { ELECTRICAL_CONSTANTS } from "../core/constants.js";
 import { isDrawingFrame } from "../core/runtimeHelpers.js";
 
 // ---------------------------------------------------------------------------
@@ -51,8 +52,8 @@ var THROTTLE_MS = 120;
 /** 初始裁剪延迟（毫秒） */
 var INIT_DELAY_MS = 200;
 
-/** 图框名义宽度（用于根据 scale 判断 Overview 模式） */
-var FRAME_NOMINAL_WIDTH = 820;
+/** 图框名义宽度（用于根据 scale 判断 Overview 模式），取共享常量。 */
+var FRAME_NOMINAL_WIDTH = ELECTRICAL_CONSTANTS.FRAME_DEFAULT_WIDTH;
 
 // ---------------------------------------------------------------------------
 // 模块状态

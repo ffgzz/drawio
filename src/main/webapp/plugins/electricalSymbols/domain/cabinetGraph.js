@@ -725,8 +725,18 @@ export function createCabinetDomain() {
             groupId: originGroupId,
             autoFrameOwner: logicalCabinetId,
             autoFrameIndex: i,
+            frameTemplateId:
+              deps.trim(deps.getAttr(originFrame, "frameTemplateId")) || null,
           },
         );
+        // 续接页是这张图的下一页，图幅必须跟起始页长得一样——
+        // 直接沿用起始图框的样式，连模板自带的图签栏一起继承。
+        var originStyle = model.getStyle(originFrame);
+
+        if (deps.trim(originStyle).length > 0) {
+          frame.setStyle(originStyle);
+        }
+
         frame.geometry = frame.geometry.clone();
         frame.geometry.x = Math.max(
           model.getGeometry(previousFrame).x +

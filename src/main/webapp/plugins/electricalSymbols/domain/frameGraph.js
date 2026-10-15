@@ -407,7 +407,7 @@ export function createFrameDomain() {
         extra,
       ),
       new mxGeometry(0, 0, config.width, config.height),
-      makeFrameStyle(),
+      makeFrameStyle(extra != null ? extra.svgData : null),
     );
     root.vertex = true;
     root.setConnectable(false);

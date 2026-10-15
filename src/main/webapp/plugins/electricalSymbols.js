@@ -1,4 +1,4 @@
-/** Generated file. Edit sources in plugins/electricalSymbols/ instead. Built with esbuild from plugins/electricalSymbols/. */
+/** Generated file. Edit sources in plugins/electricalSymbols/ instead. Built with npm run build from plugins/electricalSymbols/. */
 (() => {
   // core/constants.js
   var ELECTRICAL_CONSTANTS = Object.freeze({
@@ -41,18 +41,25 @@
     CANVAS_PORT_DETACH_THRESHOLD_PX: 72,
     CANVAS_PORT_SNAP_PREVIEW_RADIUS_PX: 160,
     TEMPLATE_DRAFT_STORAGE_KEY: "electrical-symbol-template-draft",
-    FRAME_DEFAULT_WIDTH: 820,
-    FRAME_DEFAULT_HEIGHT: 1180,
-    FRAME_HORIZONTAL_GAP: 40,
-    FRAME_VERTICAL_GAP: 56,
+    // A4 竖版 210x297mm @ 4px/mm，与 frameA4Geometry.js 保持一致
+    FRAME_DEFAULT_WIDTH: 840,
+    FRAME_DEFAULT_HEIGHT: 1188,
+    // 参考图纸的图幅是边对边紧贴排布（正好 210mm 一格），不留间隙
+    FRAME_HORIZONTAL_GAP: 0,
+    FRAME_VERTICAL_GAP: 0,
+    // 仅供旧数据迁移，不要按真实图幅重调：老柜体模型的 gapRatios 当年就是按它
+    // 算的，改了会把存量图纸的端子位置整体拉伸。见 cabinetCore 的模型归一化。
     FRAME_CONTENT_RATIO: 0.8,
-    FRAME_MARGIN_RATIO: 0.1,
+    // 内容起点 = 内框 10mm + 标题条 11.25mm + 间隙 8mm = 29.25mm @ 4px/mm
+    // 内框只是图幅边界，不是内容边界；柜体贴着它画会显得顶天立地。
+    FRAME_MARGIN_RATIO: 117 / 1188,
     // 柜宽要放得下：左壁留白 + 纵向名称文字 + 母线 + 引出线段 + 开关
     CABINET_DEFAULT_WIDTH: 180,
     CABINET_MIN_WIDTH: 90,
     // 母线距左壁占柜宽的比例；纵向名称文字摆在左壁与母线之间
     // 配电柜可以比普通图元占得更高一些：图框内容区是 0.8，柜体给到 0.86
-    CABINET_CONTENT_RATIO: 0.86,
+    // 柜体高 = 内框净高 277 − 标题条 11.25 − 上下间隙 2×8 = 249.75mm = 999px
+    CABINET_CONTENT_RATIO: 999 / 1188,
     CABINET_BUSBAR_RATIO: 0.28,
     // 母线上下不到顶不到底的留白
     CABINET_BUSBAR_INSET_Y: 34,
@@ -542,12 +549,67 @@
     return id;
   }
 
+  // domain/drawingTypography.js
+  var EID_DRAWING_FONT_FAMILY = "ISOCPEUR,ISOCP,Arial Narrow,PingFang SC,Noto Sans SC";
+  var EID_CAP_HEIGHT_RATIO = 0.716;
+  var EID_PX_PER_MM = 4;
+  var EID_TEXT_HEIGHT_MM = 2.5;
+  var EID_TEXT_HEIGHT_CJK_MM = 2;
+  var EID_LINE_WIDTH_MM = 0.25;
+  function eidFontSizePx(capHeightMm) {
+    return Math.round(capHeightMm / EID_CAP_HEIGHT_RATIO * EID_PX_PER_MM * 100) / 100;
+  }
+  var EID_TEXT_SIZE_PX = eidFontSizePx(EID_TEXT_HEIGHT_MM);
+  var EID_TEXT_SIZE_CJK_PX = eidFontSizePx(EID_TEXT_HEIGHT_CJK_MM);
+  var EID_LINE_WIDTH_PX = EID_LINE_WIDTH_MM * EID_PX_PER_MM;
+  var CJK = /[\u2e80-\u9fff\uf900-\ufaff\uff00-\uffef]/;
+  function eidFontSizeFor(text) {
+    return CJK.test(String(text || "")) ? EID_TEXT_SIZE_CJK_PX : EID_TEXT_SIZE_PX;
+  }
+
+  // domain/frameA4Geometry.js
+  var PX_PER_MM = 4;
+  var A4_PORTRAIT_MM = { width: 210, height: 297 };
+  var FRAME_A4_WIDTH_PX = A4_PORTRAIT_MM.width * PX_PER_MM;
+  var FRAME_A4_HEIGHT_PX = A4_PORTRAIT_MM.height * PX_PER_MM;
+  var FRAME_A4_PORTRAIT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297" width="210mm" height="297mm"><path d="M 10.0 297.0 L 0.0 297.0 L 0.0 287.0 M 5.0 148.5 L 10.0 148.5 M 10.0 240.5 L 5.0 240.5 M 10.0 194.5 L 5.0 194.5 M 105.0 292.0 L 105.0 287.0 M 10.0 102.5 L 5.0 102.5 M 10.0 56.5 L 5.0 56.5 M 10.0 0.0 L 0.0 0.0 L 0.0 10.0 M 57.5 10.0 L 57.5 5.0 M 210.0 15.0 L 210.0 5.0 M 210.0 287.0 L 210.0 297.0 L 200.0 297.0 M 200.0 148.5 L 205.0 148.5 M 205.0 240.5 L 200.0 240.5 M 205.0 194.5 L 200.0 194.5 M 205.0 102.5 L 200.0 102.5 M 205.0 56.5 L 200.0 56.5 M 210.0 10.0 L 210.0 0.0 L 200.0 0.0 M 152.5 10.0 L 152.5 5.0 M 57.5 287.0 L 57.5 292.0 M 152.5 287.0 L 152.5 292.0 M 105.0 5.0 L 105.0 10.0" fill="none" stroke="#111111" stroke-width="0.25" stroke-linecap="square" stroke-linejoin="miter"/><path d="M 200.0 10.0 L 10.0 10.0 L 10.0 287.0 L 200.0 287.0 Z" fill="none" stroke="#111111" stroke-width="0.5" stroke-linecap="square" stroke-linejoin="miter"/><g fill="#111111" font-family="ARIALN, Arial Narrow, Arial, sans-serif"><text x="7.5" y="263.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">F</text><text x="7.5" y="217.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">E</text><text x="7.5" y="171.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">D</text><text x="7.5" y="125.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">C</text><text x="7.5" y="79.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">B</text><text x="7.5" y="33.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">A</text><text x="33.75" y="7.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">1</text><text x="202.5" y="263.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">F</text><text x="202.5" y="217.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">E</text><text x="202.5" y="171.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">D</text><text x="202.5" y="125.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">C</text><text x="202.5" y="79.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">B</text><text x="202.5" y="33.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">A</text><text x="81.25" y="7.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">2</text><text x="128.75" y="7.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">3</text><text x="176.25" y="7.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">4</text><text x="33.75" y="289.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">1</text><text x="81.25" y="289.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">2</text><text x="128.75" y="289.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">3</text><text x="176.25" y="289.5" font-size="3.0" text-anchor="middle" dominant-baseline="central">4</text></g></svg>';
+
   // domain/frameCore.js
-  function makeFrameStyle() {
-    return "shape=rectangle;fillColor=none;strokeColor=#6b7280;strokeWidth=2;rounded=0;html=1;whiteSpace=wrap;connectable=0;container=1;dropTarget=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;deletable=0;";
+  function makeFrameStyle(svg) {
+    var markup = decodeFrameSvg(svg) || FRAME_A4_PORTRAIT_SVG;
+    return "shape=image;image=data:image/svg+xml," + encodeURIComponent(markup) + ";imageAspect=0;fillColor=none;strokeColor=none;rounded=0;html=1;whiteSpace=wrap;connectable=0;container=1;dropTarget=1;collapsible=0;foldable=0;recursiveResize=0;rotatable=0;resizable=0;deletable=0;";
+  }
+  function decodeFrameSvg(svg) {
+    var value = trim(svg);
+    if (value.length === 0) {
+      return "";
+    }
+    if (value.indexOf("data:") !== 0) {
+      return value;
+    }
+    var comma = value.indexOf(",");
+    if (comma < 0) {
+      return "";
+    }
+    var header = value.slice(0, comma);
+    var payload = value.slice(comma + 1);
+    try {
+      if (header.indexOf(";base64") < 0) {
+        return decodeURIComponent(payload);
+      }
+      var binary = atob(payload);
+      var bytes = new Uint8Array(binary.length);
+      var i;
+      for (i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return new TextDecoder("utf-8").decode(bytes);
+    } catch (e) {
+      return "";
+    }
   }
   function makeFrameLabelStyle() {
-    return "text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontStyle=0;fontSize=13;fontFamily=ISOCPEUR,ISOCP,Arial Narrow,PingFang SC,Noto Sans SC;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;deletable=0;pointerEvents=0;";
+    return "text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontStyle=0;fontSize=" + EID_TEXT_SIZE_PX + ";fontFamily=" + EID_DRAWING_FONT_FAMILY + ";connectable=0;editable=0;movable=0;resizable=0;rotatable=0;deletable=0;pointerEvents=0;";
   }
   function normalizeFrameConfig(raw) {
     raw = isObject(raw) ? raw : {};
@@ -571,6 +633,9 @@
     node.setAttribute("frameHeight", String(config.height));
     node.setAttribute("label", "");
     for (key in extras) {
+      if (key === "svgData") {
+        continue;
+      }
       if (extras.hasOwnProperty(key) && extras[key] != null) {
         node.setAttribute(key, String(extras[key]));
       }
@@ -625,13 +690,13 @@
     return "shape=rectangle;fillColor=#00b7c3;strokeColor=none;html=1;connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;";
   }
   function makeCabinetNameLabelStyle() {
-    return "text;html=1;horizontal=0;align=center;verticalAlign=middle;fontSize=11;fontColor=#111111;whiteSpace=nowrap;overflow=visible;connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;";
+    return "text;html=1;horizontal=0;align=center;verticalAlign=middle;fontSize=" + EID_TEXT_SIZE_CJK_PX + ";fontFamily=" + EID_DRAWING_FONT_FAMILY + ";fontColor=#111111;whiteSpace=nowrap;overflow=visible;connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;";
   }
   function makeCabinetLocationLabelStyle() {
-    return "text;html=1;align=left;verticalAlign=bottom;fontSize=10;fontColor=#111111;whiteSpace=nowrap;overflow=visible;connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;";
+    return "text;html=1;align=left;verticalAlign=bottom;fontSize=" + EID_TEXT_SIZE_PX + ";fontFamily=" + EID_DRAWING_FONT_FAMILY + ";fontColor=#111111;whiteSpace=nowrap;overflow=visible;connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;";
   }
   function makeCabinetDesignationLabelStyle() {
-    return "text;html=1;align=center;verticalAlign=middle;fontSize=11;fontColor=#111111;whiteSpace=nowrap;overflow=visible;connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;";
+    return "text;html=1;align=center;verticalAlign=middle;fontSize=" + EID_TEXT_SIZE_PX + ";fontFamily=" + EID_DRAWING_FONT_FAMILY + ";fontColor=#111111;whiteSpace=nowrap;overflow=visible;connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;";
   }
   function generateCabinetBlockId() {
     return "cabinet-block:" + generateUuid().split("-")[0];
@@ -1241,7 +1306,7 @@
           extra
         ),
         new mxGeometry(0, 0, config.width, config.height),
-        makeFrameStyle()
+        makeFrameStyle(extra != null ? extra.svgData : null)
       );
       root.vertex = true;
       root.setConnectable(false);
@@ -3374,10 +3439,9 @@
     var deps = getSymbolCoreDeps();
     return "shape=image;image=" + deps.toStyleImageUri(spec) + ";imageAspect=0;aspect=fixed;html=1;strokeColor=none;fillColor=none;part=1;connectable=0;editable=0;movable=0;resizable=0;rotatable=0;cloneable=0;deletable=0;pointerEvents=0;";
   }
-  var EID_DRAWING_FONT_FAMILY = "ISOCPEUR,ISOCP,Arial Narrow,PingFang SC,Noto Sans SC";
   function makeLabelStyle(label) {
     var spacing = label.align == "left" ? 0 : 2;
-    return "text;part=1;html=1;whiteSpace=wrap;overflow=visible;strokeColor=none;strokeWidth=0;fillColor=none;align=" + label.align + ";verticalAlign=middle;spacing=" + spacing + ";fontSize=12;fontFamily=" + EID_DRAWING_FONT_FAMILY + ";fontStyle=0;rotatable=0;connectable=0;";
+    return "text;part=1;html=1;whiteSpace=wrap;overflow=visible;strokeColor=none;strokeWidth=0;fillColor=none;align=" + label.align + ";verticalAlign=middle;spacing=" + spacing + ";fontSize=" + eidFontSizeFor(label.text) + ";fontFamily=" + EID_DRAWING_FONT_FAMILY + ";fontStyle=0;rotatable=0;connectable=0;";
   }
   function applyValueMetadata(node, spec, layout) {
     var deps = getSymbolCoreDeps();
@@ -3737,7 +3801,7 @@
   var HYSTERESIS = 0.05;
   var THROTTLE_MS = 120;
   var INIT_DELAY_MS = 200;
-  var FRAME_NOMINAL_WIDTH = 820;
+  var FRAME_NOMINAL_WIDTH = ELECTRICAL_CONSTANTS.FRAME_DEFAULT_WIDTH;
   var overviewMode = false;
   var culledFrameSet = /* @__PURE__ */ new Set();
   var installed = false;
@@ -4211,7 +4275,7 @@
     }
     showStatus("\u7535\u6C14\u56FE\u5143\u5DF2\u5237\u65B0", false);
   }
-  function insertFrame(config, selectedFrame, existingFrames) {
+  function insertFrame(config, selectedFrame, existingFrames, template) {
     var app = getApp();
     var graph = app.ctx.graph;
     var model = app.ctx.model;
@@ -4222,7 +4286,9 @@
     var groupId = selectedFrame != null ? frameDomainApi.getFrameGroupId(selectedFrame) : generateFrameGroupId();
     var nextPageNumber = selectedFrame != null ? frameDomainApi.getMaxFramePageNumberInGroup(groupId) + 1 : 1;
     var frame = frameDomainApi.createDrawingFrameCell(normalizedConfig, nextPageNumber, {
-      groupId
+      groupId,
+      frameTemplateId: template != null ? template.id : null,
+      svgData: template != null ? template.svgData : null
     });
     state.frameConfig = cloneJson(normalizedConfig);
     if (selectedFrame != null) {
@@ -5171,7 +5237,11 @@
           frameConfig,
           originFrameId: deps.trim(deps.getAttr(frame, "originFrameId")) || null,
           autoFrameOwner: deps.trim(deps.getAttr(frame, "autoFrameOwner")) || null,
-          autoFrameIndex: deps.toInt(deps.getAttr(frame, "autoFrameIndex"), 0)
+          autoFrameIndex: deps.toInt(deps.getAttr(frame, "autoFrameIndex"), 0),
+          frameTemplateId: deps.trim(deps.getAttr(frame, "frameTemplateId")) || null,
+          // 图幅画的是哪套模板的图签栏只存在样式里，不带上它，
+          // 还原出来的图纸就会退回默认 A4 边框。
+          style: deps.trim(model.getStyle(frame)) || null
         }
       };
     }
@@ -5509,9 +5579,13 @@
                 groupId: frameObject.groupId,
                 originFrameId: frameObject.props != null ? frameObject.props.originFrameId : null,
                 autoFrameOwner: frameObject.props != null ? frameObject.props.autoFrameOwner : null,
-                autoFrameIndex: frameObject.props != null ? frameObject.props.autoFrameIndex : null
+                autoFrameIndex: frameObject.props != null ? frameObject.props.autoFrameIndex : null,
+                frameTemplateId: frameObject.props != null ? frameObject.props.frameTemplateId : null
               }
             );
+            if (frameObject.props != null && deps.trim(frameObject.props.style)) {
+              frame.setStyle(deps.trim(frameObject.props.style));
+            }
             frame.geometry = new mxGeometry(
               frameObject.geometry.x,
               frameObject.geometry.y,
@@ -6344,9 +6418,14 @@
               originFrameId,
               groupId: originGroupId,
               autoFrameOwner: logicalCabinetId,
-              autoFrameIndex: i
+              autoFrameIndex: i,
+              frameTemplateId: deps.trim(deps.getAttr(originFrame, "frameTemplateId")) || null
             }
           );
+          var originStyle = model.getStyle(originFrame);
+          if (deps.trim(originStyle).length > 0) {
+            frame.setStyle(originStyle);
+          }
           frame.geometry = frame.geometry.clone();
           frame.geometry.x = Math.max(
             model.getGeometry(previousFrame).x + config.width + deps.frameHorizontalGap,
@@ -9213,6 +9292,17 @@
       }
       return text.charAt(text.length - 1) === ";" ? text + FRAME_DECORATION_STYLE_FLAG + ";" : text + ";" + FRAME_DECORATION_STYLE_FLAG + ";";
     }
+    function resolveAutoLabelText(frame, label) {
+      if (label.auto == "pageNumber") {
+        return String(frameDomainApi.getFramePageNumber(frame));
+      }
+      if (label.auto == "pageCount") {
+        return "/" + frameDomainApi.getMaxFramePageNumberInGroup(
+          frameDomainApi.getFrameGroupId(frame)
+        );
+      }
+      return label.text != null ? String(label.text) : "";
+    }
     function createFrameTemplateLabelCell(frame, label) {
       var frameConfig = frameDomainApi.getFrameConfig(frame);
       var width = Math.max(40, Math.round(Number(label.width) || 120));
@@ -9229,13 +9319,16 @@
         constants.FRAME_LABEL_TAG,
         "frameTemplateLabel",
         label.id != null ? String(label.id) : "",
-        label.text != null ? String(label.text) : ""
+        resolveAutoLabelText(frame, label)
       );
       var style = mxUtils.setStyle(
         makeFrameLabelStyle(),
         "align",
         label.align != null ? String(label.align) : "center"
       );
+      if (Number(label.fontSize) > 0) {
+        style = mxUtils.setStyle(style, "fontSize", Number(label.fontSize));
+      }
       var fieldPath = label.fieldPath != null ? String(label.fieldPath) : "";
       var cell;
       if (fieldPath.length > 0) {
@@ -9804,7 +9897,11 @@
             commandApi.insertFrame(
               payload.config,
               selectedFrame,
-              frameDomainApi.getAllDrawingFrames()
+              frameDomainApi.getAllDrawingFrames(),
+              {
+                id: payload.frameTemplateId || null,
+                svgData: payload.frameSvgData || null
+              }
             );
             var insertedFrame = frameDomainApi.findDrawingFrame(
               ctx.graph.getSelectionCell()
@@ -16300,8 +16397,6 @@
   }
 
   // runtime/eidDrawingStandard.js
-  var STANDARD_FONT_HEIGHT_MM = 2.5;
-  var STANDARD_LINE_WIDTH_MM = 0.25;
   function getVisibleLabel(graph, cell) {
     var value = graph.convertValueToString(cell);
     if (value == null) {
@@ -16429,6 +16524,14 @@
       prefix + encodeURIComponent(standardizedSvg)
     );
   }
+  var AUTHORED_TYPE_KINDS = { frameTemplateLabel: true };
+  function keepsAuthoredType(cell) {
+    var value = cell != null ? cell.value : null;
+    if (value == null || typeof value.getAttribute !== "function") {
+      return false;
+    }
+    return AUTHORED_TYPE_KINDS[value.getAttribute("esKind")] === true;
+  }
   function standardizeStyle(graph, model, cell, fontSize, strokeWidth) {
     if (cell == null || !model.isVertex(cell) && !model.isEdge(cell)) {
       return null;
@@ -16444,12 +16547,17 @@
         String(strokeWidth)
       );
     }
-    if (getVisibleLabel(graph, cell).length > 0) {
-      style = mxUtils.setStyle(style, mxConstants.STYLE_FONTFAMILY, "Arial");
+    var label = getVisibleLabel(graph, cell);
+    if (label.length > 0 && !keepsAuthoredType(cell)) {
+      style = mxUtils.setStyle(
+        style,
+        mxConstants.STYLE_FONTFAMILY,
+        EID_DRAWING_FONT_FAMILY
+      );
       style = mxUtils.setStyle(
         style,
         mxConstants.STYLE_FONTSIZE,
-        String(fontSize)
+        String(eidFontSizeFor(label))
       );
       style = mxUtils.setStyle(style, mxConstants.STYLE_FONTSTYLE, "0");
       style = mxUtils.setStyle(style, mxConstants.STYLE_FONTCOLOR, "#000000");
@@ -16494,7 +16602,7 @@
       defaults[i][mxConstants.STYLE_STROKECOLOR] = "#000000";
       defaults[i][mxConstants.STYLE_STROKEWIDTH] = strokeWidth;
       defaults[i][mxConstants.STYLE_FONTCOLOR] = "#000000";
-      defaults[i][mxConstants.STYLE_FONTFAMILY] = "Arial";
+      defaults[i][mxConstants.STYLE_FONTFAMILY] = EID_DRAWING_FONT_FAMILY;
       defaults[i][mxConstants.STYLE_FONTSIZE] = fontSize;
       defaults[i][mxConstants.STYLE_FONTSTYLE] = 0;
     }
@@ -16506,8 +16614,8 @@
     var graph = ctx.graph;
     var model = ctx.model;
     var applying = false;
-    var fontSize = STANDARD_FONT_HEIGHT_MM * mxConstants.PIXELS_PER_MM;
-    var strokeWidth = STANDARD_LINE_WIDTH_MM * mxConstants.PIXELS_PER_MM;
+    var fontSize = eidFontSizeFor("");
+    var strokeWidth = EID_LINE_WIDTH_PX;
     graph.view.setUnit(mxConstants.MILLIMETERS);
     Editor.pageSizeUnit = mxConstants.MILLIMETERS;
     standardizeDefaultStyles(graph, fontSize, strokeWidth);
