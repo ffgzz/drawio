@@ -152,6 +152,11 @@
       // canvas 存放图编辑器运行期的保护开关和变更记录。
       canvas: {
         updatingModel: false,
+        // 宿主自己在批量写画布时，先让它静默，免得把宿主的写入当成用户编辑回传。
+        // 与 updatingModel 分开：那个是插件自己写入时用的，两者会互相覆盖。
+        hostOperation: false,
+        // 宿主告知的只读与主题，由 setHostContext 设置。
+        hostReadonly: false,
         allowProtectedDelete: false,
         pendingChangeRecords: [],
         nextChangeSequence: 1,
@@ -9532,6 +9537,21 @@
         error: error != null && error.message != null ? error.message : String(error)
       });
     }
+    function applyHostContext(payload) {
+      var readonly = payload != null && payload.readonly === true;
+      var dark = payload != null && payload.dark === true;
+      runtimeState.hostReadonly = readonly;
+      if (typeof graph.setEnabled === "function") {
+        graph.setEnabled(!readonly);
+      }
+      if (typeof graph.setCellsLocked === "function") {
+        graph.setCellsLocked(readonly);
+      }
+      graph.setConnectable(!readonly);
+      if (typeof Editor !== "undefined" && typeof Editor.isDarkMode === "function" && Editor.isDarkMode() !== dark && ctx.ui != null && typeof ctx.ui.setDarkMode === "function") {
+        ctx.ui.setDarkMode(dark);
+      }
+    }
     function resolveSelectedFrame(payload) {
       var targetFrameId = payload != null && payload.selectedFrameId != null ? String(payload.selectedFrameId) : "";
       var targetGroupId = payload != null && payload.selectedGroupId != null ? String(payload.selectedGroupId) : "";
@@ -9889,6 +9909,26 @@
           if (payload.action === "ping") {
             evt.stopImmediatePropagation();
             postResult(evt.source, payload, {});
+            return;
+          }
+          if (payload.action === "setHostOperation") {
+            evt.stopImmediatePropagation();
+            runtimeState.hostOperation = payload.suppressChanges === true;
+            postResult(evt.source, payload, {
+              suppressChanges: runtimeState.hostOperation
+            });
+            return;
+          }
+          if (payload.action === "setHostContext") {
+            evt.stopImmediatePropagation();
+            try {
+              applyHostContext(payload);
+              postResult(evt.source, payload, {
+                readonly: runtimeState.hostReadonly
+              });
+            } catch (error) {
+              postError(evt.source, payload, error);
+            }
             return;
           }
           if (payload.action === "insertFrame" && payload.config != null) {
@@ -10590,7 +10630,7 @@
       }
       clearTimeout(modelChangeDebounce);
       modelChangeDebounce = setTimeout(function() {
-        if (!runtimeState.updatingModel) {
+        if (!runtimeState.updatingModel && !runtimeState.hostOperation) {
           var structural = pendingStructuralModelChange;
           pendingStructuralModelChange = false;
           emitHostEvent("eid-model-changed", { structural });

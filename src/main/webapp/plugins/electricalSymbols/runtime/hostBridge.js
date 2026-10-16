@@ -1718,6 +1718,38 @@ export function installHostBridge(ctx) {
     });
   }
 
+  /**
+   * 照宿主说的设置只读与主题。
+   *
+   * 只读用 drawio 自己的 setEnabled/setCellsLocked：它会同时关掉拖拽、改尺寸、
+   * 连线和删除，比逐项禁用可靠。主题走 Editor 的暗色开关，插件各对话框本来就
+   * 读 Editor.isDarkMode()，所以切换后它们自然跟上。
+   */
+  function applyHostContext(payload) {
+    var readonly = payload != null && payload.readonly === true;
+    var dark = payload != null && payload.dark === true;
+
+    runtimeState.hostReadonly = readonly;
+
+    if (typeof graph.setEnabled === "function") {
+      graph.setEnabled(!readonly);
+    }
+    if (typeof graph.setCellsLocked === "function") {
+      graph.setCellsLocked(readonly);
+    }
+    graph.setConnectable(!readonly);
+
+    if (
+      typeof Editor !== "undefined" &&
+      typeof Editor.isDarkMode === "function" &&
+      Editor.isDarkMode() !== dark &&
+      ctx.ui != null &&
+      typeof ctx.ui.setDarkMode === "function"
+    ) {
+      ctx.ui.setDarkMode(dark);
+    }
+  }
+
   function resolveSelectedFrame(payload) {
     var targetFrameId =
       payload != null && payload.selectedFrameId != null
@@ -2204,6 +2236,33 @@ export function installHostBridge(ctx) {
         if (payload.action === "ping") {
           evt.stopImmediatePropagation();
           postResult(evt.source, payload, {});
+          return;
+        }
+
+        // 宿主在批量写画布前后各调一次。期间不回传 eid-model-changed：宿主
+        // 已经知道自己写了什么，回传会被当成用户编辑再存一遍。宿主把它当成
+        // 每个操作的第一步，所以这里必须回执，否则所有操作都会卡在超时上。
+        if (payload.action === "setHostOperation") {
+          evt.stopImmediatePropagation();
+          runtimeState.hostOperation = payload.suppressChanges === true;
+          postResult(evt.source, payload, {
+            suppressChanges: runtimeState.hostOperation,
+          });
+          return;
+        }
+
+        // 宿主告知当前是否只读、以及明暗主题。只读由宿主的权限、版本状态和
+        // 设备锁共同决定，插件不自己判断，只照它说的做。
+        if (payload.action === "setHostContext") {
+          evt.stopImmediatePropagation();
+          try {
+            applyHostContext(payload);
+            postResult(evt.source, payload, {
+              readonly: runtimeState.hostReadonly,
+            });
+          } catch (error) {
+            postError(evt.source, payload, error);
+          }
           return;
         }
 
@@ -3163,7 +3222,10 @@ export function installHostBridge(ctx) {
 
     clearTimeout(modelChangeDebounce);
     modelChangeDebounce = setTimeout(function () {
-      if (!runtimeState.updatingModel) {
+      // updatingModel：插件自己在写模型。
+      // hostOperation：宿主在批量写模型，它已经知道自己写了什么，回传只会
+      // 被当成用户编辑再存一次。两个标志分开，互不覆盖。
+      if (!runtimeState.updatingModel && !runtimeState.hostOperation) {
         var structural = pendingStructuralModelChange;
         pendingStructuralModelChange = false;
         emitHostEvent("eid-model-changed", { structural: structural });
