@@ -313,7 +313,7 @@ App.pluginRegistry = {
   // Keep the editor bridge bundle fresh when host-side interaction behavior
   // changes. draw.io otherwise reuses the old plugin script from cache even
   // after the surrounding React editor has refreshed.
-  electricalSymbols: "plugins/electricalSymbols.js?v=20261016-host-context",
+  electricalSymbols: "plugins/electricalSymbols.js?v=20261019-frame-text",
 };
 
 // publicPlugin 是一个公开插件列表，决定哪些插件会出现在 UI 的"内置插件"下拉选择框中

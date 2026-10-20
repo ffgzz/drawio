@@ -16489,7 +16489,7 @@
     var paint = String(value || "").trim().toLowerCase();
     return paint === "white" || paint === "#fff" || paint === "#ffffff";
   }
-  function standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth) {
+  function standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth, keepAuthoredText) {
     var image = rawStyleValue(style, mxConstants.STYLE_IMAGE);
     if (image == null || image.toLowerCase().indexOf("data:image/svg+xml,") !== 0 || cell.geometry == null || !(Number(cell.geometry.width) > 0)) {
       return style;
@@ -16542,11 +16542,13 @@
       var fill = element.getAttribute("fill");
       var inlineFill = inlineStyle != null ? inlineStyle.getPropertyValue("fill") : "";
       if (tagName === "text") {
-        element.setAttribute("fill", "#000000");
-        element.setAttribute("font-family", "Arial");
-        element.setAttribute("font-size", String(svgFontSize));
-        element.setAttribute("font-style", "normal");
-        element.setAttribute("font-weight", "normal");
+        if (!keepAuthoredText) {
+          element.setAttribute("fill", "#000000");
+          element.setAttribute("font-family", "Arial");
+          element.setAttribute("font-size", String(svgFontSize));
+          element.setAttribute("font-style", "normal");
+          element.setAttribute("font-weight", "normal");
+        }
       } else {
         if (isVisibleSvgPaint(fill) && !isWhiteSvgPaint(fill)) {
           element.setAttribute("fill", "#000000");
@@ -16564,20 +16566,27 @@
       prefix + encodeURIComponent(standardizedSvg)
     );
   }
-  var AUTHORED_TYPE_KINDS = { frameTemplateLabel: true };
+  var AUTHORED_TYPE_KINDS = { frameTemplateLabel: true, frame: true };
+  var AUTHORED_PLUGIN_TYPES = { drawingFrame: true };
   function keepsAuthoredType(cell) {
     var value = cell != null ? cell.value : null;
     if (value == null || typeof value.getAttribute !== "function") {
       return false;
     }
-    return AUTHORED_TYPE_KINDS[value.getAttribute("esKind")] === true;
+    return AUTHORED_TYPE_KINDS[value.getAttribute("esKind")] === true || AUTHORED_PLUGIN_TYPES[value.getAttribute("pluginType")] === true;
   }
   function standardizeStyle(graph, model, cell, fontSize, strokeWidth) {
     if (cell == null || !model.isVertex(cell) && !model.isEdge(cell)) {
       return null;
     }
     var style = model.getStyle(cell) || "";
-    style = standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth);
+    style = standardizeEmbeddedSvgStyle(
+      style,
+      cell,
+      fontSize,
+      strokeWidth,
+      keepsAuthoredType(cell)
+    );
     var computedStyle = graph.getCellStyle(cell) || {};
     if (hasVisibleStroke(style, computedStyle)) {
       style = mxUtils.setStyle(style, mxConstants.STYLE_STROKECOLOR, "#000000");

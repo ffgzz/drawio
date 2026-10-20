@@ -100,7 +100,7 @@ function isWhiteSvgPaint(value) {
   return paint === "white" || paint === "#fff" || paint === "#ffffff";
 }
 
-function standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth) {
+function standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth, keepAuthoredText) {
   var image = rawStyleValue(style, mxConstants.STYLE_IMAGE);
 
   if (
@@ -187,11 +187,15 @@ function standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth) {
       inlineStyle != null ? inlineStyle.getPropertyValue("fill") : "";
 
     if (tagName === "text") {
-      element.setAttribute("fill", "#000000");
-      element.setAttribute("font-family", "Arial");
-      element.setAttribute("font-size", String(svgFontSize));
-      element.setAttribute("font-style", "normal");
-      element.setAttribute("font-weight", "normal");
+      // 图框 SVG 来自客户自己的图框块，图签栏里公司名、图名等字号各不相同；
+      // 统一成正文字号会把小字放大压到相邻文字上，画布就和出图对不上。
+      if (!keepAuthoredText) {
+        element.setAttribute("fill", "#000000");
+        element.setAttribute("font-family", "Arial");
+        element.setAttribute("font-size", String(svgFontSize));
+        element.setAttribute("font-style", "normal");
+        element.setAttribute("font-weight", "normal");
+      }
     } else {
       if (isVisibleSvgPaint(fill) && !isWhiteSvgPaint(fill)) {
         element.setAttribute("fill", "#000000");
@@ -214,7 +218,8 @@ function standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth) {
 }
 
 /** 自带字号、不参与正文统一化的单元。 */
-var AUTHORED_TYPE_KINDS = { frameTemplateLabel: true };
+var AUTHORED_TYPE_KINDS = { frameTemplateLabel: true, frame: true };
+var AUTHORED_PLUGIN_TYPES = { drawingFrame: true };
 
 function keepsAuthoredType(cell) {
   var value = cell != null ? cell.value : null;
@@ -223,7 +228,10 @@ function keepsAuthoredType(cell) {
     return false;
   }
 
-  return AUTHORED_TYPE_KINDS[value.getAttribute("esKind")] === true;
+  return (
+    AUTHORED_TYPE_KINDS[value.getAttribute("esKind")] === true ||
+    AUTHORED_PLUGIN_TYPES[value.getAttribute("pluginType")] === true
+  );
 }
 
 function standardizeStyle(graph, model, cell, fontSize, strokeWidth) {
@@ -232,7 +240,13 @@ function standardizeStyle(graph, model, cell, fontSize, strokeWidth) {
   }
 
   var style = model.getStyle(cell) || "";
-  style = standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth);
+  style = standardizeEmbeddedSvgStyle(
+    style,
+    cell,
+    fontSize,
+    strokeWidth,
+    keepsAuthoredType(cell),
+  );
   var computedStyle = graph.getCellStyle(cell) || {};
 
   // Only touch stroke colour and width. Dash patterns, arrows, routing and all
