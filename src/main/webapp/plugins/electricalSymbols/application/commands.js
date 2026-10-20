@@ -138,7 +138,7 @@ export function refreshSelection() {
   showStatus("电气图元已刷新", false);
 }
 
-export function insertFrame(config, selectedFrame, existingFrames) {
+export function insertFrame(config, selectedFrame, existingFrames, template) {
   var app = getApp();
   var graph = app.ctx.graph;
   var model = app.ctx.model;
@@ -158,6 +158,8 @@ export function insertFrame(config, selectedFrame, existingFrames) {
         : 1;
     var frame = frameDomainApi.createDrawingFrameCell(normalizedConfig, nextPageNumber, {
       groupId,
+      frameTemplateId: template != null ? template.id : null,
+      svgData: template != null ? template.svgData : null,
     });
 
   state.frameConfig = cloneJson(normalizedConfig);

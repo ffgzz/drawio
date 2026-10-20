@@ -1399,6 +1399,27 @@ export function installHostBridge(ctx) {
       : text + ";" + FRAME_DECORATION_STYLE_FLAG + ";";
   }
 
+  /**
+   * Values a title block takes from the sheet rather than from the user.
+   *
+   * The page number is decided by where the frame sits in its group, so the
+   * template marks those slots and they are filled here instead of being typed
+   * into the insert dialog, where they could contradict the drawing.
+   */
+  function resolveAutoLabelText(frame, label) {
+    if (label.auto == "pageNumber") {
+      return String(frameDomainApi.getFramePageNumber(frame));
+    }
+
+    if (label.auto == "pageCount") {
+      return "/" + frameDomainApi.getMaxFramePageNumberInGroup(
+        frameDomainApi.getFrameGroupId(frame),
+      );
+    }
+
+    return label.text != null ? String(label.text) : "";
+  }
+
   function createFrameTemplateLabelCell(frame, label) {
     var frameConfig = frameDomainApi.getFrameConfig(frame);
     var width = Math.max(40, Math.round(Number(label.width) || 120));
@@ -1415,13 +1436,17 @@ export function installHostBridge(ctx) {
       constants.FRAME_LABEL_TAG,
       "frameTemplateLabel",
       label.id != null ? String(label.id) : "",
-      label.text != null ? String(label.text) : "",
+      resolveAutoLabelText(frame, label),
     );
     var style = mxUtils.setStyle(
       makeFrameLabelStyle(),
       "align",
       label.align != null ? String(label.align) : "center",
     );
+
+    if (Number(label.fontSize) > 0) {
+      style = mxUtils.setStyle(style, "fontSize", Number(label.fontSize));
+    }
     var fieldPath = label.fieldPath != null ? String(label.fieldPath) : "";
     var cell;
 
@@ -1692,6 +1717,38 @@ export function installHostBridge(ctx) {
       error:
         error != null && error.message != null ? error.message : String(error),
     });
+  }
+
+  /**
+   * 照宿主说的设置只读与主题。
+   *
+   * 只读用 drawio 自己的 setEnabled/setCellsLocked：它会同时关掉拖拽、改尺寸、
+   * 连线和删除，比逐项禁用可靠。主题走 Editor 的暗色开关，插件各对话框本来就
+   * 读 Editor.isDarkMode()，所以切换后它们自然跟上。
+   */
+  function applyHostContext(payload) {
+    var readonly = payload != null && payload.readonly === true;
+    var dark = payload != null && payload.dark === true;
+
+    runtimeState.hostReadonly = readonly;
+
+    if (typeof graph.setEnabled === "function") {
+      graph.setEnabled(!readonly);
+    }
+    if (typeof graph.setCellsLocked === "function") {
+      graph.setCellsLocked(readonly);
+    }
+    graph.setConnectable(!readonly);
+
+    if (
+      typeof Editor !== "undefined" &&
+      typeof Editor.isDarkMode === "function" &&
+      Editor.isDarkMode() !== dark &&
+      ctx.ui != null &&
+      typeof ctx.ui.setDarkMode === "function"
+    ) {
+      ctx.ui.setDarkMode(dark);
+    }
   }
 
   function resolveSelectedFrame(payload) {
@@ -2047,18 +2104,33 @@ export function installHostBridge(ctx) {
       }
 
       try {
-        if (payload.action === "setHostOperation" && isManagedHost()) {
-          var hostState = ctx.shipHostState || (ctx.shipHostState = {readonly: true});
-          if (payload.suppressChanges && modelChangeDebounce != null && !hostState.suppressChanges && !hostState.readonly) {
-            emitHostEvent("eid-model-changed", {structural: pendingStructuralModelChange});
+        // 共用握手入口；托管模式另保留权限、待发送用户修改与保存保护。
+        if (payload.action === "setHostOperation") {
+          evt.stopImmediatePropagation();
+          if (isManagedHost()) {
+            var hostState = ctx.shipHostState || (ctx.shipHostState = {readonly: true});
+            if (payload.suppressChanges && modelChangeDebounce != null && !hostState.suppressChanges && !hostState.readonly) {
+              emitHostEvent("eid-model-changed", {structural: pendingStructuralModelChange});
+            }
+            clearTimeout(modelChangeDebounce);
+            modelChangeDebounce = null;
+            pendingStructuralModelChange = false;
+            hostState.suppressChanges = payload.suppressChanges === true;
           }
-          clearTimeout(modelChangeDebounce); modelChangeDebounce = null; pendingStructuralModelChange = false;
-          hostState.suppressChanges = payload.suppressChanges === true;
-          postResult(evt.source, payload, {}); return;
+          runtimeState.hostOperation = payload.suppressChanges === true;
+          postResult(evt.source, payload, {suppressChanges: runtimeState.hostOperation});
+          return;
         }
         if (payload.action === "setHostContext") {
           evt.stopImmediatePropagation();
-          postResult(evt.source, payload, configureManagedHost(ctx, payload));
+          if (isManagedHost()) {
+            var contextResult = configureManagedHost(ctx, payload);
+            runtimeState.hostReadonly = contextResult.readonly;
+            postResult(evt.source, payload, contextResult);
+          } else {
+            applyHostContext(payload);
+            postResult(evt.source, payload, {readonly: runtimeState.hostReadonly});
+          }
           return;
         }
         if (isManagedHost() && ctx.shipHostState?.readonly !== false && ["createSymbol", "insertRawXml", "insertFrame", "insertCabinet", "updateSymbolSpec", "applyLayoutPositions", "moveCellForTest", "deleteCellForTest"].includes(payload.action)) throw new Error("当前图纸为只读状态");
@@ -2207,6 +2279,10 @@ export function installHostBridge(ctx) {
             payload.config,
             selectedFrame,
             frameDomainApi.getAllDrawingFrames(),
+            {
+              id: payload.frameTemplateId || null,
+              svgData: payload.frameSvgData || null,
+            },
           );
           var insertedFrame = frameDomainApi.findDrawingFrame(
             ctx.graph.getSelectionCell(),
@@ -3130,7 +3206,7 @@ export function installHostBridge(ctx) {
   var modelChangeDebounce = null;
   var pendingStructuralModelChange = false;
   graph.getModel().addListener(mxEvent.CHANGE, function (_sender, evt) {
-    if (runtimeState.updatingModel || (isManagedHost() && (ctx.shipHostState?.readonly || ctx.shipHostState?.suppressChanges))) {
+    if (runtimeState.updatingModel || runtimeState.hostOperation || (isManagedHost() && (ctx.shipHostState?.readonly || ctx.shipHostState?.suppressChanges))) {
       return;
     }
 
@@ -3153,7 +3229,8 @@ export function installHostBridge(ctx) {
     clearTimeout(modelChangeDebounce);
     modelChangeDebounce = setTimeout(function () {
       modelChangeDebounce = null;
-      if (!runtimeState.updatingModel && !(isManagedHost() && (ctx.shipHostState?.readonly || ctx.shipHostState?.suppressChanges))) {
+      // 插件写入、宿主批量写入及托管只读状态都不能回传为用户编辑。
+      if (!runtimeState.updatingModel && !runtimeState.hostOperation && !(isManagedHost() && (ctx.shipHostState?.readonly || ctx.shipHostState?.suppressChanges))) {
         var structural = pendingStructuralModelChange;
         pendingStructuralModelChange = false;
         emitHostEvent("eid-model-changed", { structural: structural });

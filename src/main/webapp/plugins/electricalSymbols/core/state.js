@@ -66,6 +66,11 @@ export function createPluginState(constants) {
     // canvas 存放图编辑器运行期的保护开关和变更记录。
     canvas: {
       updatingModel: false,
+      // 宿主自己在批量写画布时，先让它静默，免得把宿主的写入当成用户编辑回传。
+      // 与 updatingModel 分开：那个是插件自己写入时用的，两者会互相覆盖。
+      hostOperation: false,
+      // 宿主告知的只读与主题，由 setHostContext 设置。
+      hostReadonly: false,
       allowProtectedDelete: false,
       pendingChangeRecords: [],
       nextChangeSequence: 1,

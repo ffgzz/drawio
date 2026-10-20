@@ -4,9 +4,15 @@
  * Draw.io keeps its native model scale (100 model units per inch). The
  * millimetre setting below changes only the editor's displayed unit; it does
  * not rescale page dimensions, grid size, cell geometry or edge waypoints.
+ *
+ * 这里是编辑器里字体字号的唯一出口：每次模型变动都会把有文字的单元改写成
+ * 下面这套值，所以要跟客户图纸对齐就得改这里。
  */
-var STANDARD_FONT_HEIGHT_MM = 2.5;
-var STANDARD_LINE_WIDTH_MM = 0.25;
+import {
+  EID_DRAWING_FONT_FAMILY,
+  EID_LINE_WIDTH_PX,
+  eidFontSizeFor,
+} from "../domain/drawingTypography.js";
 
 function getVisibleLabel(graph, cell) {
   var value = graph.convertValueToString(cell);
@@ -94,7 +100,7 @@ function isWhiteSvgPaint(value) {
   return paint === "white" || paint === "#fff" || paint === "#ffffff";
 }
 
-function standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth) {
+function standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth, keepAuthoredText) {
   var image = rawStyleValue(style, mxConstants.STYLE_IMAGE);
 
   if (
@@ -181,11 +187,15 @@ function standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth) {
       inlineStyle != null ? inlineStyle.getPropertyValue("fill") : "";
 
     if (tagName === "text") {
-      element.setAttribute("fill", "#000000");
-      element.setAttribute("font-family", "Arial");
-      element.setAttribute("font-size", String(svgFontSize));
-      element.setAttribute("font-style", "normal");
-      element.setAttribute("font-weight", "normal");
+      // 图框 SVG 来自客户自己的图框块，图签栏里公司名、图名等字号各不相同；
+      // 统一成正文字号会把小字放大压到相邻文字上，画布就和出图对不上。
+      if (!keepAuthoredText) {
+        element.setAttribute("fill", "#000000");
+        element.setAttribute("font-family", "Arial");
+        element.setAttribute("font-size", String(svgFontSize));
+        element.setAttribute("font-style", "normal");
+        element.setAttribute("font-weight", "normal");
+      }
     } else {
       if (isVisibleSvgPaint(fill) && !isWhiteSvgPaint(fill)) {
         element.setAttribute("fill", "#000000");
@@ -207,13 +217,36 @@ function standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth) {
   );
 }
 
+/** 自带字号、不参与正文统一化的单元。 */
+var AUTHORED_TYPE_KINDS = { frameTemplateLabel: true, frame: true };
+var AUTHORED_PLUGIN_TYPES = { drawingFrame: true };
+
+function keepsAuthoredType(cell) {
+  var value = cell != null ? cell.value : null;
+
+  if (value == null || typeof value.getAttribute !== "function") {
+    return false;
+  }
+
+  return (
+    AUTHORED_TYPE_KINDS[value.getAttribute("esKind")] === true ||
+    AUTHORED_PLUGIN_TYPES[value.getAttribute("pluginType")] === true
+  );
+}
+
 function standardizeStyle(graph, model, cell, fontSize, strokeWidth) {
   if (cell == null || (!model.isVertex(cell) && !model.isEdge(cell))) {
     return null;
   }
 
   var style = model.getStyle(cell) || "";
-  style = standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth);
+  style = standardizeEmbeddedSvgStyle(
+    style,
+    cell,
+    fontSize,
+    strokeWidth,
+    keepsAuthoredType(cell),
+  );
   var computedStyle = graph.getCellStyle(cell) || {};
 
   // Only touch stroke colour and width. Dash patterns, arrows, routing and all
@@ -227,12 +260,21 @@ function standardizeStyle(graph, model, cell, fontSize, strokeWidth) {
     );
   }
 
-  if (getVisibleLabel(graph, cell).length > 0) {
-    style = mxUtils.setStyle(style, mxConstants.STYLE_FONTFAMILY, "Arial");
+  var label = getVisibleLabel(graph, cell);
+
+  // 图签栏的字号是从客户自己的 Sub_Title 图块里量出来的（3.0 mm），
+  // 不是正文字号，统一化时必须放过，否则出图和图框对不上。
+  if (label.length > 0 && !keepsAuthoredType(cell)) {
+    style = mxUtils.setStyle(
+      style,
+      mxConstants.STYLE_FONTFAMILY,
+      EID_DRAWING_FONT_FAMILY,
+    );
+    // 客户图纸中文比拉丁小一号，字号跟着内容走。
     style = mxUtils.setStyle(
       style,
       mxConstants.STYLE_FONTSIZE,
-      String(fontSize),
+      String(eidFontSizeFor(label)),
     );
     style = mxUtils.setStyle(style, mxConstants.STYLE_FONTSTYLE, "0");
     style = mxUtils.setStyle(style, mxConstants.STYLE_FONTCOLOR, "#000000");
@@ -291,7 +333,7 @@ function standardizeDefaultStyles(graph, fontSize, strokeWidth) {
     defaults[i][mxConstants.STYLE_STROKECOLOR] = "#000000";
     defaults[i][mxConstants.STYLE_STROKEWIDTH] = strokeWidth;
     defaults[i][mxConstants.STYLE_FONTCOLOR] = "#000000";
-    defaults[i][mxConstants.STYLE_FONTFAMILY] = "Arial";
+    defaults[i][mxConstants.STYLE_FONTFAMILY] = EID_DRAWING_FONT_FAMILY;
     defaults[i][mxConstants.STYLE_FONTSIZE] = fontSize;
     defaults[i][mxConstants.STYLE_FONTSTYLE] = 0;
   }
@@ -305,8 +347,10 @@ export function installEidDrawingStandard(ctx) {
   var graph = ctx.graph;
   var model = ctx.model;
   var applying = false;
-  var fontSize = STANDARD_FONT_HEIGHT_MM * mxConstants.PIXELS_PER_MM;
-  var strokeWidth = STANDARD_LINE_WIDTH_MM * mxConstants.PIXELS_PER_MM;
+  // 用编辑器自己的 4 px/mm，而不是 mxGraph 的 96dpi 换算：图幅、图元、
+  // 出图全按 4 px/mm 走，混用会让字比图纸小六分之一。
+  var fontSize = eidFontSizeFor("");
+  var strokeWidth = EID_LINE_WIDTH_PX;
 
   // Draw.io's built-in conversion now shows model dimensions in millimetres.
   // PIXELS_PER_MM/PIXELS_PER_INCH and every page/model coordinate stay native.

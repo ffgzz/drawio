@@ -147,15 +147,15 @@ addRequiredFragmentsCheck("eid-drawing-standard", eidDrawingStandardFile, [
     message: "页面尺寸对话框必须显示毫米",
   },
   {
-    text: "STANDARD_FONT_HEIGHT_MM * mxConstants.PIXELS_PER_MM",
-    message: "2.5mm 字高必须换算成 Draw.io 原生模型单位",
+    text: 'var fontSize = eidFontSizeFor("");',
+    message: "默认字号必须使用共享字高换算规则",
   },
   {
-    text: "var STANDARD_LINE_WIDTH_MM = 0.25;",
+    text: "EID_LINE_WIDTH_PX",
     message: "EID 可见描边必须使用 CAD 默认 0.25mm 线宽",
   },
   {
-    text: "STANDARD_LINE_WIDTH_MM * mxConstants.PIXELS_PER_MM",
+    text: "var strokeWidth = EID_LINE_WIDTH_PX;",
     message: "0.25mm 线宽必须换算成 Draw.io 原生模型单位",
   },
   {
@@ -171,8 +171,8 @@ addRequiredFragmentsCheck("eid-drawing-standard", eidDrawingStandardFile, [
     message: "strokeOpacity=0 的语义隐藏线不得被恢复",
   },
   {
-    text: "standardizeEmbeddedSvgStyle(style, cell, fontSize, strokeWidth)",
-    message: "内嵌 SVG 只能在样式层统一黑色、字体和可见线宽",
+    text: "keepsAuthoredType(cell)",
+    message: "图框和图签必须保留作者字号",
   },
   {
     text: 'explicitStyleValue(style, "fillColor") === "#00b7c3"',
@@ -296,6 +296,12 @@ addRegexCheck(
   /model\.beginUpdate|graph\.importCells|graph\.removeCells|model\.add\(|model\.remove\(|graph\.insertEdge|graph\.setSelectionCells\(|graph\.setSelectionCell\(/,
   "UI 层不应直接写 graph/model",
 );
+
+addRequiredFragmentsCheck("shared-drawing-typography", path.join(rootDir, "domain", "drawingTypography.js"), [
+  {text: "EID_LINE_WIDTH_MM = 0.25", message: "保留 CAD 0.25mm 线宽"},
+  {text: "EID_LINE_WIDTH_MM * EID_PX_PER_MM", message: "线宽必须从毫米换算"},
+  {text: "capHeightMm / EID_CAP_HEIGHT_RATIO", message: "字号必须按字面率换算"},
+]);
 
 let hasError = false;
 

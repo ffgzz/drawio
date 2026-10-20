@@ -43,18 +43,25 @@ export const ELECTRICAL_CONSTANTS = Object.freeze({
   CANVAS_PORT_DETACH_THRESHOLD_PX: 72,
   CANVAS_PORT_SNAP_PREVIEW_RADIUS_PX: 160,
   TEMPLATE_DRAFT_STORAGE_KEY: "electrical-symbol-template-draft",
-  FRAME_DEFAULT_WIDTH: 820,
-  FRAME_DEFAULT_HEIGHT: 1180,
-  FRAME_HORIZONTAL_GAP: 40,
-  FRAME_VERTICAL_GAP: 56,
+  // A4 竖版 210x297mm @ 4px/mm，与 frameA4Geometry.js 保持一致
+  FRAME_DEFAULT_WIDTH: 840,
+  FRAME_DEFAULT_HEIGHT: 1188,
+  // 参考图纸的图幅是边对边紧贴排布（正好 210mm 一格），不留间隙
+  FRAME_HORIZONTAL_GAP: 0,
+  FRAME_VERTICAL_GAP: 0,
+  // 仅供旧数据迁移，不要按真实图幅重调：老柜体模型的 gapRatios 当年就是按它
+  // 算的，改了会把存量图纸的端子位置整体拉伸。见 cabinetCore 的模型归一化。
   FRAME_CONTENT_RATIO: 0.8,
-  FRAME_MARGIN_RATIO: 0.1,
+  // 内容起点 = 内框 10mm + 标题条 11.25mm + 间隙 8mm = 29.25mm @ 4px/mm
+  // 内框只是图幅边界，不是内容边界；柜体贴着它画会显得顶天立地。
+  FRAME_MARGIN_RATIO: 117 / 1188,
   // 柜宽要放得下：左壁留白 + 纵向名称文字 + 母线 + 引出线段 + 开关
   CABINET_DEFAULT_WIDTH: 180,
   CABINET_MIN_WIDTH: 90,
   // 母线距左壁占柜宽的比例；纵向名称文字摆在左壁与母线之间
   // 配电柜可以比普通图元占得更高一些：图框内容区是 0.8，柜体给到 0.86
-  CABINET_CONTENT_RATIO: 0.86,
+  // 柜体高 = 内框净高 277 − 标题条 11.25 − 上下间隙 2×8 = 249.75mm = 999px
+  CABINET_CONTENT_RATIO: 999 / 1188,
   CABINET_BUSBAR_RATIO: 0.28,
   // 母线上下不到顶不到底的留白
   CABINET_BUSBAR_INSET_Y: 34,

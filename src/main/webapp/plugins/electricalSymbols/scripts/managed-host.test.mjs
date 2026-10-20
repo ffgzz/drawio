@@ -17,3 +17,45 @@ test("managed save forwards once to the exact parent origin and never invokes le
 test("losing edit rights blocks save and mutation shortcuts",()=>{const x=setup();host.configureManagedHost(x.ctx,{readonly:false});host.configureManagedHost(x.ctx,{readonly:true});let prevented=0;const handler=x.events.find(e=>e[0]==="keydown")[1];handler({ctrlKey:true,key:"s",preventDefault(){prevented++;},stopImmediatePropagation(){}});assert.equal(prevented,1);assert.equal(x.messages.length,0);assert.equal(x.ctx.graph.isCellDeletable(),false);});
 
 test("host operations freeze user edits and save shortcuts until the operation completes",()=>{const x=setup();host.configureManagedHost(x.ctx,{readonly:false});x.ctx.shipHostState.suppressChanges=true;assert.equal(x.ctx.graph.isCellMovable(),false);x.ctx.ui.actions.actions.save.funct();assert.equal(x.messages.length,0);x.ctx.shipHostState.suppressChanges=false;assert.equal(x.ctx.graph.isCellMovable(),true);});
+
+// 执行真实消息分支，检查合并后的握手不会被另一份同名分支提前截走。
+const bridgeSource = await readFile(new URL('../runtime/hostBridge.js', import.meta.url), 'utf8');
+const start = bridgeSource.indexOf('        if (payload.action === "setHostOperation")');
+const end = bridgeSource.indexOf('        if (isManagedHost() && ctx.shipHostState?.readonly', start);
+assert.ok(start >= 0 && end > start);
+assert.equal((bridgeSource.match(/payload.action === "setHostContext"/g) || []).length, 1);
+assert.equal((bridgeSource.match(/payload.action === "setHostOperation"/g) || []).length, 1);
+const handle = new Function('ctx', 'runtimeState', 'payload', 'managed', 'configureManagedHost', 'applyHostContext', `
+  const replies = [], events = [];
+  const evt = {source: {}, stopImmediatePropagation(){}};
+  const isManagedHost = () => managed;
+  const postResult = (_source, _payload, result) => replies.push(result);
+  const emitHostEvent = (...args) => events.push(args);
+  const clearTimeout = () => {};
+  let modelChangeDebounce = 1, pendingStructuralModelChange = true;
+  (function(){${bridgeSource.slice(start, end)}})();
+  return {replies, events, modelChangeDebounce};
+`);
+for (const managed of [false, true]) {
+  test(`host handshake and operation acknowledgements: managed=${managed}`, () => {
+    const x = setup(managed), runtime = {};
+    let legacyCalls = 0;
+    const applyLegacy = payload => {legacyCalls++; runtime.hostReadonly = payload.readonly;};
+    const context = handle(x.ctx, runtime, {action:'setHostContext', readonly:false}, managed, host.configureManagedHost, applyLegacy);
+    assert.equal(context.replies.length, 1);
+    assert.equal(context.replies[0].readonly, false);
+    assert.equal(legacyCalls, managed ? 0 : 1);
+    const started = handle(x.ctx, runtime, {action:'setHostOperation', suppressChanges:true}, managed, host.configureManagedHost, applyLegacy);
+    assert.deepEqual(started.replies, [{suppressChanges:true}]);
+    assert.equal(runtime.hostOperation, true);
+    if (managed) {
+      assert.equal(x.ctx.shipHostState.suppressChanges, true);
+      assert.equal(x.ctx.graph.isCellMovable(), false);
+      assert.equal(started.events.length, 1);
+      assert.equal(started.modelChangeDebounce, null);
+    }
+    handle(x.ctx, runtime, {action:'setHostOperation', suppressChanges:false}, managed, host.configureManagedHost, applyLegacy);
+    assert.equal(runtime.hostOperation, false);
+    if (managed) assert.equal(x.ctx.graph.isCellMovable(), true);
+  });
+}

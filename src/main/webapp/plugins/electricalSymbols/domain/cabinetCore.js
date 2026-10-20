@@ -6,6 +6,11 @@
  *
  * 这里只负责模型归一化、旧数据迁移、分页与样式生成，不访问 graph/model。
  */
+import {
+  EID_DRAWING_FONT_FAMILY,
+  EID_TEXT_SIZE_CJK_PX,
+  EID_TEXT_SIZE_PX,
+} from "./drawingTypography.js";
 import { ELECTRICAL_CONSTANTS } from "../core/constants.js";
 import {
   clamp,
@@ -146,7 +151,8 @@ export function makeCabinetBusbarStyle() {
 export function makeCabinetNameLabelStyle() {
   return (
     "text;html=1;horizontal=0;align=center;verticalAlign=middle;" +
-    "fontSize=11;fontColor=#111111;whiteSpace=nowrap;overflow=visible;" +
+    "fontSize=" + EID_TEXT_SIZE_CJK_PX + ";fontFamily=" + EID_DRAWING_FONT_FAMILY +
+    ";fontColor=#111111;whiteSpace=nowrap;overflow=visible;" +
     "connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;"
   );
 }
@@ -155,7 +161,8 @@ export function makeCabinetNameLabelStyle() {
 export function makeCabinetLocationLabelStyle() {
   return (
     "text;html=1;align=left;verticalAlign=bottom;" +
-    "fontSize=10;fontColor=#111111;whiteSpace=nowrap;overflow=visible;" +
+    "fontSize=" + EID_TEXT_SIZE_PX + ";fontFamily=" + EID_DRAWING_FONT_FAMILY +
+    ";fontColor=#111111;whiteSpace=nowrap;overflow=visible;" +
     "connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;"
   );
 }
@@ -164,7 +171,8 @@ export function makeCabinetLocationLabelStyle() {
 export function makeCabinetDesignationLabelStyle() {
   return (
     "text;html=1;align=center;verticalAlign=middle;" +
-    "fontSize=11;fontColor=#111111;whiteSpace=nowrap;overflow=visible;" +
+    "fontSize=" + EID_TEXT_SIZE_PX + ";fontFamily=" + EID_DRAWING_FONT_FAMILY +
+    ";fontColor=#111111;whiteSpace=nowrap;overflow=visible;" +
     "connectable=0;movable=0;resizable=0;rotatable=0;editable=0;deletable=0;"
   );
 }

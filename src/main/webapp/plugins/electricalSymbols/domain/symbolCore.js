@@ -2,6 +2,10 @@
  * 电气图元纯规则子模块。
  * 负责 root/body/label 的样式和值元数据拼装，不直接操作 graph/model。
  */
+import {
+  EID_DRAWING_FONT_FAMILY,
+  eidFontSizeFor,
+} from "./drawingTypography.js";
 import { getApp } from "../core/appRuntime.js";
 import { specDomainApi } from "./spec.js";
 import { trim } from "../utils/base.js";
@@ -40,9 +44,6 @@ function makeBodyStyle(spec) {
   );
 }
 
-var EID_DRAWING_FONT_FAMILY =
-  "ISOCPEUR,ISOCP,Arial Narrow,PingFang SC,Noto Sans SC";
-
 function makeLabelStyle(label) {
   var spacing = label.align == "left" ? 0 : 2;
   return (
@@ -52,7 +53,9 @@ function makeLabelStyle(label) {
     label.align +
     ";verticalAlign=middle;spacing=" +
     spacing +
-    ";fontSize=12;fontFamily=" +
+    ";fontSize=" +
+    eidFontSizeFor(label.text) +
+    ";fontFamily=" +
     EID_DRAWING_FONT_FAMILY +
     ";fontStyle=0;rotatable=0;connectable=0;"
   );

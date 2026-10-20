@@ -589,6 +589,11 @@ export function createSnapshotDomain() {
         originFrameId: deps.trim(deps.getAttr(frame, "originFrameId")) || null,
         autoFrameOwner: deps.trim(deps.getAttr(frame, "autoFrameOwner")) || null,
         autoFrameIndex: deps.toInt(deps.getAttr(frame, "autoFrameIndex"), 0),
+        frameTemplateId:
+          deps.trim(deps.getAttr(frame, "frameTemplateId")) || null,
+        // 图幅画的是哪套模板的图签栏只存在样式里，不带上它，
+        // 还原出来的图纸就会退回默认 A4 边框。
+        style: deps.trim(model.getStyle(frame)) || null,
       },
     };
   }
@@ -1050,8 +1055,16 @@ export function createSnapshotDomain() {
                 frameObject.props != null
                   ? frameObject.props.autoFrameIndex
                   : null,
+              frameTemplateId:
+                frameObject.props != null
+                  ? frameObject.props.frameTemplateId
+                  : null,
             },
           );
+
+          if (frameObject.props != null && deps.trim(frameObject.props.style)) {
+            frame.setStyle(deps.trim(frameObject.props.style));
+          }
           frame.geometry = new mxGeometry(
             frameObject.geometry.x,
             frameObject.geometry.y,
