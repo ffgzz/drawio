@@ -1,4 +1,4 @@
-/** Generated file. Edit sources in plugins/electricalSymbols/ instead. Built with esbuild from plugins/electricalSymbols/. */
+/** Generated file. Edit sources in plugins/electricalSymbols/ instead. Built with npm run build from plugins/electricalSymbols/. */
 (() => {
   // core/constants.js
   var ELECTRICAL_CONSTANTS = Object.freeze({
@@ -271,6 +271,86 @@
   ];
   function registerElectricalResources() {
     mxResources.parse(ELECTRICAL_RESOURCE_ENTRIES.join("\n"));
+  }
+
+  // runtime/managedHost.js
+  function isManagedHost() {
+    return new URLSearchParams(window.location.search).get("eidHost") === "1";
+  }
+  function managedHostOrigin() {
+    try {
+      const origin = new URL(document.referrer || window.location.href).origin;
+      return origin === "null" ? window.location.origin : origin;
+    } catch (e) {
+      return window.location.origin;
+    }
+  }
+  function configureManagedHost(ctx, payload) {
+    if (!isManagedHost()) return { managedHost: false };
+    ctx.shipHostState = ctx.shipHostState || { readonly: true };
+    ctx.shipHostState.readonly = payload.readonly !== false;
+    ctx.graph.setConnectable(!ctx.shipHostState.readonly);
+    if (ctx.shipHostState.readonly && ctx.graph.isEditing()) ctx.graph.stopEditing(true);
+    if (typeof payload.dark === "boolean" && typeof ctx.ui.setDarkMode === "function") {
+      const previous = ctx.shipHostState.suppressChanges;
+      ctx.shipHostState.suppressChanges = true;
+      try {
+        ctx.ui.setDarkMode(payload.dark);
+      } finally {
+        ctx.shipHostState.suppressChanges = previous;
+      }
+    }
+    return { managedHost: true, readonly: ctx.shipHostState.readonly };
+  }
+  function requestManagedSave(ctx) {
+    var _a, _b;
+    if (!isManagedHost() || ((_a = ctx.shipHostState) == null ? void 0 : _a.readonly) !== false || ((_b = ctx.shipHostState) == null ? void 0 : _b.suppressChanges)) return;
+    window.parent.postMessage(JSON.stringify({ event: "eid-save-requested" }), managedHostOrigin());
+  }
+  function installManagedHost(ctx) {
+    if (!isManagedHost()) return;
+    configureManagedHost(ctx, { readonly: true });
+    const graph = ctx.graph;
+    const readonly = () => ctx.shipHostState.readonly || ctx.shipHostState.suppressChanges;
+    for (const name of ["isCellEditable", "isCellMovable", "isCellResizable", "isCellDeletable", "isCellCloneable", "isCellConnectable", "isCellBendable", "isCellDisconnectable", "isCellRotatable"]) {
+      const original = graph[name];
+      if (typeof original === "function") graph[name] = function(...args) {
+        return !readonly() && original.apply(this, args);
+      };
+    }
+    for (const [name, action] of Object.entries(ctx.ui.actions.actions || {})) {
+      if (!action || typeof action.funct !== "function") continue;
+      const original = action.funct;
+      const saveAction = ["save", "saveAs", "saveToBackend"].includes(name);
+      const readAction = /^(zoom|fit|select|copy|export|print|fullscreen|pageView|layers|outline|help|about)/i.test(name);
+      action.funct = function(...args) {
+        if (saveAction) {
+          requestManagedSave(ctx);
+          return;
+        }
+        if (/backend|rollback/i.test(name)) return;
+        if (readonly() && !readAction) return;
+        return original.apply(this, args);
+      };
+    }
+    document.addEventListener("keydown", function(event) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        requestManagedSave(ctx);
+        return;
+      }
+      if (readonly() && (event.key === "Delete" || event.key === "Backspace" || (event.ctrlKey || event.metaKey) && ["v", "x", "z", "y", "d"].includes(event.key.toLowerCase()))) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    }, true);
+    for (const eventName of ["paste", "cut", "drop"]) document.addEventListener(eventName, function(event) {
+      if (readonly()) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    }, true);
   }
 
   // core/appRuntime.js
@@ -8337,7 +8417,7 @@
           payload || {}
         )
       ),
-      "*"
+      isManagedHost() ? managedHostOrigin() : "*"
     );
   }
   function installHostBridge(ctx) {
@@ -9415,7 +9495,7 @@
     }
     function postReply(targetWindow, payload) {
       if (targetWindow != null && typeof targetWindow.postMessage === "function") {
-        targetWindow.postMessage(JSON.stringify(payload), "*");
+        targetWindow.postMessage(JSON.stringify(payload), isManagedHost() ? managedHostOrigin() : "*");
       }
     }
     function postResult(targetWindow, payload, extra) {
@@ -9678,6 +9758,8 @@
     window.addEventListener(
       "message",
       function(evt) {
+        var _a;
+        if (isManagedHost() && (evt.source !== window.parent || evt.origin !== managedHostOrigin())) return;
         if (validSource != null && evt.source !== validSource) {
           return;
         }
@@ -9686,6 +9768,24 @@
           return;
         }
         try {
+          if (payload.action === "setHostOperation" && isManagedHost()) {
+            var hostState = ctx.shipHostState || (ctx.shipHostState = { readonly: true });
+            if (payload.suppressChanges && modelChangeDebounce != null && !hostState.suppressChanges && !hostState.readonly) {
+              emitHostEvent("eid-model-changed", { structural: pendingStructuralModelChange });
+            }
+            clearTimeout(modelChangeDebounce);
+            modelChangeDebounce = null;
+            pendingStructuralModelChange = false;
+            hostState.suppressChanges = payload.suppressChanges === true;
+            postResult(evt.source, payload, {});
+            return;
+          }
+          if (payload.action === "setHostContext") {
+            evt.stopImmediatePropagation();
+            postResult(evt.source, payload, configureManagedHost(ctx, payload));
+            return;
+          }
+          if (isManagedHost() && ((_a = ctx.shipHostState) == null ? void 0 : _a.readonly) !== false && ["createSymbol", "insertRawXml", "insertFrame", "insertCabinet", "updateSymbolSpec", "applyLayoutPositions", "moveCellForTest", "deleteCellForTest"].includes(payload.action)) throw new Error("\u5F53\u524D\u56FE\u7EB8\u4E3A\u53EA\u8BFB\u72B6\u6001");
           if (payload.action === "createSymbol" && payload.spec != null) {
             evt.stopImmediatePropagation();
             var point = resolveGraphInsertPoint(ctx, payload);
@@ -9785,12 +9885,13 @@
           }
           if (payload.action === "saveToBackend") {
             evt.stopImmediatePropagation();
-            openBackendSaveDialog();
+            if (isManagedHost()) requestManagedSave(ctx);
+            else openBackendSaveDialog();
             return;
           }
           if (payload.action === "rollbackBackend") {
             evt.stopImmediatePropagation();
-            openBackendRollbackDialog();
+            if (!isManagedHost()) openBackendRollbackDialog();
             return;
           }
           if (payload.action === "ping") {
@@ -10479,7 +10580,8 @@
     var modelChangeDebounce = null;
     var pendingStructuralModelChange = false;
     graph.getModel().addListener(mxEvent.CHANGE, function(_sender, evt) {
-      if (runtimeState.updatingModel) {
+      var _a, _b;
+      if (runtimeState.updatingModel || isManagedHost() && (((_a = ctx.shipHostState) == null ? void 0 : _a.readonly) || ((_b = ctx.shipHostState) == null ? void 0 : _b.suppressChanges))) {
         return;
       }
       var edit = evt != null ? evt.getProperty("edit") : null;
@@ -10493,7 +10595,9 @@
       }
       clearTimeout(modelChangeDebounce);
       modelChangeDebounce = setTimeout(function() {
-        if (!runtimeState.updatingModel) {
+        var _a2, _b2;
+        modelChangeDebounce = null;
+        if (!runtimeState.updatingModel && !(isManagedHost() && (((_a2 = ctx.shipHostState) == null ? void 0 : _a2.readonly) || ((_b2 = ctx.shipHostState) == null ? void 0 : _b2.suppressChanges)))) {
           var structural = pendingStructuralModelChange;
           pendingStructuralModelChange = false;
           emitHostEvent("eid-model-changed", { structural });
@@ -16532,8 +16636,16 @@
     var initialSnapshot;
     setApp(app);
     installEidDrawingStandard(ctx);
-    backendServiceApi.loadBackendSession();
+    if (!isManagedHost()) backendServiceApi.loadBackendSession();
+    else {
+      for (const key of ["saveDiagramToBackend", "loadDiagramFromBackend", "rollbackDiagramToVersion", "listDiagramsFromBackend", "getDiagramHistoryFromBackend"]) {
+        backendServiceApi[key] = function() {
+          throw new Error("\u56FE\u7EB8\u7531\u4E3B\u7CFB\u7EDF\u7BA1\u7406\uFF0C\u8BF7\u4F7F\u7528\u4E3B\u7CFB\u7EDF\u5165\u53E3");
+        };
+      }
+    }
     activateAppRuntime(app);
+    installManagedHost(ctx);
     initialSnapshot = snapshotDomainApi.exportDiagramSnapshot();
     if (ctx.state.backendDiagramId && ctx.state.backendLastSnapshot != null && Array.isArray(initialSnapshot.objects) && Array.isArray(initialSnapshot.edges) && initialSnapshot.objects.length == 0 && initialSnapshot.edges.length == 0) {
       backendServiceApi.resetBackendBinding();

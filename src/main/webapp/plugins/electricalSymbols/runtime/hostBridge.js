@@ -3,6 +3,7 @@
  * 负责接收宿主页面通过 postMessage 发来的图元/图框/配电柜请求，
  * 在 draw.io 插件内直接走原生命令链路完成插入。
  */
+import { configureManagedHost, isManagedHost, managedHostOrigin, requestManagedSave } from "./managedHost.js";
 import { commandApi } from "../application/commands.js";
 import { selectionApi } from "../application/selection.js";
 import {
@@ -190,7 +191,7 @@ export function emitHostEvent(eventName, payload) {
         payload || {},
       ),
     ),
-    "*",
+    isManagedHost() ? managedHostOrigin() : "*",
   );
 }
 
@@ -1665,7 +1666,7 @@ export function installHostBridge(ctx) {
       targetWindow != null &&
       typeof targetWindow.postMessage === "function"
     ) {
-      targetWindow.postMessage(JSON.stringify(payload), "*");
+      targetWindow.postMessage(JSON.stringify(payload), isManagedHost() ? managedHostOrigin() : "*");
     }
   }
 
@@ -2034,6 +2035,7 @@ export function installHostBridge(ctx) {
   window.addEventListener(
     "message",
     function (evt) {
+      if (isManagedHost() && (evt.source !== window.parent || evt.origin !== managedHostOrigin())) return;
       if (validSource != null && evt.source !== validSource) {
         return;
       }
@@ -2045,6 +2047,21 @@ export function installHostBridge(ctx) {
       }
 
       try {
+        if (payload.action === "setHostOperation" && isManagedHost()) {
+          var hostState = ctx.shipHostState || (ctx.shipHostState = {readonly: true});
+          if (payload.suppressChanges && modelChangeDebounce != null && !hostState.suppressChanges && !hostState.readonly) {
+            emitHostEvent("eid-model-changed", {structural: pendingStructuralModelChange});
+          }
+          clearTimeout(modelChangeDebounce); modelChangeDebounce = null; pendingStructuralModelChange = false;
+          hostState.suppressChanges = payload.suppressChanges === true;
+          postResult(evt.source, payload, {}); return;
+        }
+        if (payload.action === "setHostContext") {
+          evt.stopImmediatePropagation();
+          postResult(evt.source, payload, configureManagedHost(ctx, payload));
+          return;
+        }
+        if (isManagedHost() && ctx.shipHostState?.readonly !== false && ["createSymbol", "insertRawXml", "insertFrame", "insertCabinet", "updateSymbolSpec", "applyLayoutPositions", "moveCellForTest", "deleteCellForTest"].includes(payload.action)) throw new Error("当前图纸为只读状态");
         if (payload.action === "createSymbol" && payload.spec != null) {
           evt.stopImmediatePropagation();
           var point = resolveGraphInsertPoint(ctx, payload);
@@ -2166,13 +2183,14 @@ export function installHostBridge(ctx) {
 
         if (payload.action === "saveToBackend") {
           evt.stopImmediatePropagation();
-          openBackendSaveDialog();
+          if (isManagedHost()) requestManagedSave(ctx);
+          else openBackendSaveDialog();
           return;
         }
 
         if (payload.action === "rollbackBackend") {
           evt.stopImmediatePropagation();
-          openBackendRollbackDialog();
+          if (!isManagedHost()) openBackendRollbackDialog();
           return;
         }
 
@@ -3112,7 +3130,7 @@ export function installHostBridge(ctx) {
   var modelChangeDebounce = null;
   var pendingStructuralModelChange = false;
   graph.getModel().addListener(mxEvent.CHANGE, function (_sender, evt) {
-    if (runtimeState.updatingModel) {
+    if (runtimeState.updatingModel || (isManagedHost() && (ctx.shipHostState?.readonly || ctx.shipHostState?.suppressChanges))) {
       return;
     }
 
@@ -3134,7 +3152,8 @@ export function installHostBridge(ctx) {
 
     clearTimeout(modelChangeDebounce);
     modelChangeDebounce = setTimeout(function () {
-      if (!runtimeState.updatingModel) {
+      modelChangeDebounce = null;
+      if (!runtimeState.updatingModel && !(isManagedHost() && (ctx.shipHostState?.readonly || ctx.shipHostState?.suppressChanges))) {
         var structural = pendingStructuralModelChange;
         pendingStructuralModelChange = false;
         emitHostEvent("eid-model-changed", { structural: structural });

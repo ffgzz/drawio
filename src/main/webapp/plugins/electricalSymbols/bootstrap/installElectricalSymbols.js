@@ -2,6 +2,7 @@
  * 插件正式安装入口。负责接收 draw.io 传进来的 ui，启动整个插件的初始化流程
  * 负责把基础能力、业务模块、UI 模块和运行时行为组装起来。
  */
+import { installManagedHost, isManagedHost } from "../runtime/managedHost.js";
 import { activateAppRuntime, createApp } from "./createApp.js";
 import { setApp } from "../core/appRuntime.js";
 import { backendServiceApi } from "../services/backend.js";
@@ -17,9 +18,15 @@ export function installElectricalSymbols(ctx) {
   installEidDrawingStandard(ctx);
 
   // 从本地存储里恢复上一次后端连接/图纸会话信息，放回插件 state
-  backendServiceApi.loadBackendSession();
+  if (!isManagedHost()) backendServiceApi.loadBackendSession();
+  else {
+    for (const key of ["saveDiagramToBackend", "loadDiagramFromBackend", "rollbackDiagramToVersion", "listDiagramsFromBackend", "getDiagramHistoryFromBackend"]) {
+      backendServiceApi[key] = function() { throw new Error("图纸由主系统管理，请使用主系统入口"); };
+    }
+  }
   // 把 electricalSymbols 的所有 action、对话框、graph 监听、运行模式真正挂到 draw.io 上
   activateAppRuntime(app);
+  installManagedHost(ctx);
 
   initialSnapshot = snapshotDomainApi.exportDiagramSnapshot();
 
